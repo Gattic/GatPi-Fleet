@@ -20,6 +20,10 @@ import {
 	type SessionState,
 	socketDir,
 	socketPath,
+	THINKING_LEVELS,
+	TIMELINE_MS,
+	type TimelineEntry,
+	type TimelineState,
 	type ToolRun,
 	type UsageMinute,
 	usageTokens,
@@ -89,13 +93,35 @@ function addMinute(minutes: UsageMinute[], timestamp: number, usage: PiUsage, no
 	while (minutes.length && minutes[0].minute < oldest) minutes.shift();
 }
 
+/**
+ * Records `state` from `at`. A change at the same moment as the latest entry replaces it, and an unchanged
+ * state adds nothing. Entries older than the timeline reaches are dropped; the one in force at its start
+ * is kept, moved to the start.
+ */
+function pushTimeline(timeline: readonly TimelineEntry[], at: number, state: TimelineState): TimelineEntry[] {
+	const next = [...timeline];
+	while (next.length && (next.at(-1) as TimelineEntry).at >= at) next.pop();
+	if (next.at(-1)?.state !== state) next.push({ at, state });
+	const start = at - TIMELINE_MS;
+	let first = 0;
+	while (first + 1 < next.length && next[first + 1].at <= start) first++;
+	const kept = next.slice(first);
+	if (kept[0].at < start) kept[0] = { at: start, state: kept[0].state };
+	return kept;
+}
+
 function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<SessionState, "plan" | "suggestion">): SessionState {
 	const now = Date.now();
+	const idle = ctx.isIdle();
 	const direct = emptyUsage();
 	const indirect = emptyUsage();
 	const usageMinutes: UsageMinute[] = [];
 	let lastPrompt: string | undefined;
 	let lastSaid: string | undefined;
+	const tools = new Map<string, ToolRun>();
+	// Runs in the transcript: working from each user message to the last message before the next one.
+	const runs: TimelineEntry[] = [];
+	let lastMessageAt: number | undefined;
 	// Same accounting as pi's /session: assistant + summaries are direct,
 	// toolResult usage is nested LLM work performed by tools.
 	for (const entry of ctx.sessionManager.getEntries()) {
@@ -111,14 +137,34 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 			addMinute(usageMinutes, timestamp, message.usage, now);
 			const said = replyOf(message.content);
 			if (said) lastSaid = said;
-		} else if (message.role === "toolResult" && message.usage) {
-			addUsage(indirect, message.usage);
-			addMinute(usageMinutes, timestamp, message.usage, now);
+			for (const block of message.content) {
+				if (block.type === "toolCall") tools.set(block.id, { id: block.id, name: block.name, detail: toolDetail(block.arguments), startedAt: timestamp });
+			}
+		} else if (message.role === "toolResult") {
+			if (message.usage) {
+				addUsage(indirect, message.usage);
+				addMinute(usageMinutes, timestamp, message.usage, now);
+			}
+			const run = tools.get(message.toolCallId);
+			if (run) Object.assign(run, { endedAt: timestamp, isError: message.isError });
 		} else if (message.role === "user") {
 			const prompt = textOf(message.content);
 			if (prompt.trim()) lastPrompt = clip(prompt, TEXT_LIMIT);
+			if (lastMessageAt !== undefined && runs.at(-1)?.state === "working") runs.push({ at: lastMessageAt, state: "waiting" });
+			runs.push({ at: timestamp, state: "working" });
 		}
+		lastMessageAt = timestamp;
 	}
+	// Idle with a transcript means the last run is over and the user is up.
+	const lastSettledAt = idle && lastMessageAt !== undefined ? lastMessageAt : undefined;
+	if (lastSettledAt !== undefined) runs.push({ at: lastSettledAt, state: "waiting" });
+	// Before this process the session was not open, so the timeline starts with the process.
+	let timeline: TimelineEntry[] = [{ at: now - process.uptime() * 1000, state: "idle" }];
+	for (const run of runs) timeline = pushTimeline(timeline, Math.max(run.at, timeline[0].at), run.state);
+	timeline = pushTimeline(timeline, now, idle ? (lastSettledAt !== undefined ? "waiting" : "idle") : "working");
+	// A call without a result did not finish (the process ended or the run was cut off).
+	const recentTools = [...tools.values()].slice(-MAX_TOOL_RUNS).map((run) => (run.endedAt === undefined ? { ...run, endedAt: run.startedAt, isError: true } : run));
+	const models = ctx.scopedModels.length ? ctx.scopedModels.map((scoped) => scoped.model) : ctx.modelRegistry.getAvailable();
 	const context = ctx.getContextUsage();
 	return {
 		pid: process.pid,
@@ -130,8 +176,9 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 		name: pi.getSessionName(),
 		model: modelName(ctx.model),
 		thinking: ctx.thinkingLevel,
-		phase: ctx.isIdle() ? "idle" : "working",
+		phase: idle ? "idle" : "working",
 		phaseSince: now,
+		lastSettledAt,
 		lastEventAt: now,
 		lastPrompt,
 		lastSaid,
@@ -140,7 +187,9 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 		usageMinutes,
 		plan: published.plan,
 		suggestion: published.suggestion,
-		tools: [],
+		tools: recentTools,
+		timeline,
+		models: models.map((model) => `${model.provider}/${model.id}`),
 	};
 }
 
@@ -219,11 +268,32 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		set({ usage: totals, usageMinutes: minutes });
 	}
 
-	function setPhase(phase: SessionState["phase"]): void {
-		if (state && state.phase !== phase) set({ phase, phaseSince: Date.now() });
+	/** Adds the current state to the timeline when it changed. */
+	function recordTimeline(): void {
+		if (!state) return;
+		const current: TimelineState = state.phase === "working" ? "working" : state.lastSettledAt !== undefined ? "waiting" : "idle";
+		if (state.timeline.at(-1)?.state !== current) set({ timeline: pushTimeline(state.timeline, Date.now(), current) });
 	}
 
-	function runCommand(command: Command): void {
+	/**
+	 * pi reports a compaction (and its failure) while it is still compacting, and no event follows when it
+	 * stops. A manual compaction leaves pi idle; look once pi has finished handling the current event.
+	 */
+	function settleAfterCompaction(): void {
+		setTimeout(() => {
+			if (!ctx?.isIdle()) return;
+			setActivity(undefined);
+			setPhase("idle");
+			refreshContext();
+		}, 0);
+	}
+
+	function setPhase(phase: SessionState["phase"]): void {
+		if (state && state.phase !== phase) set({ phase, phaseSince: Date.now() });
+		recordTimeline();
+	}
+
+	async function runCommand(command: Command): Promise<void> {
 		if (!ctx || !state) throw new Error("session is not ready");
 		switch (command.kind) {
 			case "prompt": {
@@ -243,6 +313,28 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 			case "rename":
 				pi.setSessionName(command.name.trim());
 				return;
+			case "compact":
+				if (!ctx.isIdle()) throw new Error("session is working; compact when it is idle");
+				ctx.compact({
+					onError: (error) => {
+						set({ lastError: { message: clip(`compaction failed: ${error.message}`, TEXT_LIMIT), at: Date.now() } });
+						settleAfterCompaction();
+					},
+				});
+				return;
+			case "model": {
+				const model = ctx.modelRegistry.find(command.provider, command.id);
+				if (!model) throw new Error(`unknown model ${command.provider}/${command.id}`);
+				if (!(await pi.setModel(model))) throw new Error(`no credentials for ${command.provider}`);
+				return;
+			}
+			case "thinking":
+				if (!THINKING_LEVELS.includes(command.level)) throw new Error(`unknown thinking level ${command.level}`);
+				// pi clamps the level to the model; a change arrives as thinking_level_select.
+				pi.setThinkingLevel(command.level);
+				return;
+			default:
+				throw new Error(`unknown command ${(command as { kind?: unknown }).kind}`);
 		}
 	}
 
@@ -263,12 +355,10 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 			}
 			for (const message of messages) {
 				const { id, command } = message as { id: number; command: Command };
-				try {
-					runCommand(command);
-					socket.write(encodeMessage({ type: "ack", id, ok: true }));
-				} catch (error) {
-					socket.write(encodeMessage({ type: "ack", id, ok: false, error: error instanceof Error ? error.message : String(error) }));
-				}
+				runCommand(command).then(
+					() => socket.write(encodeMessage({ type: "ack", id, ok: true })),
+					(error: unknown) => socket.write(encodeMessage({ type: "ack", id, ok: false, error: error instanceof Error ? error.message : String(error) })),
+				);
 			}
 		});
 		socket.on("close", () => clients.delete(socket));
@@ -405,8 +495,8 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		touch();
 		runningTools.clear();
 		setActivity(undefined);
-		setPhase("idle");
 		set({ lastSettledAt: Date.now() });
+		setPhase("idle");
 		refreshContext();
 	});
 
@@ -419,13 +509,11 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 	pi.on("session_compact", (event) => {
 		touch();
 		if (event.compactionEntry.usage) recordUsage(event.compactionEntry.usage, "direct", Date.now());
-		if (ctx?.isIdle()) {
-			setActivity(undefined);
-			setPhase("idle");
-		} else {
-			setActivity(currentToolActivity());
-		}
+		// A finished compaction supersedes an earlier error (such as a failed compaction), which would otherwise show until the next reply.
+		set({ lastError: undefined });
+		setActivity(currentToolActivity());
 		refreshContext();
+		settleAfterCompaction();
 	});
 
 	pi.on("session_tree", (event) => {

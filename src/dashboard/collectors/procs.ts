@@ -2,7 +2,7 @@
 // into the pi process itself (direct) and everything it caused (indirect).
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, readlinkSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { GpuSample } from "./gpu.ts";
 
 export interface ProcStat {
@@ -42,6 +42,16 @@ export interface Consumer {
 	rss: number;
 }
 
+/** Work a session started in the background, recognised by its command line. */
+export interface Background {
+	/** GatPi-Harness `bg_run` job supervisor, or an RPC subagent (`pi --mode rpc`). */
+	kind: "job" | "subagent";
+	/** Job name or subagent role. */
+	label: string;
+	/** Epoch ms. */
+	startedAt: number;
+}
+
 export interface ResourceSample {
 	directCpu: number;
 	indirectCpu: number;
@@ -51,6 +61,8 @@ export interface ResourceSample {
 	indirectGpuMem: number;
 	/** Largest consumers by CPU, then memory. */
 	consumers: Consumer[];
+	/** Background jobs and subagents among the session's processes, oldest first. */
+	background: Background[];
 }
 
 export interface SampleTarget {
@@ -63,6 +75,8 @@ export interface SampleTarget {
 /** An interactive pi process (has a terminal and no pi ancestor). */
 export interface PiProcess {
 	pid: number;
+	/** Process start, epoch ms. */
+	startedAt: number;
 	cwd?: string;
 	sty?: string;
 	window?: string;
@@ -107,6 +121,16 @@ function getconf(name: string, fallback: number): number {
 	}
 }
 
+/** A string field of a small JSON file, if the file and field exist. */
+function jsonString(path: string, field: string): string | undefined {
+	try {
+		const value = (JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>)[field];
+		return typeof value === "string" && value ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function procKey(stat: ProcStat): string {
 	return `${stat.pid}:${stat.starttime}`;
 }
@@ -121,8 +145,12 @@ export class ProcSampler {
 	private prevUnits = new Map<string, number>();
 	private prevUptimeTicks?: number;
 	private prevHostCpu?: { total: number; idle: number };
+	/** System boot time, epoch seconds (process start times count from it). */
+	private bootTime?: number;
 	private readonly envCache = new Map<string, ProcEnv>();
-	private readonly cmdCache = new Map<string, string>();
+	private readonly argsCache = new Map<string, string[]>();
+	/** null: not background work. */
+	private readonly backgroundCache = new Map<string, Background | null>();
 
 	constructor(options: { procRoot?: string; appSlice?: string } = {}) {
 		this.procRoot = options.procRoot ?? "/proc";
@@ -189,6 +217,7 @@ export class ProcSampler {
 			const prevRoot = this.prevProcs.get(rootKey);
 			const memberKeys = new Set<string>();
 			const consumers: Consumer[] = [];
+			const background: Background[] = [];
 			const cpuOf = (ticks: number) => (elapsedTicks > 0 ? Math.max(0, ticks) / elapsedTicks : 0);
 
 			const directTicks = prevRoot ? root.own - prevRoot.own : 0;
@@ -211,6 +240,8 @@ export class ProcSampler {
 				}
 				indirectMem += stat.rss;
 				consumers.push({ kind: "process", label: this.labelOf(stat), cpu: cpuOf(ownDelta), rss: stat.rss });
+				const work = this.backgroundOf(stat);
+				if (work) background.push(work);
 			}
 			// A process that exited since the last tick has its final CPU time folded
 			// into its parent's cutime; remove the part already counted.
@@ -255,6 +286,7 @@ export class ProcSampler {
 				directGpuMem,
 				indirectGpuMem,
 				consumers: consumers.slice(0, TOP_CONSUMERS),
+				background: background.sort((a, b) => a.startedAt - b.startedAt),
 			});
 		}
 		for (const unit of units) nextUnits.set(unit.name, unit.usageUsec);
@@ -335,20 +367,69 @@ export class ProcSampler {
 		return env;
 	}
 
-	private labelOf(stat: ProcStat): string {
+	private argsOf(stat: ProcStat): string[] {
 		const key = procKey(stat);
-		let label = this.cmdCache.get(key);
-		if (label === undefined) {
+		let args = this.argsCache.get(key);
+		if (args === undefined) {
 			try {
-				const args = readFileSync(join(this.procRoot, String(stat.pid), "cmdline"), "utf8").split("\0").filter(Boolean);
-				const program = args[0]?.split("/").pop() ?? stat.comm;
-				label = [program, ...args.slice(1)].join(" ").slice(0, 80) || stat.comm;
+				args = readFileSync(join(this.procRoot, String(stat.pid), "cmdline"), "utf8").split("\0").filter(Boolean);
 			} catch {
-				label = stat.comm;
+				args = [];
 			}
-			this.cmdCache.set(key, label);
+			this.argsCache.set(key, args);
 		}
-		return label;
+		return args;
+	}
+
+	private labelOf(stat: ProcStat): string {
+		const args = this.argsOf(stat);
+		const program = args[0]?.split("/").pop() ?? stat.comm;
+		return [program, ...args.slice(1)].join(" ").slice(0, 80) || stat.comm;
+	}
+
+	/**
+	 * A GatPi-Harness job supervisor runs `managed-job-supervisor.js <cwd>/.pi/jobs/<job>.launch.json`, and its
+	 * name is in `<job>.json`. A subagent runs `pi --mode rpc --session-dir <cwd>/.pi/subagents/rpc-sessions/<id>`,
+	 * and its role is in `<cwd>/.pi/subagents/records/<id>.json`.
+	 */
+	private backgroundOf(stat: ProcStat): Background | undefined {
+		const key = procKey(stat);
+		const cached = this.backgroundCache.get(key);
+		if (cached !== undefined) return cached ?? undefined;
+		const args = this.argsOf(stat);
+		const supervisor = args.findIndex((arg) => arg.endsWith("/managed-job-supervisor.js"));
+		const launch = supervisor >= 0 ? args[supervisor + 1] : undefined;
+		if (launch?.endsWith(".launch.json")) {
+			const record = launch.replace(/\.launch\.json$/, ".json");
+			const name = jsonString(record, "name");
+			const work: Background = { kind: "job", label: name ?? basename(record, ".json"), startedAt: this.startedAt(stat) };
+			// The job record is written just after the supervisor starts; look again until it has the name.
+			if (name) this.backgroundCache.set(key, work);
+			return work;
+		}
+		const mode = args.indexOf("--mode");
+		if (mode < 0 || args[mode + 1] !== "rpc") {
+			this.backgroundCache.set(key, null);
+			return undefined;
+		}
+		const sessionDir = args.includes("--session-dir") ? args[args.indexOf("--session-dir") + 1] : undefined;
+		const id = sessionDir ? basename(sessionDir) : undefined;
+		const role = sessionDir && id ? jsonString(join(dirname(dirname(sessionDir)), "records", `${id}.json`), "role") : undefined;
+		const work: Background = { kind: "subagent", label: role ?? id ?? "subagent", startedAt: this.startedAt(stat) };
+		this.backgroundCache.set(key, work);
+		return work;
+	}
+
+	/** Start time of a process in epoch ms. */
+	private startedAt(stat: ProcStat): number {
+		if (this.bootTime === undefined) {
+			try {
+				this.bootTime = Number(/^btime (\d+)$/m.exec(readFileSync(join(this.procRoot, "stat"), "utf8"))?.[1] ?? 0);
+			} catch {
+				this.bootTime = 0;
+			}
+		}
+		return (this.bootTime + stat.starttime / this.hz) * 1000;
 	}
 
 	private findPiProcesses(procs: Map<number, ProcStat>): PiProcess[] {
@@ -370,7 +451,7 @@ export class ProcSampler {
 				cwd = readlinkSync(join(this.procRoot, String(stat.pid), "cwd"));
 			} catch {}
 			const env = this.envOf(stat);
-			result.push({ pid: stat.pid, cwd, sty: env.sty, window: env.window });
+			result.push({ pid: stat.pid, startedAt: this.startedAt(stat), cwd, sty: env.sty, window: env.window });
 		}
 		return result;
 	}
@@ -404,7 +485,7 @@ export class ProcSampler {
 	}
 
 	private pruneCaches(): void {
-		for (const cache of [this.envCache, this.cmdCache]) {
+		for (const cache of [this.envCache, this.argsCache, this.backgroundCache]) {
 			for (const key of cache.keys()) if (!this.prevProcs.has(key)) cache.delete(key);
 		}
 	}

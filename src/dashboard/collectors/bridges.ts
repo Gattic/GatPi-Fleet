@@ -1,5 +1,5 @@
 // Discovers bridge sockets, keeps one connection per pi process, and sends commands.
-import { readdirSync, unlinkSync } from "node:fs";
+import { readdirSync, statSync, unlinkSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import {
@@ -28,6 +28,8 @@ interface Pending {
 
 interface Connection {
 	pid: number;
+	/** Inode of the socket file, which a reloaded bridge recreates. */
+	inode: number;
 	socket: Socket;
 	state?: SessionState;
 	pending: Map<number, Pending>;
@@ -46,7 +48,8 @@ export function pidAlive(pid: number): boolean {
 
 export class BridgeHub {
 	private readonly connections = new Map<number, Connection>();
-	private readonly incompatible = new Set<number>();
+	/** Sockets that spoke another protocol version, by pid: socket inode. */
+	private readonly incompatible = new Map<number, number>();
 	private nextId = 1;
 	private readonly dir: string;
 	private readonly events: BridgeEvents;
@@ -65,15 +68,25 @@ export class BridgeHub {
 		}
 		for (const name of names) {
 			const pid = pidFromSocketName(name);
-			if (pid === undefined || this.connections.has(pid) || this.incompatible.has(pid)) continue;
+			if (pid === undefined || this.connections.has(pid)) continue;
+			const path = join(this.dir, name);
 			if (!pidAlive(pid)) {
 				// Left behind by a pi that crashed or was killed.
 				try {
-					unlinkSync(join(this.dir, name));
+					unlinkSync(path);
 				} catch {}
 				continue;
 			}
-			this.open(pid, join(this.dir, name));
+			let inode: number;
+			try {
+				inode = statSync(path).ino;
+			} catch {
+				continue;
+			}
+			// An incompatible bridge is tried again once it is replaced (/reload loads the bridge anew).
+			if (this.incompatible.get(pid) === inode) continue;
+			this.incompatible.delete(pid);
+			this.open(pid, path, inode);
 		}
 	}
 
@@ -100,9 +113,9 @@ export class BridgeHub {
 		this.connections.clear();
 	}
 
-	private open(pid: number, path: string): void {
+	private open(pid: number, path: string, inode: number): void {
 		const socket = connect(path);
-		const connection: Connection = { pid, socket, pending: new Map() };
+		const connection: Connection = { pid, inode, socket, pending: new Map() };
 		this.connections.set(pid, connection);
 		const decoder = new LineDecoder();
 		socket.setEncoding("utf8");
@@ -131,7 +144,7 @@ export class BridgeHub {
 		switch (message.type) {
 			case "hello":
 				if (message.version !== PROTOCOL_VERSION) {
-					this.incompatible.add(connection.pid);
+					this.incompatible.set(connection.pid, connection.inode);
 					this.events.onIncompatible(connection.pid, message.version);
 					connection.socket.destroy();
 				}

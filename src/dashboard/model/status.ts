@@ -1,4 +1,4 @@
-import type { Activity, SessionState } from "../../protocol/index.ts";
+import type { Activity, SessionState, TimelineState } from "../../protocol/index.ts";
 import { LANE, type LaneState } from "../ui/charts.ts";
 
 export type StatusKind = "working" | "rate-limited" | "stalled" | "needs-you" | "ready" | "error" | "connecting" | "exited" | "unbridged";
@@ -72,6 +72,11 @@ export function laneState(status: Status): LaneState {
 		default:
 			return LANE.none;
 	}
+}
+
+/** The lane cell for a bridge timeline state. */
+export function timelineLane(state: TimelineState): LaneState {
+	return state === "working" ? LANE.working : state === "waiting" ? LANE.waiting : LANE.idle;
 }
 
 /** States that deserve the user's attention when newly entered. */

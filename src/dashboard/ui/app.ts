@@ -3,12 +3,13 @@ import { existsSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { type Component, Key, matchesKey, type OverlayHandle, type OverlayOptions, type SelectItem, stripTerminalSequences, type TUI, type TuiMouseEvent, type TuiMouseEventResult, visibleWidth } from "@earendil-works/pi-tui";
-import type { Command } from "../../protocol/index.ts";
+import { type Command, THINKING_LEVELS } from "../../protocol/index.ts";
 import { attachSession, launchSession, readHardcopy, requestHardcopy } from "../actions/screen.ts";
 import { listProjects, listSessions } from "../actions/sessions.ts";
 import type { BridgeHub } from "../collectors/bridges.ts";
 import type { GpuMonitor } from "../collectors/gpu.ts";
 import type { QuotaMonitor } from "../collectors/quota.ts";
+import { isAlert } from "../model/status.ts";
 import { rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../model/store.ts";
 import type { UsageIndex } from "../usage/usage-index.ts";
 import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
@@ -18,7 +19,7 @@ import { keyHints, theme } from "./theme.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
 import { renderOverview } from "./views/overview.ts";
 import { background, SPINNER, type ViewContext, type ViewName } from "./views/shared.ts";
-import { renderUsage, USAGE_RANGES, type UsageRange } from "./views/usage.ts";
+import { renderUsage, USAGE_RANGES, type UsageMetric, type UsageRange } from "./views/usage.ts";
 
 export interface Services {
 	tui: TUI;
@@ -37,9 +38,9 @@ const FLASH_MS = 5000;
 const PEEK_REFRESH_MS = 1000;
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["⏎", "detail"], ["p", "prompt"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["p", "prompt"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["c", "close"], ["R", "rename"], ["?", "help"]],
-	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["?", "help"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["Tab", "next ◆"], ["p", "prompt"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
+	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["?", "help"]],
 };
 
 export class App implements Component {
@@ -48,6 +49,7 @@ export class App implements Component {
 	// A recycled or resumed session replaces its row in the same slot; selection follows it.
 	private selectedSlot?: number;
 	private range: UsageRange = "today";
+	private metric: UsageMetric = "cost";
 	private flash?: { text: string; error: boolean; until: number };
 	private spinnerIndex = 0;
 	private overlay?: OverlayHandle;
@@ -115,7 +117,7 @@ export class App implements Component {
 		};
 		const detail = this.view === "detail" ? renderDetail(ctx, width, height, this.said) : undefined;
 		this.saidArea = detail?.said;
-		const body = detail ? detail.lines : this.view === "usage" ? renderUsage(ctx, width, height, this.range) : renderOverview(ctx, width, height);
+		const body = detail ? detail.lines : this.view === "usage" ? renderUsage(ctx, width, height, this.range, this.metric) : renderOverview(ctx, width, height);
 		while (body.length < height - 1) body.push("");
 		const lines = [...body, this.footer(width, now)];
 		// Dialogs sit on a dimmed copy of the view.
@@ -149,6 +151,8 @@ export class App implements Component {
 		if (data === "?") return this.showHelp();
 		if (/^[1-9]$/.test(data)) {
 			this.select(store.bySlot(Number(data)));
+		} else if (matchesKey(data, Key.tab)) {
+			this.selectNextAttention();
 		} else if (matchesKey(data, Key.up) || data === "k" || matchesKey(data, Key.down) || data === "j") {
 			const rows = store.ordered();
 			const index = rows.findIndex((row) => row.pid === this.selected()?.pid);
@@ -162,6 +166,8 @@ export class App implements Component {
 			this.view = this.view === "usage" ? "overview" : "usage";
 		} else if (this.view === "usage" && (data === "t" || data === "w" || data === "m")) {
 			this.range = data === "t" ? "today" : data === "w" ? "7d" : "30d";
+		} else if (this.view === "usage" && data === "$") {
+			this.metric = this.metric === "cost" ? "tokens" : "cost";
 		} else if (this.view === "detail" && (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown))) {
 			this.said.page(matchesKey(data, Key.pageUp) ? -1 : 1);
 		} else if (this.view === "usage" && (matchesKey(data, Key.left) || matchesKey(data, Key.right))) {
@@ -172,12 +178,23 @@ export class App implements Component {
 		} else {
 			const row = this.selected();
 			if (!row) {
-				if ("pxsvacCRrd".includes(data)) this.notify("No session selected", true);
+				if ("pxsvacCRrdMTZ".includes(data)) this.notify("No session selected", true);
 				return;
 			}
 			this.rowAction(row, data);
 		}
 		this.services.tui.requestRender();
+	}
+
+	/** Sessions that need attention (needs you, error, stalled), longest waiting first; each press selects the next one. */
+	private selectNextAttention(): void {
+		const candidates = this.services.store
+			.ordered()
+			.filter((row) => isAlert(row.status.kind))
+			.sort((a, b) => (a.status.since ?? Number.POSITIVE_INFINITY) - (b.status.since ?? Number.POSITIVE_INFINITY));
+		if (!candidates.length) return this.notify("No session needs you");
+		const current = candidates.findIndex((row) => row.pid === this.selected()?.pid);
+		this.select(candidates[(current + 1) % candidates.length]);
 	}
 
 	/** Over the detail view's SAID text: the wheel scrolls it, a click opens the reader. */
@@ -232,7 +249,58 @@ export class App implements Component {
 				if (row.exitedAt === undefined) return this.notify("Only exited sessions can be dismissed", true);
 				this.services.store.dismiss(row.pid);
 				return;
+			case "M":
+				return this.pickModel(row);
+			case "T":
+				return this.pickThinking(row);
+			case "Z": {
+				if (!this.requireBridge(row)) return;
+				if (row.bridge?.phase === "working") return this.notify(`${label} is working; compact it when it is idle`, true);
+				const percent = row.bridge?.context?.percent;
+				const full = percent != null ? ` Its context is ${Math.round(percent)}% full.` : "";
+				return this.confirm("Compact", `Compact ${label} now?${full} pi summarizes the conversation so far with the session's model.`, () => this.send(row, { kind: "compact" }, `compacting ${label}`));
+			}
 		}
+	}
+
+	private pickModel(row: SessionRow): void {
+		if (!this.requireBridge(row)) return;
+		const current = row.bridge?.model;
+		const items: SelectItem[] = (row.bridge?.models ?? []).map((model) => {
+			const slash = model.indexOf("/");
+			return { value: model, label: model.slice(slash + 1), description: `${model.slice(0, slash)}${model === current ? " · current" : ""}` };
+		});
+		if (!items.length) return this.notify(`${rowLabel(row)} reports no models it can switch to`, true);
+		this.show(
+			new Picker({
+				title: `Model for ${rowLabel(row)}`,
+				items,
+				onSelect: (item) => {
+					this.closeOverlay();
+					const slash = item.value.indexOf("/");
+					this.send(row, { kind: "model", provider: item.value.slice(0, slash), id: item.value.slice(slash + 1) }, `${rowLabel(row)} now uses ${item.label}`);
+				},
+				onCancel: () => this.closeOverlay(),
+			}),
+		);
+	}
+
+	private pickThinking(row: SessionRow): void {
+		if (!this.requireBridge(row)) return;
+		const current = row.bridge?.thinking;
+		const items: SelectItem[] = THINKING_LEVELS.map((level) => ({ value: level, label: level, description: level === current ? "current" : "" }));
+		this.show(
+			new Picker({
+				title: `Thinking level for ${rowLabel(row)} (pi limits it to what the model supports)`,
+				items,
+				onSelect: (item) => {
+					this.closeOverlay();
+					const level = THINKING_LEVELS.find((option) => option === item.value);
+					if (level) this.send(row, { kind: "thinking", level }, `thinking level ${level} requested for ${rowLabel(row)}`);
+				},
+				onCancel: () => this.closeOverlay(),
+			}),
+		);
 	}
 
 	private requireBridge(row: SessionRow): boolean {

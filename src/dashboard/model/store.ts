@@ -1,12 +1,12 @@
 // Dashboard state: one row per interactive pi process, stable slots, and
 // rolling resource/activity history.
 import { basename } from "node:path";
-import type { SessionState } from "../../protocol/index.ts";
+import type { SessionState, TimelineEntry } from "../../protocol/index.ts";
 import { pidAlive } from "../collectors/bridges.ts";
 import type { GpuSample } from "../collectors/gpu.ts";
 import type { HostSample, PiProcess, ResourceSample, Sample, SampleTarget } from "../collectors/procs.ts";
 import { Series } from "./series.ts";
-import { deriveStatus, isAlert, laneState, type Status } from "./status.ts";
+import { deriveStatus, isAlert, laneState, type Status, timelineLane } from "./status.ts";
 
 export const SAMPLE_MS = 2000;
 /** One hour of 2-second samples. */
@@ -66,6 +66,18 @@ export function rowCpu(row: SessionRow): number {
 	return (row.resources?.directCpu ?? 0) + (row.resources?.indirectCpu ?? 0);
 }
 
+/** One lane sample per SAMPLE_MS up to `now`, from the bridge's timeline (what happened before the dashboard saw the session). */
+export function laneFromTimeline(timeline: readonly TimelineEntry[], now: number): Series {
+	const lane = new Series(HISTORY);
+	if (!timeline.length) return lane;
+	let index = 0;
+	for (let at = Math.max(timeline[0].at, now - (HISTORY - 1) * SAMPLE_MS); at <= now; at += SAMPLE_MS) {
+		while (index + 1 < timeline.length && timeline[index + 1].at <= at) index++;
+		lane.push(timelineLane(timeline[index].state));
+	}
+	return lane;
+}
+
 export class Store {
 	readonly rows = new Map<number, SessionRow>();
 	readonly hostCpu = new Series(HISTORY);
@@ -101,7 +113,10 @@ export class Store {
 
 	setState(pid: number, state: SessionState): void {
 		const row = this.rows.get(pid) ?? this.create(pid, state.sty);
+		// Until now this row only had /proc samples; the bridge knows the last hour.
+		if (!row.bridge) row.lane = laneFromTimeline(state.timeline, Date.now());
 		row.bridge = state;
+		row.incompatibleVersion = undefined;
 		row.connected = true;
 		row.exitedAt = undefined;
 		row.exitReason = undefined;
@@ -191,7 +206,9 @@ export class Store {
 	private refreshStatus(row: SessionRow, now: number): void {
 		const previous = row.status;
 		row.status = deriveStatus({ bridge: row.bridge, connected: row.connected, exitedAt: row.exitedAt, cpu: rowCpu(row) }, now);
-		if (previous.kind !== row.status.kind && previous.kind !== "unbridged" && isAlert(row.status.kind)) row.alertUntil = now + ALERT_MS;
+		// Connecting (or reconnecting after /reload) reveals a state; it does not enter one.
+		const revealed = previous.kind === "unbridged" || previous.kind === "connecting";
+		if (previous.kind !== row.status.kind && !revealed && isAlert(row.status.kind)) row.alertUntil = now + ALERT_MS;
 		if (row.alertUntil !== undefined && row.alertUntil < now) row.alertUntil = undefined;
 	}
 

@@ -4,7 +4,8 @@ import { parseGpuQuery } from "../src/dashboard/collectors/gpu.ts";
 import { parseQuota } from "../src/dashboard/collectors/quota.ts";
 import { Series } from "../src/dashboard/model/series.ts";
 import { deriveStatus, STALL_MS } from "../src/dashboard/model/status.ts";
-import { Store } from "../src/dashboard/model/store.ts";
+import { SAMPLE_MS, Store } from "../src/dashboard/model/store.ts";
+import { LANE } from "../src/dashboard/ui/charts.ts";
 import { emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
 const NOW = 1_800_000_000_000;
@@ -20,6 +21,8 @@ function bridge(overrides: Partial<SessionState> = {}): SessionState {
 		usage: { direct: emptyUsage(), indirect: emptyUsage() },
 		usageMinutes: [],
 		tools: [],
+		timeline: [],
+		models: [],
 		...overrides,
 	};
 }
@@ -72,6 +75,35 @@ test("Store raises an alert when a session starts needing the user", () => {
 	assert.ok((store.rows.get(10)?.alertUntil ?? 0) > Date.now());
 	store.acknowledge(10);
 	assert.equal(store.rows.get(10)?.alertUntil, undefined);
+});
+
+test("Store does not alert when connecting reveals a state, only when a session enters one", () => {
+	const store = new Store(() => {});
+	store.setState(10, bridge({ pid: 10, phase: "idle", lastSettledAt: Date.now() }));
+	assert.equal(store.rows.get(10)?.status.kind, "needs-you");
+	assert.equal(store.rows.get(10)?.alertUntil, undefined, "first contact");
+	store.bye(10, "reload");
+	assert.equal(store.rows.get(10)?.status.kind, "connecting");
+	store.setState(10, bridge({ pid: 10, phase: "idle", lastSettledAt: Date.now() }));
+	assert.equal(store.rows.get(10)?.alertUntil, undefined, "reconnect after /reload");
+});
+
+test("Store fills a new row's activity lane from the bridge's timeline", () => {
+	const store = new Store(() => {});
+	const now = Date.now();
+	const minute = 60_000;
+	store.setState(10, bridge({ pid: 10, timeline: [{ at: now - 30 * minute, state: "idle" }, { at: now - 20 * minute, state: "working" }, { at: now - 5 * minute, state: "waiting" }] }));
+	const lane = store.rows.get(10)?.lane.last() ?? [];
+	const count = (state: number) => lane.filter((value) => value === state).length;
+	const samples = (minutes: number) => (minutes * minute) / SAMPLE_MS;
+	assert.ok(Math.abs(lane.length - samples(30)) <= 1, `30 minutes of samples (${lane.length})`);
+	assert.equal(count(LANE.idle), samples(10));
+	assert.equal(count(LANE.working), samples(15));
+	assert.ok(Math.abs(count(LANE.waiting) - samples(5)) <= 1);
+
+	const before = lane.length;
+	store.setState(10, bridge({ pid: 10, timeline: [{ at: now - 50 * minute, state: "working" }] }));
+	assert.equal(store.rows.get(10)?.lane.length, before, "later states do not rebuild the lane");
 });
 
 test("parseQuota reads provider-failover windows", () => {

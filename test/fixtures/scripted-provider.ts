@@ -4,7 +4,12 @@
 // Prompt scripts (last user message):
 //   "sleep N"  -> says "sleeping N" while calling the bash tool with `sleep N`, then replies "slept N"
 //   "fail"     -> ends with stopReason "error"
+//   over LONG_PROMPT characters (bulk input, compaction requests) -> replies "noted"
 //   anything   -> streams "echo: <prompt>" over ~0.6 s
+//
+// Two models: "scripted" and "scripted-thinking" (reasoning, for thinking-level changes).
+
+const LONG_PROMPT = 2000;
 import {
 	type AssistantMessage,
 	type AssistantMessageEventStream,
@@ -71,6 +76,8 @@ function streamScripted(model: Model<any>, context: Context, options?: SimpleStr
 				output.stopReason = "toolUse";
 			} else if (prompt === "fail") {
 				throw new Error("scripted failure");
+			} else if (prompt.length > LONG_PROMPT) {
+				await emitText("noted");
 			} else {
 				await emitText(`echo: ${prompt}`);
 			}
@@ -111,6 +118,15 @@ export default function scriptedProvider(pi: ExtensionAPI): void {
 				id: "scripted",
 				name: "Scripted test model",
 				reasoning: false,
+				input: ["text"],
+				cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+				contextWindow: 200_000,
+				maxTokens: 8192,
+			},
+			{
+				id: "scripted-thinking",
+				name: "Scripted test model with reasoning",
+				reasoning: true,
 				input: ["text"],
 				cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
 				contextWindow: 200_000,

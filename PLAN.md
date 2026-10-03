@@ -2,7 +2,9 @@
 
 Status: implemented (all phases), 2026-10-03. Usage and install are in `README.md`. This file
 is the design record. Decisions changed by your answers (§10) or by the Phase 0 spikes are
-marked *Updated*. Results are in §12.
+marked *Updated*. Results are in §12. The evaluation follow-up (protocol v2, tokens for unpriced
+models, resumed-session state, session control, background badges) is planned and recorded in
+`PLAN-2.md`; its decisions are marked *Updated (plan 2)* here.
 
 ## 1. Goal
 
@@ -25,7 +27,8 @@ abort, close, start new, resume, peek, attach**.
 
 - Replacing pi's own TUI for deep work (attach is one key away instead).
 - Remote/multi-machine monitoring, web UI.
-- Model/thinking switching, compaction, tree navigation from the dashboard.
+- Model/thinking switching, compaction, tree navigation from the dashboard. (*Updated (plan 2):*
+  model, thinking level and compaction are now available; tree navigation is still out.)
 - Editing roadmaps from the dashboard (read-only plan view).
 
 ## 2. Current workflow and what was verified on this machine
@@ -136,7 +139,7 @@ Event → state mapping:
 
 | pi event | bridge state change |
 |---|---|
-| `session_start` | identity: pid, `STY`, `WINDOW`, cwd, sessionId, sessionFile, name, model, thinking; usage totals + last-120-min per-minute buckets computed once from `ctx.sessionManager.getEntries()` (already in memory); request plan |
+| `session_start` | identity: pid, `STY`, `WINDOW`, cwd, sessionId, sessionFile, name, model, thinking; usage totals + last-120-min per-minute buckets computed once from `ctx.sessionManager.getEntries()` (already in memory); request plan. *Updated (plan 2):* the same pass rebuilds `lastSettledAt` (an idle session with a transcript is waiting on the user: the time of its last message), the last 20 tool runs (a call without a result counts as failed), and the `timeline`; `models` lists the scoped models, else all with configured auth |
 | `session_info_changed`, `model_select`, `thinking_level_select` | name / model / thinking |
 | `input` | `lastPrompt` (first 200 chars) |
 | `agent_start` | `phase=working`, `since` |
@@ -144,9 +147,10 @@ Event → state mapping:
 | `tool_execution_start/end` | `activity=tool:<name>` + short arg summary (e.g. first 60 chars of bash command); tool timeline entry; capture `bg_run`/`run_deck` job ids + pids from result details |
 | `message_end` (assistant) | direct usage delta `{ts, model, tokens…, cost}`; `stopReason=error|aborted` → `lastError`; `lastSaid` = assistant text (*updated:* the whole text, bounded to 32 000 chars, so the detail view can show and scroll it; messages that call tools are skipped, as their text only narrates the work) |
 | `message_end` (toolResult with `usage`) | indirect usage delta |
-| `session_compact` | compaction usage; activity `compacting` |
+| `session_compact` | compaction usage; activity `compacting`. *Updated (plan 2):* pi emits it while still compacting and nothing follows, so the bridge checks `ctx.isIdle()` once the event has been handled; before, a manual compaction left the row working. A finished compaction also clears `lastError` |
 | `agent_end` (before settled) | `activity=continuing` (retry / compaction / queued follow-up) |
 | `agent_settled` | `phase=idle` (**needs you**), `since`, `ctx.getContextUsage()` |
+| phase / `lastSettledAt` change (*added, plan 2*) | `timeline` entry: working, waiting (idle after a run) or idle (fresh), kept for one hour and never before the process started |
 | `turn_end` | context usage refresh |
 | `after_provider_response` status 429 | `rateLimited {retryAfter}` |
 | `pi.events "roadmap:changed"` | `plan` |
@@ -160,6 +164,12 @@ Commands (each with request id and ack/error):
 | `abort` | `ctx.abort()` |
 | `shutdown` | `ctx.shutdown()` (graceful; waits for idle) |
 | `rename {name}` | `pi.setSessionName(name)` |
+| `compact` (*added, plan 2*) | `ctx.compact()`; rejected while working; a failure becomes `lastError` |
+| `model {provider, id}` (*added, plan 2*) | `ctx.modelRegistry.find` + `pi.setModel`; errors for unknown models or missing credentials |
+| `thinking {level}` (*added, plan 2*) | `pi.setThinkingLevel` (pi clamps it to the model); the change arrives as `thinking_level_select` |
+
+*Updated (plan 2):* commands may be asynchronous and are acknowledged when they finish; unknown
+commands are rejected instead of acknowledged.
 
 Rules: patches coalesced to ≤ 4 Hz; no file I/O on hot paths; payload strings truncated;
 protocol `hello {version}` handshake; overhead target < 0.5 % of one core.
@@ -172,6 +182,10 @@ replacement, `null` clears), `ack {id, ok, error?}`, `bye {reason}`. Client → 
 `command {id, command}`. *Updated:* usage and tool timeline travel as ordinary patch fields
 (`usage`, `usageMinutes`, `tools`) instead of separate message types, because one mechanism
 was enough. Shared TypeScript types are used by both sides, with one version constant.
+*Updated (plan 2):* version 2 adds `timeline`, `models` and the `compact` / `model` / `thinking`
+commands, with no compatibility path. The hub reports an older bridge as `✖ bridge v1: /reload it`
+and connects again once `/reload` replaces its socket (verified: `/reload` loads the changed
+bridge code).
 
 ### 3.4 Session status model
 
@@ -189,7 +203,11 @@ highlighted for 15 s or until it is selected. *Updated:* no terminal bell and no
 `notify-send`, since you asked for no desktop notifications.
 
 Sessions keep stable slot numbers `1–9` (assigned by first sight, reused after dismissal)
-so muscle memory works; urgency is shown by colour, not by re-sorting.
+so muscle memory works; urgency is shown by colour, not by re-sorting. *Updated (plan 2):* `Tab`
+selects the sessions that need attention (needs you, error, stalled) in turn, longest waiting
+first. Connecting or reconnecting to a bridge reveals a state rather than entering it, so it
+raises no alert. A row's activity lane is filled from the bridge's `timeline` the first time the
+dashboard sees that bridge.
 
 ### 3.5 Resource attribution (direct vs indirect)
 
@@ -210,6 +228,10 @@ survive pid reuse. Per tick:
      Short tool commands are not lost, and processes that exit are not counted twice;
    - orphans whose `/proc/<pid>/environ` contains this session's `PI_SESSION_ID`
      (environ read once per new pid, cached).
+   - *Added (plan 2):* among these processes, GatPi-Harness job supervisors
+     (`managed-job-supervisor.js <job>.launch.json`, named from `<job>.json`) and subagents
+     (`pi --mode rpc --session-dir …/rpc-sessions/<id>`, role from `records/<id>.json`) are listed
+     as background work with their start times (BG).
 4. GPU: `nvidia-smi --query-gpu` (device utilisation and memory) and
    `--query-compute-apps` (per-pid VRAM), mapped through the same pid sets. The panel is
    hidden when `nvidia-smi` is absent. *Updated:* no per-process SM%, because `pmon`
@@ -235,7 +257,10 @@ survive pid reuse. Per tick:
   The cache is derived and disposable; entries for deleted files or files older than
   30 days are pruned at startup.
 - Dollar figures are pi's computed **API-equivalent cost**; with subscription logins the
-  real constraint is the quota windows, so both are shown.
+  real constraint is the quota windows, so both are shown. *Updated (plan 2):* some models have
+  no price in pi (cost 0). Rows and the detail view show their tokens instead, the usage view
+  switches between $ and tokens (`$`), and quota shares are weighted by tokens for providers
+  without cost in the window.
 - Known gap: LLM calls made by extensions outside the session (e.g. advisory/memory
   helpers) are not in session usage; shown as "not tracked" in help, not guessed.
 
@@ -345,7 +370,8 @@ Compact (< 100 cols) drops MEM, API/min and the plan title:
 
 `1-9`/`↑↓`/`jk` select · `⏎` detail · `Esc` back · `p` prompt · `x` abort (confirm) ·
 `a` attach · `v` peek · `n` new · `r` resume · `c` close · `C` recycle · `u` usage ·
-`?` help · `q` quit.
+`?` help · `q` quit. *Added (plan 2):* `Tab` next session needing attention · `M` model ·
+`T` thinking level · `Z` compact (confirm) · `$` cost/tokens in the usage view.
 
 ## 5. Repository layout and tooling
 
@@ -444,9 +470,10 @@ Each phase ends with a working tool; later phases add capability on top.
 ## 11. Later ideas (not in scope)
 
 - Goal/automation-loop/run-deck badges via the same `pi.events` pattern as the roadmap.
+  (*Plan 2* added badges for `bg_run` jobs and subagents from the process tree.)
 - Classify the last assistant message (done / asks a question / blocked) to sharpen
   "needs you" — costs tokens, opt-in only.
-- Model/thinking switch and `/compact` from the dashboard.
+- ~~Model/thinking switch and `/compact` from the dashboard.~~ Done in plan 2.
 - Broadcast a prompt to several sessions.
 
 ## 12. Results

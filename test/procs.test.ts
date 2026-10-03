@@ -1,7 +1,9 @@
 // Resource attribution against real processes (not mocks).
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, test } from "node:test";
 import { parseStat, ProcSampler } from "../src/dashboard/collectors/procs.ts";
 
@@ -89,4 +91,27 @@ test("work run in a transient systemd unit is attributed to the session that sta
 	assert.match(unit.label, /^run-p\d+-i\d+/);
 	assert.ok(unit.cpu > 0.5, `unit CPU counted (${unit.cpu})`);
 	assert.ok(resources.indirectCpu > 0.5, `indirect CPU includes the unit (${resources.indirectCpu})`);
+});
+
+test("background jobs and subagents among a session's processes are recognised with their names", async (t) => {
+	const project = mkdtempSync(join(tmpdir(), "pi-dash-bg-"));
+	t.after(() => rmSync(project, { recursive: true, force: true }));
+	mkdirSync(join(project, ".pi", "jobs"), { recursive: true });
+	mkdirSync(join(project, ".pi", "subagents", "records"), { recursive: true });
+	writeFileSync(join(project, ".pi", "jobs", "job-1.json"), JSON.stringify({ jobId: "job-1", name: "nightly-build" }));
+	writeFileSync(join(project, ".pi", "subagents", "records", "sub_1.json"), JSON.stringify({ id: "sub_1", role: "coder" }));
+	// Stand-ins with the command lines GatPi-Harness uses; `; :` keeps sh (and its arguments) alive.
+	const job = `sh -c 'sleep 1000; :' /opt/GatPi-Harness/src/managed-job-supervisor.js ${join(project, ".pi", "jobs", "job-1.launch.json")}`;
+	const subagent = `sh -c 'sleep 1000; :' pi --mode rpc --session-dir ${join(project, ".pi", "subagents", "rpc-sessions", "sub_1")}`;
+	const root = spawn("sh", ["-c", `${job} & ${subagent} & wait`], { detached: true, stdio: "ignore" });
+	children.push(root);
+	await sleep(300);
+	const resources = new ProcSampler().sample([{ key: "t", pid: root.pid as number }], undefined).resources.get("t");
+	assert.ok(resources);
+	const found = resources.background.map((work) => [work.kind, work.label]).sort();
+	assert.deepEqual(found, [
+		["job", "nightly-build"],
+		["subagent", "coder"],
+	]);
+	for (const work of resources.background) assert.ok(Math.abs(Date.now() - work.startedAt) < 5000, `start time is the process start (${work.startedAt})`);
 });

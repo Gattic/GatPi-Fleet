@@ -3,7 +3,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Directory holding one `<pid>.sock` per bridged pi process (mode 0700). */
 export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -113,6 +113,21 @@ export interface ToolRun {
 
 export type Phase = "working" | "idle";
 
+/** What a session is doing, for the activity lane: waiting means idle after a run (the user is up). */
+export type TimelineState = "working" | "waiting" | "idle";
+
+/** A change of state; it holds until the next entry. */
+export interface TimelineEntry {
+	at: number;
+	state: TimelineState;
+}
+
+/** How far back the timeline reaches. */
+export const TIMELINE_MS = 3_600_000;
+
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
 export interface SessionState {
 	pid: number;
 	/** GNU screen session (`$STY`) and window hosting this pi, when inside screen. */
@@ -146,6 +161,10 @@ export interface SessionState {
 	plan?: PlanSnapshot;
 	/** Most recent tool runs, oldest first. */
 	tools: ToolRun[];
+	/** State changes over the last TIMELINE_MS, oldest first, starting no earlier than the pi process. */
+	timeline: TimelineEntry[];
+	/** Models the session can switch to ("provider/modelId"): its scoped models, else all with configured auth. */
+	models: string[];
 }
 
 /** Top-level field replacement; `null` clears a field. */
@@ -164,7 +183,11 @@ export type Command =
 	| { kind: "prompt"; text: string; deliverAs?: DeliverAs }
 	| { kind: "abort" }
 	| { kind: "shutdown" }
-	| { kind: "rename"; name: string };
+	| { kind: "rename"; name: string }
+	/** Only while idle. */
+	| { kind: "compact" }
+	| { kind: "model"; provider: string; id: string }
+	| { kind: "thinking"; level: ThinkingLevel };
 
 export type ClientMessage = { type: "command"; id: number; command: Command };
 

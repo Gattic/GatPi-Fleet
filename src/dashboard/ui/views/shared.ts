@@ -1,10 +1,11 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { GpuMonitor } from "../../collectors/gpu.ts";
 import type { QuotaMonitor, QuotaWindow } from "../../collectors/quota.ts";
+import { PROTOCOL_VERSION } from "../../../protocol/index.ts";
 import { rowLabel, type SessionRow, type Store } from "../../model/store.ts";
 import type { UsageIndex } from "../../usage/usage-index.ts";
 import { gauge, planBar, sparkline } from "../charts.ts";
-import { fit, fitRight, fmtBytes, fmtCost, fmtDuration, oneLine } from "../format.ts";
+import { fit, fitRight, fmtBytes, fmtCost, fmtDuration, fmtTokens, oneLine } from "../format.ts";
 import type { TextPane } from "../text-pane.ts";
 import { levelColor, type Paint, theme } from "../theme.ts";
 
@@ -21,6 +22,10 @@ export interface ViewContext {
 
 export const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 const DAY_MS = 86_400_000;
+/** Memory bars and charts never scale below this, so small sessions do not look full. */
+export const MIN_MEM_SCALE = 4 * 1024 ** 3;
+/** CPU charts never scale below one core. */
+export const MIN_CPU_SCALE = 1;
 
 export type ViewName = "overview" | "detail" | "usage";
 
@@ -35,11 +40,27 @@ export function background(line: string, width: number, paint: Paint): string {
 	return paint(fit(line, width));
 }
 
-export function sessionCost(row: SessionRow, usage: UsageIndex): { direct: number; indirect: number; subagents: number; total: number } {
-	const direct = row.bridge?.usage.direct.cost ?? 0;
-	const indirect = row.bridge?.usage.indirect.cost ?? 0;
-	const subagents = row.bridge ? usage.subagentUsage(row.bridge.sessionId).cost : 0;
-	return { direct, indirect, subagents, total: direct + indirect + subagents };
+/** API usage as pi's API-equivalent cost and as tokens (the only measure for models without a price). */
+export interface Spend {
+	cost: number;
+	tokens: number;
+}
+
+export interface SessionUsage {
+	direct: Spend;
+	/** Nested LLM work done by tools. */
+	indirect: Spend;
+	subagents: Spend;
+	total: Spend;
+}
+
+export function sessionUsage(row: SessionRow, usage: UsageIndex): SessionUsage {
+	const bridge = row.bridge;
+	const direct = { cost: bridge?.usage.direct.cost ?? 0, tokens: bridge?.usage.direct.tokens ?? 0 };
+	const indirect = { cost: bridge?.usage.indirect.cost ?? 0, tokens: bridge?.usage.indirect.tokens ?? 0 };
+	const sub = bridge ? usage.subagentUsage(bridge.sessionId) : undefined;
+	const subagents = { cost: sub?.cost ?? 0, tokens: sub?.tokens ?? 0 };
+	return { direct, indirect, subagents, total: { cost: direct.cost + indirect.cost + subagents.cost, tokens: direct.tokens + indirect.tokens + subagents.tokens } };
 }
 
 export function startOfToday(now: number): number {
@@ -147,7 +168,11 @@ const ACTIVITY_ICON: Record<string, string> = { tool: "⚙", thinking: "✎", wr
 export function statusCell(row: SessionRow, ctx: ViewContext): string {
 	const status = row.status;
 	const timer = status.since !== undefined ? theme.dim(` ${fmtDuration(ctx.now - status.since)}`) : "";
-	if (row.incompatibleVersion !== undefined) return theme.error(`✖ bridge v${row.incompatibleVersion}`);
+	if (row.incompatibleVersion !== undefined) {
+		// An older bridge is updated by /reload in that session; a newer one needs a newer pi-dash.
+		const fix = row.incompatibleVersion < PROTOCOL_VERSION ? "/reload it" : "update pi-dash";
+		return theme.error(`✖ bridge v${row.incompatibleVersion}: ${fix}`);
+	}
 	switch (status.kind) {
 		case "working": {
 			const icon = ACTIVITY_ICON[row.bridge?.activity?.kind ?? "model"] ?? "…";
@@ -205,8 +230,28 @@ export function rowName(row: SessionRow, width: number, selected: boolean): stri
 	return fit(selected ? theme.bold(theme.text(label)) : theme.text(label), width);
 }
 
-export function costText(dollars: number, width: number): string {
-	return fitRight(dollars > 0 ? theme.text(fmtCost(dollars)) : theme.dim("—"), width);
+/** Dollars when the models have a price, otherwise tokens marked `t`. */
+export function spendText(spend: Spend, width: number): string {
+	if (spend.cost > 0) return fitRight(theme.text(fmtCost(spend.cost)), width);
+	if (spend.tokens > 0) return fitRight(theme.muted(`${fmtTokens(spend.tokens)}t`), width);
+	return fitRight(theme.dim("—"), width);
+}
+
+/** Compact count of a session's background work, e.g. `2j 1s` (jobs, subagents). */
+export function backgroundBadge(row: SessionRow): string {
+	const work = row.exitedAt === undefined ? (row.resources?.background ?? []) : [];
+	const jobs = work.filter((item) => item.kind === "job").length;
+	const subagents = work.length - jobs;
+	const part = (count: number, letter: string) => (count ? `${theme.text(String(count))}${theme.dim(letter)}` : "");
+	return [part(jobs, "j"), part(subagents, "s")].filter(Boolean).join(" ");
+}
+
+/** The session's background jobs and subagents with their age, when it has any. */
+export function backgroundLine(row: SessionRow, now: number, width: number): string | undefined {
+	const work = row.exitedAt === undefined ? (row.resources?.background ?? []) : [];
+	if (!work.length) return undefined;
+	const items = work.map((item) => `${theme.muted(item.kind)} ${theme.text(item.label)} ${theme.dim(fmtDuration(now - item.startedAt))}`);
+	return fit(`${field("BG")}${items.join(theme.faint("  ·  "))}`, width);
 }
 
 export function laneLegend(): string {

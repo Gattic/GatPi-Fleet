@@ -66,7 +66,7 @@ function harness(sessionRoot: string) {
 test("quit asks first while a close-and-restart is waiting for its session to exit", () => {
 	const ui = harness("/nonexistent");
 	const now = Date.now();
-	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [] });
+	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [] });
 
 	ui.press("C");
 	assert.match(ui.dialog() ?? "", /Close and start a fresh session/);
@@ -106,7 +106,7 @@ test("resume asks first when a live session in the project has no bridge", (t) =
 	});
 
 	const ui = harness(join(root, "sessions"));
-	ui.store.applySample({ resources: new Map(), piProcesses: [{ pid: 202, cwd }], host: { cpu: 0, cores: 1, memUsed: 0, memTotal: 1, load1: 0 } }, undefined, Date.now());
+	ui.store.applySample({ resources: new Map(), piProcesses: [{ pid: 202, startedAt: Date.now(), cwd }], host: { cpu: 0, cores: 1, memUsed: 0, memTotal: 1, load1: 0 } }, undefined, Date.now());
 
 	ui.press("r");
 	assert.match(ui.dialog() ?? "", /Resume in/);
@@ -119,7 +119,7 @@ test("resume asks first when a live session in the project has no bridge", (t) =
 
 function session(overrides: Partial<SessionState>): SessionState {
 	const now = Date.now();
-	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], ...overrides };
+	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], ...overrides };
 }
 
 test("the composer offers the suggested next prompt while idle; Tab takes it", () => {
@@ -166,4 +166,53 @@ test("the latest reply opens full screen with s or a click on SAID, and scrolls 
 	assert.ok(ui.app.handleMouse(mouse("press", row))?.handled);
 	ui.app.handleMouse(mouse("click", row));
 	assert.match(ui.dialog() ?? "", /said · proj/);
+});
+
+test("Tab walks the sessions that need attention, longest waiting first", () => {
+	const ui = harness("/nonexistent");
+	const now = Date.now();
+	ui.store.setState(101, session({ pid: 101, cwd: "/p/one", lastSettledAt: now - 60_000 }));
+	ui.store.setState(102, session({ pid: 102, cwd: "/p/two", lastSettledAt: now - 10_000, lastError: { message: "overloaded", at: now - 10_000 } }));
+	ui.store.setState(103, session({ pid: 103, cwd: "/p/three", phase: "working" }));
+	ui.store.setState(104, session({ pid: 104, cwd: "/p/four", lastSettledAt: now - 120_000 }));
+	const selected = () => /^▌\d (\S+)/.exec(ui.app.render(120).map(strip).find((line) => line.startsWith("▌")) ?? "")?.[1];
+	ui.press("3"); // the working session: Tab starts at the longest waiting one
+	const walk = Array.from({ length: 4 }, () => {
+		ui.press("\t");
+		return selected();
+	});
+	assert.deepEqual(walk, ["four", "one", "two", "four"]);
+
+	ui.store.setState(101, session({ pid: 101, cwd: "/p/one", phase: "working" }));
+	ui.store.setState(102, session({ pid: 102, cwd: "/p/two", phase: "working" }));
+	ui.store.setState(104, session({ pid: 104, cwd: "/p/four", phase: "working" }));
+	ui.press("\t");
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /No session needs you/);
+});
+
+test("M and T switch the model and thinking level; Z compacts after asking, only when idle", () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({ model: "anthropic/opus", thinking: "high", models: ["anthropic/opus", "openai-codex/gpt-6"], context: { tokens: 160_000, window: 200_000, percent: 80 } }));
+
+	ui.press("M");
+	assert.match(ui.dialog() ?? "", /Model for proj[\s\S]*opus +anthropic · current[\s\S]*gpt-6 +openai-codex/);
+	ui.press("\x1b[B", "\r");
+	assert.deepEqual(ui.sent.at(-1), { kind: "model", provider: "openai-codex", id: "gpt-6" });
+
+	ui.press("T");
+	assert.match(ui.dialog() ?? "", /high +current/);
+	ui.press("\x1b[B", "\x1b[B", "\r");
+	assert.deepEqual(ui.sent.at(-1), { kind: "thinking", level: "low" });
+
+	ui.press("Z");
+	assert.match(ui.dialog() ?? "", /Compact proj now\? Its context is 80% full\./);
+	ui.press("y");
+	assert.deepEqual(ui.sent.at(-1), { kind: "compact" });
+
+	ui.store.setState(101, session({ phase: "working" }));
+	const sent = ui.sent.length;
+	ui.press("Z");
+	assert.equal(ui.dialog(), undefined, "no dialog while working");
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj is working; compact it when it is idle/);
+	assert.equal(ui.sent.length, sent);
 });

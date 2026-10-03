@@ -12,10 +12,19 @@ export function fmtBytes(bytes: number): string {
 	return `${Math.round(bytes / 1024 ** 2)}M`;
 }
 
+const TOKEN_UNITS: [number, string][] = [
+	[1e9, "B"],
+	[1e6, "M"],
+	[1e3, "k"],
+];
+
+/** Like fmtCost, three significant digits are enough: `12.3M`, `173M`. */
 export function fmtTokens(tokens: number): string {
-	if (tokens >= 1e9) return `${(tokens / 1e9).toFixed(1)}B`;
-	if (tokens >= 1e6) return `${(tokens / 1e6).toFixed(1)}M`;
-	if (tokens >= 1e3) return `${(tokens / 1e3).toFixed(1)}k`;
+	for (const [unit, suffix] of TOKEN_UNITS) {
+		if (tokens < unit) continue;
+		const value = tokens / unit;
+		return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)}${suffix}`;
+	}
 	return String(Math.round(tokens));
 }
 

@@ -91,6 +91,11 @@ test("snapshot identifies the session, its screen and its plan", () => {
 	assert.equal(state.phase, "idle");
 	assert.equal(state.plan?.title, "E2E plan");
 	assert.deepEqual(state.plan?.activePath.map((step) => step.title), ["Two"]);
+	assert.deepEqual(state.models, ["dash-test/scripted", "dash-test/scripted-thinking"]);
+	assert.equal(state.lastSettledAt, undefined, "a fresh session is ready, not waiting");
+	assert.equal(state.timeline.length, 1);
+	assert.equal(state.timeline[0].state, "idle");
+	assert.ok(state.timeline[0].at <= Date.now() - 100, "the timeline starts with the process");
 });
 
 test("a prompt from the dashboard runs a turn: working → tool → idle with usage and a suggestion", async () => {
@@ -107,6 +112,7 @@ test("a prompt from the dashboard runs a turn: working → tool → idle with us
 	assert.equal(state.tools.at(-1)?.name, "bash");
 	assert.ok(state.tools.at(-1)?.endedAt);
 	assert.ok((state.context?.percent ?? 0) > 0);
+	assert.deepEqual(state.timeline.map((entry) => entry.state), ["idle", "working", "waiting"]);
 });
 
 test("a multi-line reply arrives whole", async () => {
@@ -155,8 +161,18 @@ test("a reload rebuilds the latest reply from history, skipping the aborted run'
 	await waitFor("bye reload", () => byes.includes("reload"));
 	states.delete(pid);
 	await waitFor("snapshot after reload", () => states.get(pid));
-	assert.equal(current().phase, "idle");
-	assert.equal(current().lastSaid, "echo: steered");
+	const state = current();
+	assert.equal(state.phase, "idle");
+	assert.equal(state.lastSaid, "echo: steered");
+	assert.ok(state.lastSettledAt, "a session with history is waiting on the user, not fresh");
+	const bash = state.tools.filter((run) => run.name === "bash");
+	assert.deepEqual(bash.map((run) => run.detail), ["sleep 1", "sleep 1", "sleep 2", "sleep 30"], "tool runs are rebuilt from the transcript");
+	assert.ok(bash.every((run) => run.endedAt !== undefined));
+	assert.ok(bash.at(-1)?.isError, "the aborted run did not succeed");
+	const timeline = state.timeline.map((entry) => entry.state);
+	assert.equal(timeline[0], "idle", "the process started before the first prompt");
+	assert.equal(timeline.at(-1), "waiting");
+	assert.equal(timeline.filter((entry) => entry === "working").length, 6, "one run per prompt since the process started, the steer included");
 });
 
 test("provider errors surface as lastError", async () => {
@@ -168,6 +184,38 @@ test("provider errors surface as lastError", async () => {
 test("rename updates the session name", async () => {
 	await hub.send(pid, { kind: "rename", name: "e2e session" });
 	await waitFor("name", () => current().name === "e2e session");
+});
+
+test("model and thinking level can be switched; pi clamps the level to the model", async () => {
+	await hub.send(pid, { kind: "model", provider: "dash-test", id: "scripted-thinking" });
+	await waitFor("model", () => current().model === "dash-test/scripted-thinking");
+	await hub.send(pid, { kind: "thinking", level: "high" });
+	await waitFor("thinking", () => current().thinking === "high");
+	await hub.send(pid, { kind: "model", provider: "dash-test", id: "scripted" });
+	await waitFor("model back, thinking clamped", () => current().model === "dash-test/scripted" && current().thinking === "off");
+	await assert.rejects(hub.send(pid, { kind: "model", provider: "dash-test", id: "missing" }), /unknown model dash-test\/missing/);
+});
+
+test("compact runs only while idle, reports failures, and compacts a long session", async () => {
+	await hub.send(pid, { kind: "prompt", text: "sleep 2" });
+	await waitFor("working", () => current().phase === "working");
+	await assert.rejects(hub.send(pid, { kind: "compact" }), /session is working/);
+	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "slept 2");
+
+	await hub.send(pid, { kind: "compact" });
+	await waitFor("compaction error", () => current().lastError);
+	assert.match(current().lastError?.message ?? "", /^compaction failed: Nothing to compact/);
+
+	// Without spaces the scripted model takes a long prompt in one step.
+	for (const letter of ["a", "b", "c", "d"]) {
+		const settled = current().lastSettledAt ?? 0;
+		await hub.send(pid, { kind: "prompt", text: letter.repeat(60_000) });
+		await waitFor("bulk turn", () => current().phase === "idle" && (current().lastSettledAt ?? 0) > settled);
+	}
+	const before = current().usage.direct.tokens;
+	await hub.send(pid, { kind: "compact" });
+	await waitFor("compacted, then idle", () => current().usage.direct.tokens > before && current().phase === "idle", 30_000);
+	assert.equal(current().lastError, undefined, "the finished compaction clears the earlier failure");
 });
 
 test("/new replaces the session: bye, then a fresh snapshot on the same pid", async () => {

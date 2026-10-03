@@ -362,8 +362,9 @@ const HELP: [string, [string, string][]][] = [
 		"NAVIGATE",
 		[
 			["1-9 ↑↓ j k", "select session"],
+			["Tab", "next session that needs you (longest waiting first)"],
 			["⏎ / Esc", "detail view / back"],
-			["u", "usage view (t / w / m: today, 7d, 30d)"],
+			["u", "usage view (t / w / m: today, 7d, 30d; $: cost or tokens)"],
 			["q / Ctrl-c", "quit (sessions keep running)"],
 		],
 	],
@@ -376,6 +377,8 @@ const HELP: [string, [string, string][]][] = [
 			["x", "abort the current run"],
 			["v", "peek: live read-only mirror of the pi screen"],
 			["a", "attach (screen -rx; Ctrl-a d returns here)"],
+			["M / T", "switch model / thinking level"],
+			["Z", "compact the conversation (when idle)"],
 			["R", "rename session"],
 		],
 	],
@@ -416,6 +419,8 @@ export class Help implements Component {
 			["STATES", `${theme.working("⠹")} working  ${theme.waiting("◆")} needs you  ${theme.waiting("◆?")} stalled (no events, no CPU)  ${theme.error("✖")} error  ${theme.dim("○ ready  ◌ exited  ? no bridge")}`],
 			["BARS", `${theme.direct("▓")} pi process  ${theme.indirect("▒")} indirect: tools, builds (systemd units), jobs, subagents`],
 			["", `${theme.accent("▰▱")} roadmap progress   ${theme.working("█")} working ${theme.waiting("▒")} waiting on you ${theme.dim("░")} idle (activity lane)`],
+			["COLUMNS", `${theme.text("CTX")} ${theme.muted("context used")}   ${theme.text("$")} ${theme.muted("API-equivalent cost, or tokens (173Mt) for unpriced models")}`],
+			["", `${theme.text("BG")} ${theme.muted("background work:")} ${theme.text("j")} ${theme.muted("bg_run jobs,")} ${theme.text("s")} ${theme.muted("subagents")}`],
 			["NOTES", theme.muted("$ is pi's API-equivalent cost; quota % is the subscription limit that actually applies.")],
 			["", theme.muted("Not tracked: LLM calls extensions make outside the session transcript.")],
 		];

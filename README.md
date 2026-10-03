@@ -3,20 +3,25 @@
 One terminal tab to watch and drive every running [pi](https://pi.dev) session.
 
 - **State at a glance**: working (with the current tool or thinking/writing), waiting for you,
-  error / rate limited, stalled, exited. When a session starts needing you, its row is highlighted.
-- **Plan progress**: the active roadmap step and a progress bar (from the GatPi-Harness roadmap).
+  error / rate limited, stalled, exited. When a session starts needing you, its row is highlighted,
+  and `Tab` jumps to the session that has waited longest. An activity lane shows the last hour,
+  even right after pi-dash starts.
+- **Plan progress**: the active roadmap step and a progress bar (from the GatPi-Harness roadmap), and
+  how full each session's context window is (CTX).
 - **Resources**: CPU, memory and GPU memory per session, split into the pi process itself (▓) and
   everything it started (▒): tool commands, LSP servers, subagents, background jobs, `build_project`
-  systemd units, and detached processes that carry the session's `PI_SESSION_ID`.
+  systemd units, and detached processes that carry the session's `PI_SESSION_ID`. Running
+  `bg_run` jobs and subagents are listed by name (BG).
 - **API usage**: tokens and API-equivalent $ per session (direct, nested tool LLM calls,
   subagents), per-minute trends, subscription quota windows with an estimated per-session share,
-  and a usage view for today / 7 days / 30 days.
-- **Conversation**: the last prompt, the latest reply (previewed under the session list; whole,
-  as Markdown, scrollable, or full screen), and the suggested next prompt from the GatPi-Harness
-  prompt suggestions.
+  and a usage view for today / 7 days / 30 days in $ or tokens. Sessions on models without a
+  price show tokens (`173Mt`) instead of an empty $.
+- **Conversation**: the last prompt, the recent tool calls with their arguments, the latest reply
+  (previewed under the session list; whole, as Markdown, scrollable, or full screen), and the
+  suggested next prompt from the GatPi-Harness prompt suggestions.
 - **Control without switching tabs**: prompt (steer or follow-up while working, or take the
-  suggested next prompt), abort, close, close-and-restart, new session, resume, rename, live
-  read-only peek, and full attach.
+  suggested next prompt), abort, compact, switch model or thinking level, close,
+  close-and-restart, new session, resume, rename, live read-only peek, and full attach.
 
 ## Requirements
 
@@ -37,6 +42,10 @@ ln -s /home/user/dev/GatPi-Fleet/bin/pi-dash ~/.local/bin/pi-dash
 bridge loads only in interactive pi sessions, not in `pi -p` or RPC subagents. Sessions started
 before the install show up as `? no bridge` (resources only) until they are restarted or resumed.
 
+After an update that changes the bridge protocol, sessions still running the old bridge show
+`✖ bridge v1: /reload it`. Type `/reload` in such a session (attach with `a`): pi loads the current
+bridge and pi-dash connects to it.
+
 ## Use
 
 Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discovered automatically.
@@ -44,9 +53,12 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | Key | Action |
 |---|---|
 | `1`–`9`, `↑↓`, `j k` | select a session (slots stay stable) |
+| `Tab` | select the next session that needs you (needs you, error, stalled; longest waiting first) |
 | `⏎` / `Esc` | detail view / back |
 | `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run). When it is idle, the suggested next prompt shows under the empty editor and `Tab` takes it |
 | `x` | abort the current run |
+| `Z` | compact the conversation (idle sessions; asks first) |
+| `M` / `T` | switch the model / thinking level (pi limits the level to what the model supports) |
 | `s` | read the latest reply full screen (`↑↓` `PgUp` `PgDn` `Home` `End` scroll, `p` prompt). Clicking SAID in the detail view does the same |
 | `PgUp` `PgDn` | scroll SAID in the detail view (the mouse wheel over it works too) |
 | `v` | peek: live read-only mirror of the session's screen (catches dialogs that only show in pi) |
@@ -56,11 +68,11 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `c` / `C` | close / close and start a fresh session in the same project and slot |
 | `R` | rename the session |
 | `d` | dismiss an exited row |
-| `u` | usage view (`t` / `w` / `m`: today, 7 days, 30 days) |
+| `u` | usage view (`t` / `w` / `m`: today, 7 days, 30 days; `$`: cost or tokens) |
 | `?` | help and legend |
 | `q` | quit (sessions keep running) |
 
-Abort, close and close-and-restart ask before they act. Resume also asks when the project has a
+Abort, compact, close and close-and-restart ask before they act. Resume also asks when the project has a
 live session without a bridge: pi-dash cannot see which session file that pi has open, and two pi
 processes writing one file mix its history. Quit asks while a close-and-restart is still waiting
 for its session to exit, because only a running pi-dash starts the replacement.
@@ -98,8 +110,9 @@ The first start indexes recent session files in a background thread; on this mac
 about 17 s for 3.6 GB, and later scans take milliseconds.
 
 $ figures are pi's API-equivalent cost. With subscription logins, the quota windows are the
-limit that actually applies. LLM calls that extensions make outside the session transcript are not
-counted.
+limit that actually applies. Models without a price in pi report no cost: they count in tokens,
+and their quota share is estimated from tokens. LLM calls that extensions make outside the session
+transcript are not counted.
 
 ## Development
 
