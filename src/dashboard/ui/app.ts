@@ -136,10 +136,7 @@ export class App implements Component {
 
 	handleInput(data: string): void {
 		const store = this.services.store;
-		if (matchesKey(data, Key.ctrl("c")) || data === "q") {
-			this.services.quit();
-			return;
-		}
+		if (matchesKey(data, Key.ctrl("c")) || data === "q") return this.requestQuit();
 		if (data === "?") return this.showHelp();
 		if (/^[1-9]$/.test(data)) {
 			this.select(store.bySlot(Number(data)));
@@ -260,6 +257,14 @@ export class App implements Component {
 		);
 	}
 
+	/** Pending recycles live only in this process, so quitting drops their replacement launch. */
+	private requestQuit(): void {
+		const pending = [...this.recycles.values()].map((recycle) => recycle.label);
+		if (!pending.length) return this.services.quit();
+		const message = `Close-and-restart is still pending for ${pending.join(", ")}. If pi-dash quits now, ${pending.length === 1 ? "that session still closes" : "those sessions still close"} but no new session starts. Quit anyway?`;
+		this.confirm("Quit", message, () => this.services.quit());
+	}
+
 	private compose(row: SessionRow): void {
 		if (!this.requireBridge(row)) return;
 		const store = this.services.store;
@@ -337,8 +342,12 @@ export class App implements Component {
 		const cwd = rowCwd(row);
 		if (!cwd) return this.notify("Unknown project directory", true);
 		const open = new Map<string, SessionRow>();
+		// Live sessions in this project without a bridge do not report which session file they hold.
+		const unknown: SessionRow[] = [];
 		for (const other of this.services.store.rows.values()) {
-			if (other.exitedAt === undefined && other.bridge?.sessionFile) open.set(other.bridge.sessionFile, other);
+			if (other.exitedAt !== undefined) continue;
+			if (other.bridge?.sessionFile) open.set(other.bridge.sessionFile, other);
+			else if (!other.bridge && rowCwd(other) === cwd) unknown.push(other);
 		}
 		const now = Date.now();
 		const sessions = listSessions(this.services.sessionRoot, cwd, this.services.usage);
@@ -364,7 +373,13 @@ export class App implements Component {
 						return;
 					}
 					this.closeOverlay();
-					this.launch(cwd, basename(cwd), item.value, row.exitedAt !== undefined ? row : undefined);
+					const resume = () => this.launch(cwd, basename(cwd), item.value, row.exitedAt !== undefined ? row : undefined);
+					if (!unknown.length) return resume();
+					// pi appends to session files without locking: two processes on one file mix their histories.
+					const holders = unknown.map((other) => (other.slot !== undefined ? `slot ${other.slot}` : `pid ${other.pid}`)).join(", ");
+					const one = unknown.length === 1;
+					const message = `${holders} in this project ${one ? "has" : "have"} no bridge, so pi-dash cannot tell which session ${one ? "it has" : "they have"} open. If ${one ? "it is" : "one of them is"} "${item.label}", two pi processes will write to the same session file and mix its history. Resume anyway?`;
+					this.confirm("Resume", message, resume);
 				},
 				onCancel: () => this.closeOverlay(),
 			}),

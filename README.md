@@ -54,6 +54,11 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `?` | help and legend |
 | `q` | quit (sessions keep running) |
 
+Abort, close and close-and-restart ask before they act. Resume also asks when the project has a
+live session without a bridge: pi-dash cannot see which session file that pi has open, and two pi
+processes writing one file mix its history. Quit asks while a close-and-restart is still waiting
+for its session to exit, because only a running pi-dash starts the replacement.
+
 Sessions started from the dashboard run pi in a detached screen named `pi-<project>` using
 [`config/screenrc`](config/screenrc) (your usual settings, but only one window). When pi exits,
 its screen ends. Existing screens you started yourself are picked up as they are.
