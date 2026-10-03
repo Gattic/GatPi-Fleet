@@ -11,15 +11,18 @@ One terminal tab to watch and drive every running [pi](https://pi.dev) session.
 - **API usage**: tokens and API-equivalent $ per session (direct, nested tool LLM calls,
   subagents), per-minute trends, subscription quota windows with an estimated per-session share,
   and a usage view for today / 7 days / 30 days.
-- **Control without switching tabs**: prompt (steer or follow-up while working), abort, close,
-  close-and-restart, new session, resume, rename, live read-only peek, and full attach.
+- **Conversation**: the last prompt, the latest reply (whole, as Markdown, scrollable, or full
+  screen), and the suggested next prompt from the GatPi-Harness prompt suggestions.
+- **Control without switching tabs**: prompt (steer or follow-up while working, or take the
+  suggested next prompt), abort, close, close-and-restart, new session, resume, rename, live
+  read-only peek, and full attach.
 
 ## Requirements
 
 - Linux (`/proc`, cgroup v2), Node ≥ 22.19 (runs the TypeScript sources directly), GNU screen.
 - pi ≥ 0.84 with the bridge extension installed (below).
-- Optional: `nvidia-smi` for GPU stats, GatPi-Harness for roadmap progress, the `pi-multi-account`
-  failover state for quota gauges.
+- Optional: `nvidia-smi` for GPU stats, GatPi-Harness for roadmap progress and next-prompt
+  suggestions, the `pi-multi-account` failover state for quota gauges.
 
 ## Install
 
@@ -41,8 +44,10 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 |---|---|
 | `1`–`9`, `↑↓`, `j k` | select a session (slots stay stable) |
 | `⏎` / `Esc` | detail view / back |
-| `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run) |
+| `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run). When it is idle, the suggested next prompt shows under the empty editor and `Tab` takes it |
 | `x` | abort the current run |
+| `s` | read the latest reply full screen (`↑↓` `PgUp` `PgDn` `Home` `End` scroll, `p` prompt). Clicking SAID in the detail view does the same |
+| `PgUp` `PgDn` | scroll SAID in the detail view (the mouse wheel over it works too) |
 | `v` | peek: live read-only mirror of the session's screen (catches dialogs that only show in pi) |
 | `a` | attach with `screen -rx`; the session stays visible in its original terminal too. `Ctrl-a d` returns |
 | `n` | new session: pick a recent project or type a directory path |
@@ -65,6 +70,10 @@ its screen ends. Existing screens you started yourself are picked up as they are
 
 Slash commands only work inside pi: attach (`a`) to use them.
 
+pi-dash takes mouse input for clicks and the wheel. Dragging selects text and copies it with
+OSC 52; where the terminal does not support that, hold `Shift` while dragging to use the
+terminal's own selection.
+
 ## How it works
 
 ```
@@ -79,7 +88,8 @@ pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.soc
 - `src/dashboard/`: the TUI (built on `@earendil-works/pi-tui`), collectors, and usage index. It
   holds no durable state; restarting it loses nothing.
 - Roadmap progress comes from the GatPi-Harness roadmap extension, which emits `roadmap:changed` on
-  pi's extension event bus.
+  pi's extension event bus. The suggested next prompt comes the same way from the GatPi-Harness
+  prompt-suggestions extension (`prompt-suggestion:changed`).
 
 Files written: the usage index cache at `~/.cache/pi-dash/usage-index.json` (derived, keeps
 30 days, about 200 KB), and short-lived peek captures and sockets in `$XDG_RUNTIME_DIR/pi-dash/`.

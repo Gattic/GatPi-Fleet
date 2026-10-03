@@ -61,3 +61,7 @@ export function fitRight(text: string, width: number): string {
 export function oneLine(text: string): string {
 	return text.replace(/\s+/g, " ").trim();
 }
+
+export function firstLine(text: string): string {
+	return text.split("\n").find((line) => line.trim())?.trim() ?? "";
+}

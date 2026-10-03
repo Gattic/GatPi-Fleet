@@ -13,6 +13,7 @@ import {
 	LineDecoder,
 	type PiUsage,
 	type PlanSnapshot,
+	PROMPT_SUGGESTION_CHANGED_EVENT,
 	PROTOCOL_VERSION,
 	ROADMAP_CHANGED_EVENT,
 	type SessionPatch,
@@ -30,10 +31,18 @@ const MAX_TOOL_RUNS = 20;
 const USAGE_MINUTES = 120;
 const TEXT_LIMIT = 200;
 const DETAIL_LIMIT = 80;
+const SAID_LIMIT = 32_000;
+const SUGGESTION_LIMIT = 2000;
 
 function clip(text: string, limit: number): string {
 	const line = text.replace(/\s+/g, " ").trim();
 	return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
+}
+
+/** Like clip, but keeps line breaks (Markdown). */
+function bound(text: string, limit: number): string {
+	const trimmed = text.trim();
+	return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
 }
 
 function textOf(content: unknown): string {
@@ -43,10 +52,6 @@ function textOf(content: unknown): string {
 		.filter((block): block is { type: "text"; text: string } => block?.type === "text" && typeof block.text === "string")
 		.map((block) => block.text)
 		.join("\n");
-}
-
-function firstLine(text: string): string {
-	return text.split("\n").find((line) => line.trim()) ?? "";
 }
 
 function toolDetail(args: unknown): string {
@@ -78,7 +83,7 @@ function addMinute(minutes: UsageMinute[], timestamp: number, usage: PiUsage, no
 	while (minutes.length && minutes[0].minute < oldest) minutes.shift();
 }
 
-function initialState(pi: ExtensionAPI, ctx: ExtensionContext, plan: PlanSnapshot | undefined): SessionState {
+function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<SessionState, "plan" | "suggestion">): SessionState {
 	const now = Date.now();
 	const direct = emptyUsage();
 	const indirect = emptyUsage();
@@ -98,8 +103,8 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, plan: PlanSnapsho
 		if (message.role === "assistant") {
 			addUsage(direct, message.usage);
 			addMinute(usageMinutes, timestamp, message.usage, now);
-			const said = firstLine(textOf(message.content));
-			if (said) lastSaid = clip(said, TEXT_LIMIT);
+			const said = bound(textOf(message.content), SAID_LIMIT);
+			if (said) lastSaid = said;
 		} else if (message.role === "toolResult" && message.usage) {
 			addUsage(indirect, message.usage);
 			addMinute(usageMinutes, timestamp, message.usage, now);
@@ -127,7 +132,8 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, plan: PlanSnapsho
 		context: context ? { tokens: context.tokens, window: context.contextWindow, percent: context.percent } : undefined,
 		usage: { direct, indirect },
 		usageMinutes,
-		plan,
+		plan: published.plan,
+		suggestion: published.suggestion,
 		tools: [],
 	};
 }
@@ -135,8 +141,9 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, plan: PlanSnapsho
 export default function piDashBridge(pi: ExtensionAPI): void {
 	let ctx: ExtensionContext | undefined;
 	let state: SessionState | undefined;
-	// The roadmap may publish before this extension's session_start runs.
+	// The roadmap and prompt suggestions may publish before this extension's session_start runs.
 	let plan: PlanSnapshot | undefined;
+	let suggestion: string | undefined;
 	let server: Server | undefined;
 	let serverPath: string | undefined;
 	const clients = new Set<Socket>();
@@ -302,10 +309,15 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		set({ plan });
 	});
 
+	pi.events.on(PROMPT_SUGGESTION_CHANGED_EVENT, (data) => {
+		suggestion = typeof data === "string" && data.trim() ? bound(data, SUGGESTION_LIMIT) : undefined;
+		set({ suggestion });
+	});
+
 	pi.on("session_start", (_event, context) => {
 		if (context.mode !== "tui") return;
 		ctx = context;
-		state = initialState(pi, context, plan);
+		state = initialState(pi, context, { plan, suggestion });
 		startServer();
 	});
 
@@ -359,8 +371,8 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		const message = event.message;
 		if (message.role === "assistant") {
 			recordUsage(message.usage, "direct", message.timestamp);
-			const said = firstLine(textOf(message.content));
-			if (said) set({ lastSaid: clip(said, TEXT_LIMIT) });
+			const said = bound(textOf(message.content), SAID_LIMIT);
+			if (said) set({ lastSaid: said });
 			// After a user abort pi can persist the interrupted turn as an error; that is not a failure.
 			const aborted = message.stopReason === "aborted" || ctx?.signal?.aborted === true;
 			if (message.stopReason === "error" && !aborted) {

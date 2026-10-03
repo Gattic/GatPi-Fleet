@@ -142,7 +142,7 @@ Event → state mapping:
 | `agent_start` | `phase=working`, `since` |
 | `message_update` | `activity=thinking|streaming` (flag only — never per-token emits) |
 | `tool_execution_start/end` | `activity=tool:<name>` + short arg summary (e.g. first 60 chars of bash command); tool timeline entry; capture `bg_run`/`run_deck` job ids + pids from result details |
-| `message_end` (assistant) | direct usage delta `{ts, model, tokens…, cost}`; `stopReason=error|aborted` → `lastError`; `lastSaid` = first line of assistant text |
+| `message_end` (assistant) | direct usage delta `{ts, model, tokens…, cost}`; `stopReason=error|aborted` → `lastError`; `lastSaid` = assistant text (*updated:* the whole text, bounded to 32 000 chars, so the detail view can show and scroll it) |
 | `message_end` (toolResult with `usage`) | indirect usage delta |
 | `session_compact` | compaction usage; activity `compacting` |
 | `agent_end` (before settled) | `activity=continuing` (retry / compaction / queued follow-up) |
@@ -150,6 +150,7 @@ Event → state mapping:
 | `turn_end` | context usage refresh |
 | `after_provider_response` status 429 | `rateLimited {retryAfter}` |
 | `pi.events "roadmap:changed"` | `plan` |
+| `pi.events "prompt-suggestion:changed"` (*added*) | `suggestion`: GatPi-Harness prompt-suggestions' next prompt, null while working |
 
 Commands (each with request id and ack/error):
 
@@ -246,7 +247,8 @@ survive pid reuse. Per tick:
 - Colour + glyph carry state; numbers are compact (`3.9c`, `9.4G`, `$7.9`, `12m`).
 - Every metric has a shape: sparkline (trend), gauge (fraction of a limit), split bar
   (direct ▓ vs indirect ▒), activity lane (time spent working / waiting on me / idle).
-- Text is truncated to width, never wrapped. Legends live behind `?`.
+- Text is truncated to width, never wrapped. Legends live behind `?`. *Updated:* the one
+  exception is the latest reply (SAID) in the detail view, which wraps and scrolls.
 - Gauge colours: green < 60 %, amber < 85 %, red ≥ 85 %.
 
 ### 4.2 Overview (default, ≥ 120 cols)

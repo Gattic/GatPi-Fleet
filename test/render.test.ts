@@ -5,6 +5,7 @@ import { GpuMonitor } from "../src/dashboard/collectors/gpu.ts";
 import { QuotaMonitor } from "../src/dashboard/collectors/quota.ts";
 import { Store } from "../src/dashboard/model/store.ts";
 import { activityLane, gauge, LANE, planBar, sparkline, splitBar, stackedArea } from "../src/dashboard/ui/charts.ts";
+import { TextPane } from "../src/dashboard/ui/text-pane.ts";
 import { renderDetail } from "../src/dashboard/ui/views/detail.ts";
 import { renderOverview } from "../src/dashboard/ui/views/overview.ts";
 import type { ViewContext } from "../src/dashboard/ui/views/shared.ts";
@@ -61,7 +62,7 @@ test("views fit the terminal at 80, 100 and 140 columns and show each state", ()
 	for (const width of [80, 100, 140]) {
 		for (const [name, lines] of [
 			["overview", renderOverview(ctx, width, 30)],
-			["detail", renderDetail(ctx, width, 40)],
+			["detail", renderDetail(ctx, width, 40, new TextPane()).lines],
 			["usage", renderUsage(ctx, width, 30, "today")],
 		] as const) {
 			assert.ok(lines.length <= 39, `${name} fits the height`);
@@ -76,4 +77,33 @@ test("views fit the terminal at 80, 100 and 140 columns and show each state", ()
 	assert.match(overview, /▰▰▰▰▱▱ 4\/6 Run tests/);
 	assert.match(overview, /PLAN {2}Ship it ▸ Verify ▸ Run tests/);
 	assert.match(overview, /anthropic 5h/);
+});
+
+test("detail shows the whole reply in a scrollable SAID pane, then the suggested next prompt", () => {
+	const ctx = context();
+	const said = Array.from({ length: 60 }, (_, index) => `reply line ${index + 1}`).join("\n");
+	ctx.store.setState(101, state(101, { lastSaid: said, suggestion: "Run the full test suite\nand report" }));
+	ctx.selected = ctx.store.rows.get(101);
+	const pane = new TextPane();
+	const render = () => {
+		const view = renderDetail(ctx, 100, 40, pane);
+		assert.equal(view.lines.length, 39);
+		assert.ok(view.said && view.said.height > 2, "SAID gets the free rows");
+		const lines = view.lines.map(strip);
+		return { said: lines.slice(view.said.top, view.said.top + view.said.height), after: lines[view.said.top + view.said.height] };
+	};
+
+	const top = render();
+	assert.match(top.said[0], /^ SAID +reply line 1 /);
+	assert.match(top.said.at(-1) ?? "", new RegExp(`^ ▼ ${60 - top.said.length} +reply line ${top.said.length} `));
+	assert.match(top.after, /^ NEXT +"Run the full test suite and report"/);
+
+	pane.page(1);
+	const paged = render();
+	assert.match(paged.said[0], new RegExp(`^ SAID +reply line ${top.said.length} `), "a page keeps one line of context");
+	assert.match(paged.said[1], new RegExp(`^ ▲ ${top.said.length - 1} +reply line`));
+
+	pane.scrollTo("end");
+	const end = render();
+	assert.match(end.said.at(-1) ?? "", /^ +reply line 60 /, "nothing below the end");
 });

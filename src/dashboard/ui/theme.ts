@@ -1,4 +1,4 @@
-import { backgroundAnsi, foregroundAnsi, getTerminalColorMode, parseColor } from "@earendil-works/pi-tui";
+import { backgroundAnsi, foregroundAnsi, getTerminalColorMode, type MarkdownTheme, parseColor } from "@earendil-works/pi-tui";
 
 const mode = getTerminalColorMode();
 
@@ -30,6 +30,28 @@ export const theme = {
 };
 
 export type Paint = (text: string) => string;
+
+function sgr(on: number, off: number): Paint {
+	return (text) => (text ? `\x1b[${on}m${text}\x1b[${off}m` : text);
+}
+
+/** Assistant replies are Markdown. */
+export const markdownTheme: MarkdownTheme = {
+	heading: (text) => theme.bold(theme.accent(text)),
+	link: theme.accent,
+	linkUrl: theme.dim,
+	code: theme.indirect,
+	codeBlock: theme.muted,
+	codeBlockBorder: theme.dim,
+	quote: theme.muted,
+	quoteBorder: theme.dim,
+	hr: theme.dim,
+	listBullet: theme.accent,
+	bold: theme.bold,
+	italic: sgr(3, 23),
+	strikethrough: sgr(9, 29),
+	underline: sgr(4, 24),
+};
 
 /** Green under 60 %, amber under 85 %, red above. */
 export function levelColor(fraction: number): Paint {

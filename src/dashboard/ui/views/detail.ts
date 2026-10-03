@@ -1,7 +1,8 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { rowCwd, rowSty, type SessionRow } from "../../model/store.ts";
 import { activityLane, gauge, hbar, planBar, sparkline, stackedArea } from "../charts.ts";
-import { fit, fitRight, fmtBytes, fmtCores, fmtCost, fmtDuration, fmtTokens, shortPath } from "../format.ts";
+import { fit, fitRight, fmtBytes, fmtCores, fmtCost, fmtDuration, fmtTokens, oneLine, shortPath } from "../format.ts";
+import type { TextPane } from "../text-pane.ts";
 import { theme } from "../theme.ts";
 import { laneLegend, minuteSeries, rule, sessionCost, statusCell, titleBar, type ViewContext } from "./shared.ts";
 
@@ -40,10 +41,17 @@ function chart(title: string, direct: number[], indirect: number[], width: numbe
 	return lines;
 }
 
-export function renderDetail(ctx: ViewContext, width: number, height: number): string[] {
+export interface DetailView {
+	lines: string[];
+	/** Rows of `lines` showing the SAID text, when there is one. */
+	said?: { top: number; height: number };
+}
+
+/** `said` holds the SAID pane's scroll position across renders. */
+export function renderDetail(ctx: ViewContext, width: number, height: number, said: TextPane): DetailView {
 	const row = ctx.selected;
 	const lines = [titleBar(ctx, width, "session detail")];
-	if (!row) return [...lines, theme.dim("  No session selected.")];
+	if (!row) return { lines: [...lines, theme.dim("  No session selected.")] };
 	lines.push(...headerLines(row, ctx, width));
 	const half = Math.floor((width - 3) / 2);
 	lines.push(rule(width));
@@ -52,9 +60,29 @@ export function renderDetail(ctx: ViewContext, width: number, height: number): s
 	lines.push(...side(usageLines(row, ctx, half), consumerLines(row, width - 3 - half), width));
 	lines.push(rule(width));
 	lines.push(...activityLines(row, ctx, width));
+	const bridge = row.bridge;
+	const tail = [
+		fit(` ${theme.dim("NEXT  ")} ${bridge?.suggestion ? theme.text(`"${oneLine(bridge.suggestion)}"`) : theme.dim("—")}`, width),
+		fit(` ${theme.dim("60m   ")} ${activityLane(row.lane.last(), Math.max(10, width - 48))}  ${laneLegend()}`, width),
+	];
+	// SAID takes the rows that are left.
+	const top = lines.length;
+	const saidLines = saidPane(bridge?.lastSaid, said, width, height - 1 - top - tail.length);
+	lines.push(...saidLines, ...tail);
 	const free = height - 1 - lines.length;
 	for (let index = 0; index < free; index++) lines.push("");
-	return lines.slice(0, height - 1);
+	return { lines: lines.slice(0, height - 1), said: bridge?.lastSaid ? { top, height: saidLines.length } : undefined };
+}
+
+/** Markdown, scrollable; the label column shows how much is above and below. */
+function saidPane(text: string | undefined, pane: TextPane, width: number, rows: number): string[] {
+	if (!text) return [fit(` ${theme.dim("SAID  ")} ${theme.dim("—")}`, width)];
+	pane.setText(text);
+	const view = pane.render(Math.max(1, width - 8), Math.max(1, rows));
+	const labels = view.lines.map((_, index): string => (index === 0 ? "SAID" : ""));
+	if (labels.length > 1 && view.above) labels[1] = `▲ ${view.above}`;
+	if (labels.length > 1 && view.below) labels[labels.length - 1] = `▼ ${view.below}`;
+	return view.lines.map((line, index) => fit(` ${theme.dim(fit(labels[index], 6))} ${line}`, width));
 }
 
 function headerLines(row: SessionRow, ctx: ViewContext, width: number): string[] {
@@ -129,7 +157,5 @@ function activityLines(row: SessionRow, ctx: ViewContext, width: number): string
 	lines.push(fit(` ${theme.dim("TOOLS ")}${tools.length ? tools.join(theme.dim(" · ")) : theme.dim("none yet")}`, width));
 	lines.push(fit(` ${theme.dim("PROMPT")} ${bridge?.lastPrompt ? theme.text(`"${bridge.lastPrompt}"`) : theme.dim("—")}`, width));
 	if (row.status.kind === "error" && bridge?.lastError) lines.push(fit(` ${theme.dim("ERROR ")} ${theme.error(bridge.lastError.message)}`, width));
-	lines.push(fit(` ${theme.dim("SAID  ")} ${bridge?.lastSaid ? theme.muted(`"${bridge.lastSaid}"`) : theme.dim("—")}`, width));
-	lines.push(fit(` ${theme.dim("60m   ")} ${activityLane(row.lane.last(), Math.max(10, width - 48))}  ${laneLegend()}`, width));
 	return lines;
 }

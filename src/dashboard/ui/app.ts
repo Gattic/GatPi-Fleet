@@ -2,7 +2,7 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { type Component, Key, matchesKey, type OverlayHandle, type OverlayOptions, type SelectItem, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, Key, matchesKey, type OverlayHandle, type OverlayOptions, type SelectItem, type TUI, type TuiMouseEvent, type TuiMouseEventResult, visibleWidth } from "@earendil-works/pi-tui";
 import type { Command } from "../../protocol/index.ts";
 import { attachSession, launchSession, readHardcopy, requestHardcopy } from "../actions/screen.ts";
 import { listProjects, listSessions } from "../actions/sessions.ts";
@@ -12,9 +12,10 @@ import type { QuotaMonitor } from "../collectors/quota.ts";
 import { rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../model/store.ts";
 import type { UsageIndex } from "../usage/usage-index.ts";
 import { fit, fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
-import { Composer, Confirm, Help, Peek, Picker, TextPrompt } from "./overlays.ts";
+import { Composer, Confirm, Help, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
+import { TextPane } from "./text-pane.ts";
 import { theme } from "./theme.ts";
-import { renderDetail } from "./views/detail.ts";
+import { type DetailView, renderDetail } from "./views/detail.ts";
 import { renderOverview } from "./views/overview.ts";
 import { SPINNER, type ViewContext } from "./views/shared.ts";
 import { renderUsage, USAGE_RANGES, type UsageRange } from "./views/usage.ts";
@@ -38,8 +39,8 @@ const FLASH_MS = 5000;
 const PEEK_REFRESH_MS = 1000;
 
 const KEYS: Record<View, [string, string][]> = {
-	overview: [["1-9", "select"], ["⏎", "detail"], ["p", "prompt"], ["x", "abort"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["p", "prompt"], ["x", "abort"], ["v", "peek"], ["a", "attach"], ["c", "close"], ["R", "rename"], ["?", "help"]],
+	overview: [["1-9", "select"], ["⏎", "detail"], ["p", "prompt"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["p", "prompt"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["c", "close"], ["R", "rename"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["?", "help"]],
 };
 
@@ -55,6 +56,9 @@ export class App implements Component {
 	private peekTimer?: NodeJS.Timeout;
 	private peekFile?: string;
 	private readonly recycles = new Map<number, { cwd: string; label: string }>();
+	// The detail view's SAID pane: scroll position, and where it was last drawn (for the mouse).
+	private readonly said = new TextPane();
+	private saidArea: DetailView["said"];
 	private attached = false;
 	private readonly services: Services;
 
@@ -111,7 +115,9 @@ export class App implements Component {
 			spinner: SPINNER[this.spinnerIndex],
 			selected: this.selected(),
 		};
-		const body = this.view === "detail" ? renderDetail(ctx, width, height) : this.view === "usage" ? renderUsage(ctx, width, height, this.range) : renderOverview(ctx, width, height);
+		const detail = this.view === "detail" ? renderDetail(ctx, width, height, this.said) : undefined;
+		this.saidArea = detail?.said;
+		const body = detail ? detail.lines : this.view === "usage" ? renderUsage(ctx, width, height, this.range) : renderOverview(ctx, width, height);
 		while (body.length < height - 1) body.push("");
 		return [...body, this.footer(width, now)];
 	}
@@ -153,6 +159,8 @@ export class App implements Component {
 			this.view = this.view === "usage" ? "overview" : "usage";
 		} else if (this.view === "usage" && (data === "t" || data === "w" || data === "m")) {
 			this.range = data === "t" ? "today" : data === "w" ? "7d" : "30d";
+		} else if (this.view === "detail" && (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown))) {
+			this.said.page(matchesKey(data, Key.pageUp) ? -1 : 1);
 		} else if (this.view === "usage" && (matchesKey(data, Key.left) || matchesKey(data, Key.right))) {
 			const index = USAGE_RANGES.indexOf(this.range) + (matchesKey(data, Key.left) ? -1 : 1);
 			this.range = USAGE_RANGES[(index + USAGE_RANGES.length) % USAGE_RANGES.length];
@@ -161,12 +169,31 @@ export class App implements Component {
 		} else {
 			const row = this.selected();
 			if (!row) {
-				if ("pxvacCRrd".includes(data)) this.notify("No session selected", true);
+				if ("pxsvacCRrd".includes(data)) this.notify("No session selected", true);
 				return;
 			}
 			this.rowAction(row, data);
 		}
 		this.services.tui.requestRender();
+	}
+
+	/** Over the detail view's SAID text: the wheel scrolls it, a click opens the reader. */
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		const area = this.saidArea;
+		if (this.overlay || !area || event.y < area.top || event.y >= area.top + area.height) return undefined;
+		if (event.type === "wheel") {
+			this.said.scrollBy(event.wheelDelta ?? 0);
+			return { handled: true };
+		}
+		if (event.button !== "left") return undefined;
+		// Claiming the press is what makes its release arrive here as a click.
+		if (event.type === "press") return { handled: true, render: false };
+		if (event.type === "click") {
+			const row = this.selected();
+			if (row) this.openReader(row);
+			return { handled: true };
+		}
+		return undefined;
 	}
 
 	private rowAction(row: SessionRow, key: string): void {
@@ -177,6 +204,8 @@ export class App implements Component {
 			case "x":
 				if (row.status.kind !== "working" && row.status.kind !== "stalled" && row.status.kind !== "rate-limited") return this.notify(`${label} is not working`, true);
 				return this.confirm("Abort", `Abort the current run of ${label}?`, () => this.send(row, { kind: "abort" }, `aborted ${label}`));
+			case "s":
+				return this.openReader(row);
 			case "v":
 				return this.openPeek(row);
 			case "a":
@@ -272,6 +301,7 @@ export class App implements Component {
 			new Composer(this.services.tui, {
 				target: `${row.slot ?? "·"} ${rowLabel(row)}`,
 				isWorking: () => store.rows.get(row.pid)?.bridge?.phase === "working",
+				suggestion: () => store.rows.get(row.pid)?.bridge?.suggestion,
 				onSubmit: (text, deliverAs) => {
 					this.closeOverlay();
 					const working = store.rows.get(row.pid)?.bridge?.phase === "working";
@@ -421,6 +451,26 @@ export class App implements Component {
 				},
 			}),
 			{ width: "90%", maxHeight: "85%" },
+		);
+	}
+
+	private openReader(row: SessionRow): void {
+		if (!row.bridge?.lastSaid) return this.notify(`${rowLabel(row)} has not replied yet`, true);
+		const store = this.services.store;
+		this.show(
+			new Reader({
+				title: `said · ${rowLabel(row)}`,
+				text: () => store.rows.get(row.pid)?.bridge?.lastSaid ?? "",
+				height: () => this.services.tui.terminal.rows,
+				onKey: (data) => {
+					if (matchesKey(data, Key.escape) || data === "s" || data === "q") this.closeOverlay();
+					else if (data === "p") {
+						this.closeOverlay();
+						this.compose(row);
+					}
+				},
+			}),
+			{ width: "100%", maxHeight: "100%" },
 		);
 	}
 

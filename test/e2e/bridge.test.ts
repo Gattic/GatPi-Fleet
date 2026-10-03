@@ -57,6 +57,8 @@ before(async () => {
 		join(repo, "test/fixtures/scripted-provider.ts"),
 		"-e",
 		join(repo, "test/fixtures/roadmap-publisher.ts"),
+		"-e",
+		join(repo, "test/fixtures/suggestion-publisher.ts"),
 		"--model",
 		"dash-test/scripted",
 		"--session-dir",
@@ -91,7 +93,7 @@ test("snapshot identifies the session, its screen and its plan", () => {
 	assert.deepEqual(state.plan?.activePath.map((step) => step.title), ["Two"]);
 });
 
-test("a prompt from the dashboard runs a turn: working → tool → idle with usage", async () => {
+test("a prompt from the dashboard runs a turn: working → tool → idle with usage and a suggestion", async () => {
 	await hub.send(pid, { kind: "prompt", text: "sleep 1" });
 	await waitFor("tool activity", () => current().activity?.kind === "tool" && current().activity?.tool === "bash");
 	assert.equal(current().phase, "working");
@@ -99,11 +101,19 @@ test("a prompt from the dashboard runs a turn: working → tool → idle with us
 	const state = current();
 	assert.equal(state.lastPrompt, "sleep 1");
 	assert.equal(state.lastSaid, "slept 1");
+	await waitFor("suggestion", () => current().suggestion === "Run the tests next");
 	assert.equal(state.usage.direct.tokens, 2200, "two scripted model calls of 1100 tokens");
 	assert.ok(state.usage.direct.cost > 0);
 	assert.equal(state.tools.at(-1)?.name, "bash");
 	assert.ok(state.tools.at(-1)?.endedAt);
 	assert.ok((state.context?.percent ?? 0) > 0);
+});
+
+test("a multi-line reply arrives whole", async () => {
+	await hub.send(pid, { kind: "prompt", text: "two\nlines" });
+	await waitFor("settled", () => current().phase === "idle" && current().lastSaid?.startsWith("echo: two"));
+	assert.equal(current().lastSaid, "echo: two\nlines");
+	assert.equal(current().lastPrompt, "two lines");
 });
 
 test("the prompt is visible in pi's own TUI (peek via screen hardcopy)", async () => {
@@ -113,9 +123,11 @@ test("the prompt is visible in pi's own TUI (peek via screen hardcopy)", async (
 	assert.ok(lines.some((line) => line.includes("slept 1")), lines.join("\n"));
 });
 
-test("steer while working is delivered in the same run", async () => {
+test("steer while working is delivered in the same run; the suggestion is withdrawn meanwhile", async () => {
+	await waitFor("suggestion", () => current().suggestion === "Run the tests next");
 	await hub.send(pid, { kind: "prompt", text: "sleep 2" });
 	await waitFor("working", () => current().phase === "working");
+	await waitFor("suggestion withdrawn", () => current().suggestion === undefined);
 	await hub.send(pid, { kind: "prompt", text: "steered", deliverAs: "steer" });
 	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "echo: steered");
 });

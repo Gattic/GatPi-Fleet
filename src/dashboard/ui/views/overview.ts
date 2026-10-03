@@ -1,6 +1,6 @@
 import { rowCwd, rowSty, type SessionRow } from "../../model/store.ts";
 import { activityLane, gauge, planBar, sparkline, splitBar } from "../charts.ts";
-import { fit, fitRight, fmtBytes, fmtCores, fmtDuration, shortPath } from "../format.ts";
+import { firstLine, fit, fitRight, fmtBytes, fmtCores, fmtDuration, shortPath } from "../format.ts";
 import { theme } from "../theme.ts";
 import {
 	background,
@@ -104,7 +104,7 @@ function selectedSummary(row: SessionRow, ctx: ViewContext, width: number): stri
 	lines.push(fit(` ${label("NOW")}${now}${unitText}`, width));
 
 	if (row.status.kind === "error" && bridge?.lastError) lines.push(fit(` ${label("ERROR")}${theme.error(bridge.lastError.message)}`, width));
-	else lines.push(fit(` ${label("SAID")}${bridge?.lastSaid ? theme.muted(`"${bridge.lastSaid}"`) : theme.dim("—")}`, width));
+	else lines.push(fit(` ${label("SAID")}${bridge?.lastSaid ? theme.muted(`"${firstLine(bridge.lastSaid)}"`) : theme.dim("—")}`, width));
 
 	const laneWidth = Math.max(10, width - 8 - 40);
 	lines.push(fit(` ${label("60m")}${activityLane(row.lane.last(), laneWidth)}  ${laneLegend()}`, width));

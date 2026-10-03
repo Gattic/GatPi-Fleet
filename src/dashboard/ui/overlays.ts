@@ -1,7 +1,26 @@
-// Modal overlays: prompt composer, filterable picker, confirm, text input, peek, help.
-import { type Component, Container, Editor, type EditorTheme, type Focusable, fuzzyFilter, Input, Key, matchesKey, type SelectItem, SelectList, type SelectListTheme, type TUI, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+// Modal overlays: prompt composer, filterable picker, confirm, text input, peek, reader, help.
+import {
+	type Component,
+	Container,
+	Editor,
+	type EditorTheme,
+	type Focusable,
+	fuzzyFilter,
+	Input,
+	Key,
+	matchesKey,
+	type SelectItem,
+	SelectList,
+	type SelectListTheme,
+	type TUI,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import type { DeliverAs } from "../../protocol/index.ts";
 import { fit } from "./format.ts";
+import { TextPane } from "./text-pane.ts";
 import { theme } from "./theme.ts";
 
 const selectListTheme: SelectListTheme = {
@@ -27,6 +46,8 @@ export function frame(title: string, body: readonly string[], width: number, hin
 export interface ComposerOptions {
 	target: string;
 	isWorking: () => boolean;
+	/** The session's suggested next prompt, offered while idle and the editor is empty. */
+	suggestion: () => string | undefined;
 	onSubmit: (text: string, deliverAs: DeliverAs) => void;
 	onCancel: () => void;
 }
@@ -67,27 +88,45 @@ export class Composer extends Container implements Focusable {
 		this.options.onSubmit(trimmed, this.mode);
 	}
 
+	private visibleSuggestion(): string | undefined {
+		if (this.options.isWorking() || this.editor.getText()) return undefined;
+		return this.options.suggestion();
+	}
+
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.escape)) {
 			this.options.onCancel();
 			return;
 		}
-		if (matchesKey(data, Key.tab) && this.options.isWorking()) {
-			this.mode = this.mode === "steer" ? "followUp" : "steer";
-			return;
+		if (matchesKey(data, Key.tab)) {
+			const suggestion = this.visibleSuggestion();
+			if (suggestion) {
+				this.editor.setText(suggestion);
+				return;
+			}
+			if (this.options.isWorking()) {
+				this.mode = this.mode === "steer" ? "followUp" : "steer";
+				return;
+			}
 		}
 		this.error = "";
 		this.editor.handleInput(data);
 	}
 
 	render(width: number): string[] {
+		const inner = Math.max(1, width - 4);
 		const working = this.options.isWorking();
 		const mode = working
 			? `${theme.working("working")} · delivers as ${theme.bold(theme.accent(this.mode === "steer" ? "steer" : "follow-up"))} ${theme.dim(this.mode === "steer" ? "(after the current tool)" : "(when the run finishes)")}`
 			: theme.dim("idle · starts a new turn");
-		const body = [mode, ...this.editor.render(Math.max(1, width - 4))];
+		const body = [mode, ...this.editor.render(inner)];
+		const suggestion = this.visibleSuggestion();
+		if (suggestion) {
+			const wrapped = suggestion.split("\n").flatMap((line) => wrapTextWithAnsi(line, Math.max(1, inner - 2)));
+			body.push(...wrapped.map((line, index) => theme.dim(`${index === 0 ? "↳ " : "  "}${line}`)));
+		}
 		if (this.error) body.push(theme.error(this.error));
-		const hint = working ? "⏎ send · Tab steer/follow-up · ⇧⏎ newline · Esc cancel" : "⏎ send · ⇧⏎ newline · Esc cancel";
+		const hint = working ? "⏎ send · Tab steer/follow-up · ⇧⏎ newline · Esc cancel" : `⏎ send · ${suggestion ? "Tab accept suggestion · " : ""}⇧⏎ newline · Esc cancel`;
 		return frame(`Prompt → ${this.options.target}`, body, width, hint);
 	}
 }
@@ -238,10 +277,60 @@ export class Peek implements Component {
 	}
 }
 
+export interface ReaderOptions {
+	title: string;
+	/** Read on every render, so the reader follows new replies. */
+	text: () => string;
+	height: () => number;
+	/** Keys the reader does not use for scrolling. */
+	onKey: (data: string) => void;
+}
+
+/** Full-screen, scrollable Markdown text. */
+export class Reader implements Component {
+	private readonly pane = new TextPane();
+	private readonly options: ReaderOptions;
+
+	constructor(options: ReaderOptions) {
+		this.options = options;
+	}
+
+	invalidate(): void {}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, Key.up) || data === "k") this.pane.scrollBy(-1);
+		else if (matchesKey(data, Key.down) || data === "j") this.pane.scrollBy(1);
+		else if (matchesKey(data, Key.pageUp)) this.pane.page(-1);
+		else if (matchesKey(data, Key.pageDown) || data === " ") this.pane.page(1);
+		else if (matchesKey(data, Key.home) || data === "g") this.pane.scrollTo("top");
+		else if (matchesKey(data, Key.end) || data === "G") this.pane.scrollTo("end");
+		else this.options.onKey(data);
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "wheel") return undefined;
+		this.pane.scrollBy(event.wheelDelta ?? 0);
+		return { handled: true };
+	}
+
+	render(width: number): string[] {
+		const height = Math.max(1, this.options.height() - 2);
+		this.pane.setText(this.options.text());
+		const view = this.pane.render(Math.max(1, width - 4), height);
+		const body = [...view.lines];
+		while (body.length < height) body.push("");
+		const total = view.above + view.lines.length + view.below;
+		const position = total > view.lines.length ? `${view.above + 1}–${view.above + view.lines.length}/${total} · ` : "";
+		return frame(this.options.title, body, width, `${position}↑↓ PgUp PgDn scroll · p prompt · Esc close`);
+	}
+}
+
 const HELP: [string, string][] = [
 	["1-9 ↑↓ j k", "select session"],
 	["⏎ / Esc", "detail view / back"],
-	["p", "prompt (steer or follow-up while working)"],
+	["p", "prompt (steer or follow-up while working; Tab takes the suggestion)"],
+	["s", "read the latest reply full screen (or click SAID)"],
+	["PgUp PgDn", "scroll SAID in the detail view (or mouse wheel)"],
 	["x", "abort the current run"],
 	["v", "peek: live read-only mirror of the pi screen"],
 	["a", "attach (screen -rx; Ctrl-a d returns here)"],

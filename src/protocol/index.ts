@@ -99,6 +99,9 @@ export interface PlanSnapshot {
 
 export const ROADMAP_CHANGED_EVENT = "roadmap:changed";
 
+/** Published by the GatPi-Harness prompt-suggestions extension: the suggested next prompt, or null. */
+export const PROMPT_SUGGESTION_CHANGED_EVENT = "prompt-suggestion:changed";
+
 export interface ToolRun {
 	id: string;
 	name: string;
@@ -130,7 +133,10 @@ export interface SessionState {
 	/** Coarse heartbeat (≤ every 10 s) of the latest pi event, used to detect stalls. */
 	lastEventAt: number;
 	lastPrompt?: string;
+	/** Full text (Markdown, bounded) of the latest assistant message that had text. */
 	lastSaid?: string;
+	/** Suggested next prompt; absent while the agent works or without the prompt-suggestions extension. */
+	suggestion?: string;
 	lastError?: { message: string; at: number };
 	rateLimited?: { at: number; retryAfter?: string };
 	context?: { tokens: number | null; window: number; percent: number | null };

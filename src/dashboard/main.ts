@@ -2,7 +2,7 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import { getKeybindings, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { socketDir } from "../protocol/index.ts";
 import { BridgeHub } from "./collectors/bridges.ts";
 import { GpuMonitor } from "./collectors/gpu.ts";
@@ -54,7 +54,9 @@ function main(): void {
 	const cachePath = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "pi-dash", "usage-index.json");
 
 	const terminal = new ProcessTerminal();
-	const tui = new TuiAltScreen(terminal, undefined, undefined, { mouse: false });
+	const tui = new TuiAltScreen(terminal);
+	// Views always fit the terminal, so the viewport has nothing to page through; the detail view pages SAID instead.
+	getKeybindings().setUserBindings({ "tui.altScreen.pageUp": [], "tui.altScreen.pageDown": [] });
 	let app: App | undefined;
 	const render = () => {
 		if (app && !app.isAttached) tui.requestRender();
