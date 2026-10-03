@@ -12,12 +12,12 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** A bridge that greets with `version` and, when it matches ours, sends a snapshot. */
+/** A bridge that greets with `version` and sends a snapshot right after, as real bridges of every version do. */
 function fakeBridge(path: string, version: number): Promise<Server> {
 	const state: SessionState = { pid: process.pid, cwd: "/p", sessionId: "s", phase: "idle", phaseSince: 0, lastEventAt: 0, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [] };
 	const server = createServer((socket) => {
 		socket.write(encodeMessage({ type: "hello", version }));
-		if (version === PROTOCOL_VERSION) socket.write(encodeMessage({ type: "snapshot", state }));
+		socket.write(encodeMessage({ type: "snapshot", state }));
 		socket.on("error", () => {});
 	});
 	return new Promise((resolve) => server.listen(path, () => resolve(server)));
@@ -38,6 +38,7 @@ test("a session whose bridge was incompatible is picked up once /reload replaces
 	t.after(() => hub.close());
 
 	const old = await fakeBridge(path, PROTOCOL_VERSION - 1);
+	t.after(() => old.close());
 	hub.scan();
 	await sleep(200);
 	hub.scan();

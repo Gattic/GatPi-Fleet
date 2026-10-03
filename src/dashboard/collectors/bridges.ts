@@ -127,7 +127,11 @@ export class BridgeHub {
 				socket.destroy();
 				return;
 			}
-			for (const message of messages) this.handle(connection, message as BridgeMessage);
+			for (const message of messages) {
+				// An incompatible hello destroys the socket; the snapshot sent with it has the wrong shape.
+				if (socket.destroyed) return;
+				this.handle(connection, message as BridgeMessage);
+			}
 		});
 		socket.on("error", () => {});
 		socket.on("close", () => {
