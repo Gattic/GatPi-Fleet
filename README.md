@@ -1,0 +1,97 @@
+# pi-dash
+
+One terminal tab to watch and drive every running [pi](https://pi.dev) session.
+
+- **State at a glance**: working (with the current tool or thinking/writing), waiting for you,
+  error / rate limited, stalled, exited. When a session starts needing you, its row is highlighted.
+- **Plan progress**: the active roadmap step and a progress bar (from the GatPi-Harness roadmap).
+- **Resources**: CPU, memory and GPU memory per session, split into the pi process itself (▓) and
+  everything it started (▒): tool commands, LSP servers, subagents, background jobs, `build_project`
+  systemd units, and detached processes that carry the session's `PI_SESSION_ID`.
+- **API usage**: tokens and API-equivalent $ per session (direct, nested tool LLM calls,
+  subagents), per-minute trends, subscription quota windows with an estimated per-session share,
+  and a usage view for today / 7 days / 30 days.
+- **Control without switching tabs**: prompt (steer or follow-up while working), abort, close,
+  close-and-restart, new session, resume, rename, live read-only peek, and full attach.
+
+## Requirements
+
+- Linux (`/proc`, cgroup v2), Node ≥ 22.19 (runs the TypeScript sources directly), GNU screen.
+- pi ≥ 0.84 with the bridge extension installed (below).
+- Optional: `nvidia-smi` for GPU stats, GatPi-Harness for roadmap progress, the `pi-multi-account`
+  failover state for quota gauges.
+
+## Install
+
+```sh
+cd ~/dev/GatPi-Fleet && npm install          # dashboard dependencies
+pi install /home/user/dev/GatPi-Fleet      # bridge extension, loaded by new pi sessions
+ln -s /home/user/dev/GatPi-Fleet/bin/pi-dash ~/.local/bin/pi-dash
+```
+
+`pi install <path>` adds the local package to `~/.pi/agent/settings.json` without copying it. The
+bridge loads only in interactive pi sessions, not in `pi -p` or RPC subagents. Sessions started
+before the install show up as `? no bridge` (resources only) until they are restarted or resumed.
+
+## Use
+
+Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discovered automatically.
+
+| Key | Action |
+|---|---|
+| `1`–`9`, `↑↓`, `j k` | select a session (slots stay stable) |
+| `⏎` / `Esc` | detail view / back |
+| `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run) |
+| `x` | abort the current run |
+| `v` | peek: live read-only mirror of the session's screen (catches dialogs that only show in pi) |
+| `a` | attach with `screen -rx`; the session stays visible in its original terminal too. `Ctrl-a d` returns |
+| `n` | new session: pick a recent project or type a directory path |
+| `r` | resume a session of the selected project (also how you restart an exited row) |
+| `c` / `C` | close / close and start a fresh session in the same project and slot |
+| `R` | rename the session |
+| `d` | dismiss an exited row |
+| `u` | usage view (`t` / `w` / `m`: today, 7 days, 30 days) |
+| `?` | help and legend |
+| `q` | quit (sessions keep running) |
+
+Sessions started from the dashboard run pi in a detached screen named `pi-<project>` using
+[`config/screenrc`](config/screenrc) (your usual settings, but only one window). When pi exits,
+its screen ends. Existing screens you started yourself are picked up as they are.
+
+Slash commands only work inside pi: attach (`a`) to use them.
+
+## How it works
+
+```
+pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.sock ──┐
+pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.sock ──┼── pi-dash
+/proc, cgroups, nvidia-smi, session files, provider-failover-state.json ────┘
+```
+
+- `src/bridge/`: pi extension. It publishes session state (snapshot, then coalesced patches) and runs
+  commands over a per-process unix socket (mode 0600, directory 0700).
+- `src/protocol/`: LF-delimited JSON messages shared by both sides.
+- `src/dashboard/`: the TUI (built on `@earendil-works/pi-tui`), collectors, and usage index. It
+  holds no durable state; restarting it loses nothing.
+- Roadmap progress comes from the GatPi-Harness roadmap extension, which emits `roadmap:changed` on
+  pi's extension event bus.
+
+Files written: the usage index cache at `~/.cache/pi-dash/usage-index.json` (derived, keeps
+30 days, about 200 KB), and short-lived peek captures and sockets in `$XDG_RUNTIME_DIR/pi-dash/`.
+The first start indexes recent session files in a background thread; on this machine that took
+about 17 s for 3.6 GB, and later scans take milliseconds.
+
+$ figures are pi's API-equivalent cost. With subscription logins, the quota windows are the
+limit that actually applies. LLM calls that extensions make outside the session transcript are not
+counted.
+
+## Development
+
+```sh
+npm run check      # tsc (strict, type stripping compatible)
+npm test           # unit, attribution (real processes / systemd units) and render tests
+npm run test:e2e   # real interactive pi in a detached screen with a local scripted model
+```
+
+The e2e test needs `pi` and `screen` on PATH. It uses an isolated agent directory, does not
+call any network or API, and cleans up after itself.
