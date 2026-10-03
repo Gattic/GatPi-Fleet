@@ -11,8 +11,9 @@ One terminal tab to watch and drive every running [pi](https://pi.dev) session.
 - **API usage**: tokens and API-equivalent $ per session (direct, nested tool LLM calls,
   subagents), per-minute trends, subscription quota windows with an estimated per-session share,
   and a usage view for today / 7 days / 30 days.
-- **Conversation**: the last prompt, the latest reply (whole, as Markdown, scrollable, or full
-  screen), and the suggested next prompt from the GatPi-Harness prompt suggestions.
+- **Conversation**: the last prompt, the latest reply (previewed under the session list; whole,
+  as Markdown, scrollable, or full screen), and the suggested next prompt from the GatPi-Harness
+  prompt suggestions.
 - **Control without switching tabs**: prompt (steer or follow-up while working, or take the
   suggested next prompt), abort, close, close-and-restart, new session, resume, rename, live
   read-only peek, and full attach.

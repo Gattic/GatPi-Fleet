@@ -41,20 +41,22 @@ export function shortPath(path: string): string {
 	return path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
+export const ELLIPSIS = "…";
+
 /** Truncate (with ellipsis) or right-pad to exactly `width` visible columns. */
 export function fit(text: string, width: number): string {
 	if (width <= 0) return "";
 	// Measuring is much cheaper than truncating, and most cells already fit.
 	const measured = visibleWidth(text);
 	if (measured <= width) return text + " ".repeat(width - measured);
-	const truncated = truncateToWidth(text, width);
+	const truncated = truncateToWidth(text, width, ELLIPSIS);
 	return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
 }
 
 export function fitRight(text: string, width: number): string {
 	const measured = visibleWidth(text);
 	if (measured <= width) return " ".repeat(width - measured) + text;
-	const truncated = truncateToWidth(text, width);
+	const truncated = truncateToWidth(text, width, ELLIPSIS);
 	return " ".repeat(Math.max(0, width - visibleWidth(truncated))) + truncated;
 }
 

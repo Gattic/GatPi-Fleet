@@ -5,7 +5,8 @@ import { rowLabel, type SessionRow, type Store } from "../../model/store.ts";
 import type { UsageIndex } from "../../usage/usage-index.ts";
 import { gauge, planBar, sparkline } from "../charts.ts";
 import { fit, fitRight, fmtBytes, fmtCost, fmtDuration, oneLine } from "../format.ts";
-import { type Paint, theme } from "../theme.ts";
+import type { TextPane } from "../text-pane.ts";
+import { levelColor, type Paint, theme } from "../theme.ts";
 
 export interface ViewContext {
 	store: Store;
@@ -20,6 +21,14 @@ export interface ViewContext {
 
 export const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 const DAY_MS = 86_400_000;
+
+export type ViewName = "overview" | "detail" | "usage";
+
+const TABS: [ViewName, string][] = [
+	["overview", "sessions"],
+	["detail", "detail"],
+	["usage", "usage"],
+];
 
 /** Pad a styled line to `width` and paint a background across it. */
 export function background(line: string, width: number, paint: Paint): string {
@@ -39,21 +48,44 @@ export function startOfToday(now: number): number {
 	return date.getTime();
 }
 
-export function titleBar(ctx: ViewContext, width: number, title: string): string {
+/** Columns taken by a row label such as PLAN or SAID, including its margins. */
+export const FIELD_WIDTH = 8;
+
+/** A dim row label; the content after it starts at column FIELD_WIDTH. */
+export function field(label: string): string {
+	return ` ${theme.dim(fit(label, FIELD_WIDTH - 2))} `;
+}
+
+/** The latest reply as Markdown in up to `rows` lines; the label column shows how much is above and below. */
+export function saidPane(text: string | undefined, pane: TextPane, width: number, rows: number): string[] {
+	if (!text) return [fit(`${field("SAID")}${theme.dim("—")}`, width)];
+	pane.setText(text);
+	const view = pane.render(Math.max(1, width - FIELD_WIDTH), Math.max(1, rows));
+	const labels = view.lines.map((_, index): string => (index === 0 ? "SAID" : ""));
+	if (labels.length > 1 && view.above) labels[1] = `▲ ${view.above}`;
+	if (labels.length > 1 && view.below) labels[labels.length - 1] = `▼ ${view.below}`;
+	return view.lines.map((line, index) => fit(`${field(labels[index])}${line}`, width));
+}
+
+export function titleBar(ctx: ViewContext, width: number, view: ViewName): string {
 	const rows = ctx.store.ordered();
 	const working = rows.filter((row) => row.status.kind === "working" || row.status.kind === "rate-limited" || row.status.kind === "stalled").length;
 	const waiting = rows.filter((row) => row.status.kind === "needs-you").length;
 	const errors = rows.filter((row) => row.status.kind === "error").length;
-	const counts = [
-		working ? theme.working(`${ctx.spinner} ${working} working`) : "",
-		waiting ? theme.waiting(`◆ ${waiting} needs you`) : "",
-		errors ? theme.error(`✖ ${errors} error`) : "",
-	]
-		.filter(Boolean)
-		.join("  ");
+	// Narrow terminals get the counts without their words.
+	const counts = (long: boolean) =>
+		[
+			working ? theme.working(`${ctx.spinner} ${working}${long ? " working" : ""}`) : "",
+			waiting ? theme.waiting(`◆ ${waiting}${long ? " needs you" : ""}`) : "",
+			errors ? theme.error(`✖ ${errors}${long ? " error" : ""}`) : "",
+		]
+			.filter(Boolean)
+			.join(long ? "   " : "  ");
 	const clock = new Date(ctx.now).toTimeString().slice(0, 5);
-	const left = ` ${theme.bold(theme.accent("pi-dash"))} ${theme.muted(title)}`;
-	const right = `${counts}  ${theme.muted(clock)} `;
+	const tabs = TABS.map(([name, label]) => (name === view ? theme.chip(theme.bold(theme.text(` ${label} `))) : theme.dim(` ${label} `))).join("");
+	const left = ` ${theme.bold(theme.indirect("pi-dash"))}  ${tabs}`;
+	let right = `${counts(true)}   ${theme.muted(clock)} `;
+	if (visibleWidth(left) + visibleWidth(right) >= width) right = `${counts(false)}  ${theme.muted(clock)} `;
 	const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
 	return background(left + " ".repeat(gap) + right, width, theme.bar);
 }
@@ -63,7 +95,8 @@ function quotaWindowText(window: QuotaWindow, now: number, gaugeWidth: number, w
 	const head = withProvider ? `${theme.text(window.providerLabel)} ` : "";
 	const reset = window.resetAt > now ? theme.dim(` ↻${fmtDuration(window.resetAt - now)}`) : "";
 	const tail = exhausted ? theme.error(` exhausted ${fmtDuration((window.exhaustedUntil ?? now) - now)}`) : reset;
-	return `${head}${theme.muted(window.label)} ${gauge(window.usedPercent / 100, gaugeWidth)}${String(Math.round(window.usedPercent)).padStart(3)}%${tail}`;
+	const percent = levelColor(window.usedPercent / 100)(`${Math.round(window.usedPercent)}%`);
+	return `${head}${theme.muted(window.label)} ${gauge(window.usedPercent / 100, gaugeWidth)} ${percent}${tail}`;
 }
 
 export function quotaLine(ctx: ViewContext, width: number): string | undefined {
@@ -80,7 +113,7 @@ export function quotaLine(ctx: ViewContext, width: number): string | undefined {
 			parts.push(quotaWindowText(window, ctx.now, gaugeWidth, window.provider !== previous));
 			previous = window.provider;
 		}
-		line = ` ${theme.dim("QUOTA")} ${parts.join("  ")}`;
+		line = `${field("QUOTA")}${parts.join("   ")}`;
 		if (visibleWidth(line) <= width) break;
 	}
 	return fit(line, width);
@@ -90,22 +123,23 @@ export function hostLine(ctx: ViewContext, width: number): string {
 	const host = ctx.store.host;
 	const spark = width >= 120 ? 12 : width >= 100 ? 6 : 0;
 	const trend = (values: number[]) => (spark ? `${sparkline(values, spark, 1)} ` : "");
-	const parts = [theme.dim("HOST")];
+	const parts: string[] = [];
 	const today = ctx.usage.total(startOfToday(ctx.now));
 	const hourly = ctx.usage.series(startOfToday(ctx.now), ctx.now, 1, "cost");
-	const todayText = ctx.usage.scanned || ctx.usage.files.size ? `today ${theme.text(`$${fmtCost(today.cost)}`)}${spark ? ` ${sparkline(hourly, Math.min(12, Math.max(1, hourly.length)))}` : ""}` : theme.dim("today …");
-	parts.push(`cpu ${trend(ctx.store.hostCpu.last(spark * 15))}${String(Math.round((host?.cpu ?? 0) * 100)).padStart(3)}%`);
-	if (host) parts.push(`mem ${gauge(host.memUsed / Math.max(1, host.memTotal), width >= 120 ? 12 : 8)}${fmtBytes(host.memUsed)}/${fmtBytes(host.memTotal)}`);
+	const todayText = ctx.usage.scanned || ctx.usage.files.size ? `${theme.muted("today")} ${theme.text(`$${fmtCost(today.cost)}`)}${spark ? ` ${sparkline(hourly, Math.min(12, Math.max(1, hourly.length)))}` : ""}` : theme.dim("today …");
+	parts.push(`${theme.muted("cpu")} ${trend(ctx.store.hostCpu.last(spark * 15))}${theme.text(`${Math.round((host?.cpu ?? 0) * 100)}%`)}`);
+	if (host) parts.push(`${theme.muted("mem")} ${gauge(host.memUsed / Math.max(1, host.memTotal), width >= 120 ? 12 : 8)} ${theme.text(fmtBytes(host.memUsed))}${theme.dim(`/${fmtBytes(host.memTotal)}`)}`);
 	const gpu = ctx.store.gpu;
-	if (gpu && ctx.gpu.available) parts.push(`gpu ${trend(ctx.store.gpuUtil.last(spark * 15))}${String(Math.round(gpu.utilization * 100)).padStart(3)}%${spark ? ` ${fmtBytes(gpu.memUsed)}/${fmtBytes(gpu.memTotal)}` : ""}`);
+	if (gpu && ctx.gpu.available) parts.push(`${theme.muted("gpu")} ${trend(ctx.store.gpuUtil.last(spark * 15))}${theme.text(`${Math.round(gpu.utilization * 100)}%`)}${spark ? ` ${theme.text(fmtBytes(gpu.memUsed))}${theme.dim(`/${fmtBytes(gpu.memTotal)}`)}` : ""}`);
 	parts.push(todayText);
-	return fit(` ${parts.join(width >= 100 ? "   " : "  ")}`, width);
+	return fit(`${field("HOST")}${parts.join(width >= 100 ? "    " : "   ")}`, width);
 }
 
+/** Faint horizontal rule, optionally with a label after a short lead-in. */
 export function rule(width: number, label = ""): string {
-	if (!label) return theme.dim("─".repeat(width));
-	const text = fit(` ${label}`, Math.min(width - 2, visibleWidth(label) + 2));
-	return fit(theme.dim("─") + text + theme.dim("─".repeat(Math.max(0, width - 1 - visibleWidth(text)))), width);
+	if (!label) return theme.faint("─".repeat(width));
+	const text = fit(` ${label} `, Math.min(width - 3, visibleWidth(label) + 2));
+	return fit(theme.faint("──") + text + theme.faint("─".repeat(Math.max(0, width - 2 - visibleWidth(text)))), width);
 }
 
 const ACTIVITY_ICON: Record<string, string> = { tool: "⚙", thinking: "✎", writing: "✎", compacting: "⟳", continuing: "⟳", model: "…" };
@@ -143,7 +177,7 @@ export function planCell(row: SessionRow, width: number): string {
 	if (plan) {
 		const done = plan.total > 0 && plan.complete >= plan.total;
 		const leaf = done ? "done" : (plan.activePath.at(-1)?.title ?? plan.title);
-		return fit(`${planBar(plan.complete, plan.total, 6)} ${theme.muted(`${plan.complete}/${plan.total}`)} ${theme.text(leaf)}`, width);
+		return fit(`${planBar(plan.complete, plan.total, 6)} ${theme.muted(`${plan.complete}/${plan.total}`)} ${done ? theme.working(leaf) : theme.text(leaf)}`, width);
 	}
 	if (row.bridge?.lastPrompt) return fit(theme.dim(`"${row.bridge.lastPrompt}"`), width);
 	return fit(theme.dim("—"), width);
@@ -167,6 +201,7 @@ export function cpuSeries(row: SessionRow, samples: number): number[] {
 
 export function rowName(row: SessionRow, width: number, selected: boolean): string {
 	const label = rowLabel(row);
+	if (row.exitedAt !== undefined) return fit(theme.dim(label), width);
 	return fit(selected ? theme.bold(theme.text(label)) : theme.text(label), width);
 }
 
@@ -175,9 +210,8 @@ export function costText(dollars: number, width: number): string {
 }
 
 export function laneLegend(): string {
-	return `${theme.working("█")}${theme.dim(" working ")} ${theme.waiting("▒")}${theme.dim(" waiting on you ")} ${theme.dim("░ idle")}`;
+	return `${theme.working("█")}${theme.dim(" working  ")}${theme.waiting("▒")}${theme.dim(" waiting on you  ")}${theme.dim("░ idle")}`;
 }
-
 
 export function weekAgo(now: number): number {
 	return now - 7 * DAY_MS;

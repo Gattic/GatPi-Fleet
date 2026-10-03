@@ -248,8 +248,12 @@ survive pid reuse. Per tick:
 - Every metric has a shape: sparkline (trend), gauge (fraction of a limit), split bar
   (direct ▓ vs indirect ▒), activity lane (time spent working / waiting on me / idle).
 - Text is truncated to width, never wrapped. Legends live behind `?`. *Updated:* the one
-  exception is the latest reply (SAID) in the detail view, which wraps and scrolls.
+  exception is the latest reply (SAID): it wraps and scrolls in the detail view, and the
+  overview previews it in the rows the session table leaves free.
 - Gauge colours: green < 60 %, amber < 85 %, red ≥ 85 %.
+- *Updated:* colours come from pi's own dark theme, so the dashboard reads as part of pi.
+  Gauges are thin `━━━╸━━` meters rather than `▕██░░▏` boxes; the title bar shows the
+  views as tabs; dialogs sit on a dimmed copy of the view, with key hints in their border.
 
 ### 4.2 Overview (default, ≥ 120 cols)
 

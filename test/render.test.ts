@@ -4,8 +4,9 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { GpuMonitor } from "../src/dashboard/collectors/gpu.ts";
 import { QuotaMonitor } from "../src/dashboard/collectors/quota.ts";
 import { Store } from "../src/dashboard/model/store.ts";
-import { activityLane, gauge, LANE, planBar, sparkline, splitBar, stackedArea } from "../src/dashboard/ui/charts.ts";
+import { activityLane, gauge, LANE, planBar, sparkline, splitBar, stackedArea, stretch } from "../src/dashboard/ui/charts.ts";
 import { TextPane } from "../src/dashboard/ui/text-pane.ts";
+import { theme } from "../src/dashboard/ui/theme.ts";
 import { renderDetail } from "../src/dashboard/ui/views/detail.ts";
 import { renderOverview } from "../src/dashboard/ui/views/overview.ts";
 import type { ViewContext } from "../src/dashboard/ui/views/shared.ts";
@@ -26,6 +27,8 @@ test("charts render exactly the requested width", () => {
 	}
 	assert.equal(strip(planBar(3, 6, 6)), "▰▰▰▱▱▱");
 	assert.equal(strip(splitBar(0.01, 0, 100, 5)), "▓░░░░", "small non-zero shares stay visible");
+	assert.equal(strip(gauge(0.25, 6)), "━╸━━━━", "gauges fill in half cells");
+	assert.deepEqual(stretch([1, 2], 5), [1, 1, 1, 2, 2], "a series covering the whole range spans the chart");
 });
 
 function state(pid: number, overrides: Partial<SessionState>): SessionState {
@@ -75,8 +78,29 @@ test("views fit the terminal at 80, 100 and 140 columns and show each state", ()
 	assert.match(overview, /✖ 529 overloaded/);
 	assert.match(overview, /○ ready/);
 	assert.match(overview, /▰▰▰▰▱▱ 4\/6 Run tests/);
-	assert.match(overview, /PLAN {2}Ship it ▸ Verify ▸ Run tests/);
+	assert.match(overview, /PLAN {3}Ship it ▸ Verify ▸ Run tests/);
 	assert.match(overview, /anthropic 5h/);
+});
+
+test("a highlighted row keeps its background across truncated cells", () => {
+	const ctx = context();
+	ctx.selected = ctx.store.rows.get(104);
+	const background = theme.selected("x").split("x")[0];
+	const line = renderOverview(ctx, 80, 30).find((text) => strip(text).includes("a very long")) ?? "";
+	assert.ok(line.includes("\x1b[0m"), "the long name is truncated");
+	for (const rest of line.split("\x1b[0m").slice(1)) assert.ok(rest.startsWith(background), "the background resumes after each reset");
+});
+
+test("the overview previews the selected session's latest reply in the rows the table leaves free", () => {
+	const ctx = context();
+	ctx.store.setState(101, state(101, { lastSaid: Array.from({ length: 60 }, (_, index) => `reply line ${index + 1}`).join("\n") }));
+	ctx.selected = ctx.store.rows.get(101);
+	const lines = renderOverview(ctx, 100, 30).map(strip);
+	assert.equal(lines.length, 29, "the preview fills the view");
+	const first = lines.findIndex((line) => /^ SAID +reply line 1 /.test(line));
+	assert.ok(first > 0);
+	const shown = lines.length - first;
+	assert.match(lines.at(-1) ?? "", new RegExp(`^ ▼ ${60 - shown} +reply line ${shown} `));
 });
 
 test("detail shows the whole reply in a scrollable SAID pane, then the suggested next prompt", () => {

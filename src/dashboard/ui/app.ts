@@ -2,7 +2,7 @@
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { type Component, Key, matchesKey, type OverlayHandle, type OverlayOptions, type SelectItem, type TUI, type TuiMouseEvent, type TuiMouseEventResult, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, Key, matchesKey, type OverlayHandle, type OverlayOptions, type SelectItem, stripTerminalSequences, type TUI, type TuiMouseEvent, type TuiMouseEventResult, visibleWidth } from "@earendil-works/pi-tui";
 import type { Command } from "../../protocol/index.ts";
 import { attachSession, launchSession, readHardcopy, requestHardcopy } from "../actions/screen.ts";
 import { listProjects, listSessions } from "../actions/sessions.ts";
@@ -11,13 +11,13 @@ import type { GpuMonitor } from "../collectors/gpu.ts";
 import type { QuotaMonitor } from "../collectors/quota.ts";
 import { rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../model/store.ts";
 import type { UsageIndex } from "../usage/usage-index.ts";
-import { fit, fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
+import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
 import { Composer, Confirm, Help, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
 import { TextPane } from "./text-pane.ts";
-import { theme } from "./theme.ts";
+import { keyHints, theme } from "./theme.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
 import { renderOverview } from "./views/overview.ts";
-import { SPINNER, type ViewContext } from "./views/shared.ts";
+import { background, SPINNER, type ViewContext, type ViewName } from "./views/shared.ts";
 import { renderUsage, USAGE_RANGES, type UsageRange } from "./views/usage.ts";
 
 export interface Services {
@@ -33,19 +33,17 @@ export interface Services {
 	quit: () => void;
 }
 
-type View = "overview" | "detail" | "usage";
-
 const FLASH_MS = 5000;
 const PEEK_REFRESH_MS = 1000;
 
-const KEYS: Record<View, [string, string][]> = {
+const KEYS: Record<ViewName, [string, string][]> = {
 	overview: [["1-9", "select"], ["⏎", "detail"], ["p", "prompt"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
 	detail: [["Esc", "back"], ["p", "prompt"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["c", "close"], ["R", "rename"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["?", "help"]],
 };
 
 export class App implements Component {
-	private view: View = "overview";
+	private view: ViewName = "overview";
 	private selectedPid?: number;
 	// A recycled or resumed session replaces its row in the same slot; selection follows it.
 	private selectedSlot?: number;
@@ -119,20 +117,25 @@ export class App implements Component {
 		this.saidArea = detail?.said;
 		const body = detail ? detail.lines : this.view === "usage" ? renderUsage(ctx, width, height, this.range) : renderOverview(ctx, width, height);
 		while (body.length < height - 1) body.push("");
-		return [...body, this.footer(width, now)];
+		const lines = [...body, this.footer(width, now)];
+		// Dialogs sit on a dimmed copy of the view.
+		return this.overlay ? lines.map((line) => theme.faint(stripTerminalSequences(line))) : lines;
 	}
 
 	private footer(width: number, now: number): string {
-		if (this.flash && this.flash.until > now) return fit(` ${this.flash.error ? theme.error(this.flash.text) : theme.accent(this.flash.text)}`, width);
+		if (this.flash && this.flash.until > now) {
+			const text = this.flash.error ? theme.error(`✖ ${this.flash.text}`) : `${theme.working("✓")} ${theme.text(this.flash.text)}`;
+			return background(` ${text}`, width, theme.bar);
+		}
 		// Drop hints from the end, but always keep help reachable.
 		const keys = KEYS[this.view];
 		const help = keys.find(([key]) => key === "?");
-		const text = (list: [string, string][]) => ` ${list.map(([key, label]) => `${theme.bold(theme.accent(key))} ${theme.dim(label)}`).join("  ")}`;
+		const text = (list: [string, string][]) => ` ${keyHints(list)}`;
 		let shown = keys;
 		while (shown.length > 1 && visibleWidth(text(shown)) > width) {
 			shown = [...shown.filter(([key]) => key !== "?").slice(0, -1), ...(help ? [help] : [])];
 		}
-		return fit(text(shown), width);
+		return background(text(shown), width, theme.bar);
 	}
 
 	private notify(text: string, error = false): void {
@@ -273,7 +276,7 @@ export class App implements Component {
 	}
 
 	private showHelp(): void {
-		this.show(new Help(() => this.closeOverlay()), { width: "80%" });
+		this.show(new Help(() => this.closeOverlay()), { width: "80%", minWidth: 96 });
 	}
 
 	private confirm(title: string, message: string, onYes: () => void): void {
@@ -344,7 +347,7 @@ export class App implements Component {
 		const items: SelectItem[] = listProjects(this.services.sessionRoot, live).map((project) => ({
 			value: project.cwd,
 			label: shortPath(project.cwd),
-			description: `${project.sessions} session${project.sessions === 1 ? "" : "s"} · ${fmtDuration(now - project.lastActive)} ago`,
+			description: `${project.sessions} session${project.sessions === 1 ? "" : "s"} · ${live.includes(project.cwd) ? "open now" : `${fmtDuration(now - project.lastActive)} ago`}`,
 		}));
 		this.show(
 			new Picker({

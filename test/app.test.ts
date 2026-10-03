@@ -126,7 +126,7 @@ test("the composer offers the suggested next prompt while idle; Tab takes it", (
 	const ui = harness("/nonexistent");
 	ui.store.setState(101, session({ suggestion: "Run the tests\nand report" }));
 	ui.press("p");
-	assert.match(ui.dialog() ?? "", /↳ Run the tests\s+│\n│ {3}and report/);
+	assert.match(ui.dialog() ?? "", /↳ Run the tests\s+│\n│ {4}and report/);
 	assert.match(ui.dialog() ?? "", /Tab accept suggestion/);
 	ui.press("\t");
 	assert.doesNotMatch(ui.dialog() ?? "", /↳/, "the editor holds the suggestion now");

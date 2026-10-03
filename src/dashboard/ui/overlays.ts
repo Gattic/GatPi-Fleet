@@ -15,13 +15,14 @@ import {
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
+	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { DeliverAs } from "../../protocol/index.ts";
-import { fit } from "./format.ts";
+import { ELLIPSIS, fit } from "./format.ts";
 import { TextPane } from "./text-pane.ts";
-import { theme } from "./theme.ts";
+import { keycap, keyHints, theme } from "./theme.ts";
 
 const selectListTheme: SelectListTheme = {
 	selectedPrefix: (text) => theme.accent(text),
@@ -31,16 +32,35 @@ const selectListTheme: SelectListTheme = {
 	noMatch: (text) => theme.dim(text),
 };
 
-const editorTheme: EditorTheme = { borderColor: (text) => theme.dim(text), selectList: selectListTheme };
+const editorTheme: EditorTheme = { borderColor: (text) => theme.faint(text), selectList: selectListTheme };
 
-/** Bordered box with a title row and an optional footer hint. */
+/** Columns between a frame's border and its content, on each side. */
+const PAD = 2;
+
+/** Content width inside a frame of `width` columns. */
+function frameInner(width: number): number {
+	return Math.max(1, width - 2 - 2 * PAD);
+}
+
+/** Text set into a border line, truncated to leave room for the corners. */
+function inset(text: string, width: number): string {
+	return text ? fit(` ${text} `, Math.min(Math.max(0, width - 4), visibleWidth(text) + 2)) : "";
+}
+
+/** Rounded box with the title in the top border and key hints in the bottom one. */
 export function frame(title: string, body: readonly string[], width: number, hint = ""): string[] {
-	const inner = Math.max(1, width - 4);
-	const titleText = ` ${title} `;
-	const top = theme.dim("╭─") + theme.bold(titleText) + theme.dim(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(titleText)))}╮`);
-	const hintText = hint ? ` ${hint} ` : "";
-	const bottom = theme.dim("╰─") + theme.dim(hintText) + theme.dim(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(hintText)))}╯`);
-	return [top, ...body.map((line) => `${theme.dim("│")} ${fit(line, inner)} ${theme.dim("│")}`), bottom];
+	const inner = frameInner(width);
+	const titleText = theme.bold(theme.text(inset(title, width)));
+	const top = theme.border("╭─") + titleText + theme.border(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(titleText)))}╮`);
+	const hintText = inset(hint, width);
+	const bottom = theme.border("╰─") + hintText + theme.border(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(hintText)))}╯`);
+	const pad = " ".repeat(PAD);
+	return [top, ...body.map((line) => `${theme.border("│")}${pad}${fit(line, inner)}${pad}${theme.border("│")}`), bottom];
+}
+
+/** A section label in the left gutter of a dialog row. */
+function gutter(label: string, width: number): string {
+	return theme.dim(fit(label, width));
 }
 
 export interface ComposerOptions {
@@ -114,27 +134,26 @@ export class Composer extends Container implements Focusable {
 	}
 
 	render(width: number): string[] {
-		const inner = Math.max(1, width - 4);
+		const inner = frameInner(width);
 		const working = this.options.isWorking();
 		const mode = working
-			? `${theme.working("working")} · delivers as ${theme.bold(theme.accent(this.mode === "steer" ? "steer" : "follow-up"))} ${theme.dim(this.mode === "steer" ? "(after the current tool)" : "(when the run finishes)")}`
-			: theme.dim("idle · starts a new turn");
+			? `${theme.working("●")} ${theme.text("working")} ${theme.dim("· delivers as")} ${theme.bold(theme.accent(this.mode === "steer" ? "steer" : "follow-up"))} ${theme.dim(this.mode === "steer" ? "(after the current tool)" : "(when the run finishes)")}`
+			: `${theme.dim("○")} ${theme.text("idle")} ${theme.dim("· starts a new turn")}`;
 		const body = [mode, ...this.editor.render(inner)];
 		const suggestion = this.visibleSuggestion();
 		if (suggestion) {
 			const wrapped = suggestion.split("\n").flatMap((line) => wrapTextWithAnsi(line, Math.max(1, inner - 2)));
-			body.push(...wrapped.map((line, index) => theme.dim(`${index === 0 ? "↳ " : "  "}${line}`)));
+			body.push(...wrapped.map((line, index) => `${theme.dim(index === 0 ? "↳ " : "  ")}${theme.muted(line)}`));
 		}
-		if (this.error) body.push(theme.error(this.error));
-		const hint = working ? "⏎ send · Tab steer/follow-up · ⇧⏎ newline · Esc cancel" : `⏎ send · ${suggestion ? "Tab accept suggestion · " : ""}⇧⏎ newline · Esc cancel`;
-		return frame(`Prompt → ${this.options.target}`, body, width, hint);
+		if (this.error) body.push(theme.error(`✖ ${this.error}`));
+		const hints: [string, string][] = working ? [["⏎", "send"], ["Tab", "steer/follow-up"]] : [["⏎", "send"], ...(suggestion ? [["Tab", "accept suggestion"] as [string, string]] : [])];
+		return frame(`Prompt → ${this.options.target}`, body, width, keyHints([...hints, ["⇧⏎", "newline"], ["Esc", "cancel"]]));
 	}
 }
 
 export interface PickerOptions {
 	title: string;
 	items: SelectItem[];
-	hint?: string;
 	maxVisible?: number;
 	/** Extra item derived from the typed filter (e.g. "open <path>"). */
 	extraItem?: (filter: string) => SelectItem | undefined;
@@ -144,10 +163,17 @@ export interface PickerOptions {
 
 /** Type-to-filter list. */
 export class Picker extends Container implements Focusable {
-	private readonly input = new Input({ prompt: "› ", placeholder: "type to filter" });
+	private readonly input = new Input({ prompt: theme.accent("› "), placeholder: "type to filter", placeholderStyle: theme.dim });
 	private list: SelectList;
+	private count = 0;
 	private readonly options: PickerOptions;
 	private _focused = false;
+	// The selected item is a full-width bar, so its style needs the width being rendered.
+	private width = 0;
+	private readonly listTheme: SelectListTheme = {
+		...selectListTheme,
+		selectedText: (text) => theme.selected(fit(theme.bold(theme.text(text)), this.width)),
+	};
 
 	constructor(options: PickerOptions) {
 		super();
@@ -167,7 +193,9 @@ export class Picker extends Container implements Focusable {
 	private buildList(filter: string): SelectList {
 		const matches = filter ? fuzzyFilter(this.options.items, filter, (item) => `${item.label} ${item.description ?? ""}`) : this.options.items;
 		const extra = this.options.extraItem?.(filter);
-		const list = new SelectList(extra ? [extra, ...matches] : matches, this.options.maxVisible ?? 12, selectListTheme, { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 60 });
+		const items = extra ? [extra, ...matches] : matches;
+		this.count = items.length;
+		const list = new SelectList(items, this.options.maxVisible ?? 12, this.listTheme, { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 48, truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, ELLIPSIS) });
 		list.onSelect = (item) => this.options.onSelect(item);
 		list.onCancel = () => this.options.onCancel();
 		return list;
@@ -185,8 +213,10 @@ export class Picker extends Container implements Focusable {
 	}
 
 	render(width: number): string[] {
-		const inner = Math.max(1, width - 4);
-		return frame(this.options.title, [...this.input.render(inner), ...this.list.render(inner)], width, this.options.hint ?? "↑↓ select · ⏎ choose · Esc cancel");
+		const inner = frameInner(width);
+		this.width = inner;
+		const list = this.count ? this.list.render(inner) : [theme.dim(this.input.getValue() ? "  no matches" : "  nothing to choose from")];
+		return frame(this.options.title, [...this.input.render(inner), theme.faint("─".repeat(inner)), ...list], width, keyHints([["↑↓", "select"], ["⏎", "choose"], ["Esc", "cancel"]]));
 	}
 }
 
@@ -210,7 +240,9 @@ export class Confirm implements Component {
 	}
 
 	render(width: number): string[] {
-		return frame(this.title, [...wrapTextWithAnsi(this.message, Math.max(1, width - 4)), "", `${theme.bold("y")}${theme.dim("/⏎ yes   ")}${theme.bold("n")}${theme.dim("/Esc no")}`], width);
+		const message = wrapTextWithAnsi(this.message, frameInner(width)).map((line) => theme.text(line));
+		const answers = `${keycap("y")} ${theme.text("yes")}    ${keycap("n")} ${theme.muted("no")}`;
+		return frame(this.title, ["", ...message, "", answers, ""], width, keyHints([["⏎", "yes"], ["Esc", "no"]]));
 	}
 }
 
@@ -223,7 +255,7 @@ export class TextPrompt extends Container implements Focusable {
 	constructor(title: string, initial: string, onSubmit: (value: string) => void, onCancel: () => void) {
 		super();
 		this.title = title;
-		this.input = new Input({ prompt: "› " });
+		this.input = new Input({ prompt: theme.accent("› ") });
 		this.input.setValue(initial);
 		this.input.onSubmit = onSubmit;
 		this.input.onEscape = onCancel;
@@ -243,7 +275,7 @@ export class TextPrompt extends Container implements Focusable {
 	}
 
 	render(width: number): string[] {
-		return frame(this.title, this.input.render(Math.max(1, width - 4)), width, "⏎ save · Esc cancel");
+		return frame(this.title, this.input.render(frameInner(width)), width, keyHints([["⏎", "save"], ["Esc", "cancel"]]));
 	}
 }
 
@@ -273,7 +305,7 @@ export class Peek implements Component {
 		const source = this.options.lines();
 		const body = source ? source.slice(-height).map((line) => theme.text(line)) : [theme.dim("capturing screen…")];
 		while (body.length < height) body.unshift("");
-		return frame(this.options.title, body, width, "live mirror · p prompt · a attach · x abort · Esc close");
+		return frame(this.options.title, body, width, `${theme.working("●")} ${theme.dim("live")}  ${keyHints([["p", "prompt"], ["a", "attach"], ["x", "abort"], ["Esc", "close"]])}`);
 	}
 }
 
@@ -316,32 +348,50 @@ export class Reader implements Component {
 	render(width: number): string[] {
 		const height = Math.max(1, this.options.height() - 2);
 		this.pane.setText(this.options.text());
-		const view = this.pane.render(Math.max(1, width - 4), height);
+		const view = this.pane.render(frameInner(width), height);
 		const body = [...view.lines];
 		while (body.length < height) body.push("");
 		const total = view.above + view.lines.length + view.below;
-		const position = total > view.lines.length ? `${view.above + 1}–${view.above + view.lines.length}/${total} · ` : "";
-		return frame(this.options.title, body, width, `${position}↑↓ PgUp PgDn scroll · p prompt · Esc close`);
+		const position = total > view.lines.length ? `${theme.muted(`${view.above + 1}–${view.above + view.lines.length}/${total}`)}  ` : "";
+		return frame(this.options.title, body, width, `${position}${keyHints([["↑↓ PgUp PgDn", "scroll"], ["p", "prompt"], ["Esc", "close"]])}`);
 	}
 }
 
-const HELP: [string, string][] = [
-	["1-9 ↑↓ j k", "select session"],
-	["⏎ / Esc", "detail view / back"],
-	["p", "prompt (steer or follow-up while working; Tab takes the suggestion)"],
-	["s", "read the latest reply full screen (or click SAID)"],
-	["PgUp PgDn", "scroll SAID in the detail view (or mouse wheel)"],
-	["x", "abort the current run"],
-	["v", "peek: live read-only mirror of the pi screen"],
-	["a", "attach (screen -rx; Ctrl-a d returns here)"],
-	["n", "new session in a project"],
-	["r", "resume a session of the selected project"],
-	["c / C", "close session / close and start a new one"],
-	["R", "rename session"],
-	["d", "dismiss an exited session"],
-	["u", "usage view (t / w / m: today, 7d, 30d)"],
-	["q / Ctrl-c", "quit (sessions keep running)"],
+const HELP: [string, [string, string][]][] = [
+	[
+		"NAVIGATE",
+		[
+			["1-9 ↑↓ j k", "select session"],
+			["⏎ / Esc", "detail view / back"],
+			["u", "usage view (t / w / m: today, 7d, 30d)"],
+			["q / Ctrl-c", "quit (sessions keep running)"],
+		],
+	],
+	[
+		"SESSION",
+		[
+			["p", "prompt (steer or follow-up while working; Tab takes the suggestion)"],
+			["s", "read the latest reply full screen (or click SAID)"],
+			["PgUp PgDn", "scroll SAID in the detail view (or mouse wheel)"],
+			["x", "abort the current run"],
+			["v", "peek: live read-only mirror of the pi screen"],
+			["a", "attach (screen -rx; Ctrl-a d returns here)"],
+			["R", "rename session"],
+		],
+	],
+	[
+		"MANAGE",
+		[
+			["n", "new session in a project"],
+			["r", "resume a session of the selected project"],
+			["c / C", "close session / close and start a new one"],
+			["d", "dismiss an exited session"],
+		],
+	],
 ];
+
+const GUTTER = 10;
+const KEY_COLUMN = 13;
 
 export class Help implements Component {
 	private readonly onClose: () => void;
@@ -357,13 +407,19 @@ export class Help implements Component {
 	}
 
 	render(width: number): string[] {
-		const body = HELP.map(([key, text]) => `${fit(theme.bold(theme.accent(key)), 14)}${theme.text(text)}`);
+		const body: string[] = [];
+		for (const [section, keys] of HELP) {
+			keys.forEach(([key, text], index) => body.push(`${gutter(index === 0 ? section : "", GUTTER)}${fit(theme.bold(theme.accent(key)), KEY_COLUMN)}${theme.text(text)}`));
+		}
 		body.push("");
-		body.push(`${theme.working("⠹")} working  ${theme.waiting("◆")} needs you  ${theme.waiting("◆?")} stalled (no events, no CPU)  ${theme.error("✖")} error  ${theme.dim("○ ready  ◌ exited  ? no bridge")}`);
-		body.push(`${theme.direct("▓")} pi process  ${theme.indirect("▒")} indirect: tools, builds (systemd units), jobs, subagents`);
-		body.push(`${theme.accent("▰▱")} roadmap progress   ${theme.working("█")} working ${theme.waiting("▒")} waiting on you ${theme.dim("░")} idle (activity lane)`);
-		body.push(theme.dim("$ is pi's API-equivalent cost; quota % is the subscription limit that actually applies."));
-		body.push(theme.dim("Not tracked: LLM calls extensions make outside the session transcript."));
-		return frame("pi-dash help", body, width, "any key closes");
+		const legend: [string, string][] = [
+			["STATES", `${theme.working("⠹")} working  ${theme.waiting("◆")} needs you  ${theme.waiting("◆?")} stalled (no events, no CPU)  ${theme.error("✖")} error  ${theme.dim("○ ready  ◌ exited  ? no bridge")}`],
+			["BARS", `${theme.direct("▓")} pi process  ${theme.indirect("▒")} indirect: tools, builds (systemd units), jobs, subagents`],
+			["", `${theme.accent("▰▱")} roadmap progress   ${theme.working("█")} working ${theme.waiting("▒")} waiting on you ${theme.dim("░")} idle (activity lane)`],
+			["NOTES", theme.muted("$ is pi's API-equivalent cost; quota % is the subscription limit that actually applies.")],
+			["", theme.muted("Not tracked: LLM calls extensions make outside the session transcript.")],
+		];
+		for (const [section, text] of legend) body.push(`${gutter(section, GUTTER)}${text}`);
+		return frame("pi-dash help", body, width, theme.dim("any key closes"));
 	}
 }

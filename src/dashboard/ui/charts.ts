@@ -32,19 +32,21 @@ export function sparkline(values: readonly number[], width: number, max?: number
 	let out = "";
 	for (const value of columns) {
 		if (Number.isNaN(value)) out += " ";
-		else if (top <= 0 || value <= 0) out += theme.dim(SPARK[0]);
+		else if (top <= 0 || value <= 0) out += theme.faint(SPARK[0]);
 		else out += paint(SPARK[Math.min(SPARK.length - 1, Math.round((value / top) * (SPARK.length - 1)))]);
 	}
 	return out;
 }
 
-/** `▕████░░░░▏` filled to `fraction`, coloured by level; `width` includes the caps. */
+/** Thin `━━━━╸━━━` meter filled to `fraction` in half cells, coloured by level. */
 export function gauge(fraction: number, width: number, paint?: Paint): string {
-	const inner = Math.max(1, width - 2);
+	if (width <= 0) return "";
 	const clamped = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
-	const filled = Math.round(clamped * inner);
+	const halves = Math.round(clamped * width * 2);
+	const full = Math.floor(halves / 2);
+	const half = halves % 2;
 	const color = paint ?? levelColor(clamped);
-	return theme.dim("▕") + color("█".repeat(filled)) + theme.dim("░".repeat(inner - filled)) + theme.dim("▏");
+	return color("━".repeat(full) + (half ? "╸" : "")) + theme.faint("━".repeat(width - full - half));
 }
 
 /** Direct (▓) and indirect (▒) shares of `scale` in one bar. */
@@ -55,14 +57,14 @@ export function splitBar(direct: number, indirect: number, scale: number, width:
 	const cells = (value: number) => (value > 0 ? Math.max(1, Math.round(value * unit)) : 0);
 	const directCells = Math.min(width, cells(direct));
 	const indirectCells = Math.min(width - directCells, cells(indirect));
-	return theme.direct("▓".repeat(directCells)) + theme.indirect("▒".repeat(indirectCells)) + theme.dim("░".repeat(width - directCells - indirectCells));
+	return theme.direct("▓".repeat(directCells)) + theme.indirect("▒".repeat(indirectCells)) + theme.faint("░".repeat(width - directCells - indirectCells));
 }
 
 export function planBar(complete: number, total: number, width: number): string {
 	if (width <= 0) return "";
 	const filled = total > 0 ? Math.round((complete / total) * width) : 0;
 	const paint = total > 0 && complete >= total ? theme.working : theme.accent;
-	return paint("▰".repeat(filled)) + theme.dim("▱".repeat(width - filled));
+	return paint("▰".repeat(filled)) + theme.faint("▱".repeat(width - filled));
 }
 
 /** Two stacked series (direct below, indirect above) as `height` rows, top row first. */
@@ -81,7 +83,7 @@ export function stackedArea(direct: readonly number[], indirect: readonly number
 			const aFill = Math.max(0, Math.min(8, aEighths - lo));
 			const tFill = Math.max(0, Math.min(8, tEighths - lo));
 			if (Number.isNaN(a[column]) && Number.isNaN(b[column])) line += " ";
-			else if (tFill === 0) line += row === 0 ? theme.dim("▁") : " ";
+			else if (tFill === 0) line += row === 0 ? theme.faint("▁") : " ";
 			else if (aFill === 8) line += theme.direct("█");
 			else if (aFill > 0) line += tFill === 8 ? theme.indirectBg(theme.direct(BLOCKS[aFill])) : theme.direct(BLOCKS[aFill]);
 			else line += theme.indirect(BLOCKS[tFill]);
@@ -139,18 +141,24 @@ export function hbar(value: number, max: number, width: number, paint: Paint = t
 	return paint(bar) + " ".repeat(width - full - (part ? 1 : 0));
 }
 
-/** Segmented bar of shares (e.g. cost by session), each segment painted. */
+/** Thin segmented bar of shares (e.g. cost by session), each segment painted. */
 export function shareBar(parts: readonly { value: number; paint: Paint }[], width: number): string {
 	const total = parts.reduce((sum, part) => sum + part.value, 0);
-	if (total <= 0 || width <= 0) return theme.dim("░".repeat(Math.max(0, width)));
+	if (total <= 0 || width <= 0) return theme.faint("━".repeat(Math.max(0, width)));
 	let out = "";
 	let used = 0;
 	let acc = 0;
 	for (const part of parts) {
 		acc += part.value;
 		const end = Math.round((acc / total) * width);
-		if (end > used) out += part.paint("█".repeat(end - used));
+		if (end > used) out += part.paint("━".repeat(end - used));
 		used = end;
 	}
-	return out + theme.dim("░".repeat(width - used));
+	return out + theme.faint("━".repeat(width - used));
+}
+
+/** Spread `values` over `width` columns, each value covering an equal run (for series that span the whole chart). */
+export function stretch(values: readonly number[], width: number): number[] {
+	if (!values.length || values.length >= width) return [...values];
+	return Array.from({ length: width }, (_, column) => values[Math.floor((column * values.length) / width)]);
 }
