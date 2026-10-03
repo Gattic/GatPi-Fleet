@@ -133,7 +133,7 @@ export interface SessionState {
 	/** Coarse heartbeat (≤ every 10 s) of the latest pi event, used to detect stalls. */
 	lastEventAt: number;
 	lastPrompt?: string;
-	/** Full text (Markdown, bounded) of the latest assistant message that had text. */
+	/** Full text (Markdown, bounded) of the latest assistant reply: a message with text and no tool calls. */
 	lastSaid?: string;
 	/** Suggested next prompt; absent while the agent works or without the prompt-suggestions extension. */
 	suggestion?: string;

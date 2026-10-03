@@ -2,7 +2,7 @@
 // can drive a real interactive pi without network access or API cost.
 //
 // Prompt scripts (last user message):
-//   "sleep N"  -> calls the bash tool with `sleep N`, then replies "slept N"
+//   "sleep N"  -> says "sleeping N" while calling the bash tool with `sleep N`, then replies "slept N"
 //   "fail"     -> ends with stopReason "error"
 //   anything   -> streams "echo: <prompt>" over ~0.6 s
 import {
@@ -61,6 +61,7 @@ function streamScripted(model: Model<any>, context: Context, options?: SimpleStr
 			if (last?.role === "toolResult") {
 				await emitText(sleep ? `slept ${sleep[1]}` : "tool finished");
 			} else if (sleep) {
+				await emitText(`sleeping ${sleep[1]}`);
 				output.content.push({ type: "toolCall", id: `call_${Date.now()}`, name: "bash", arguments: { command: `sleep ${sleep[1]}` } });
 				const index = output.content.length - 1;
 				stream.push({ type: "toolcall_start", contentIndex: index, partial: output });

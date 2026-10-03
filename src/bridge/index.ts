@@ -54,6 +54,12 @@ function textOf(content: unknown): string {
 		.join("\n");
 }
 
+/** SAID text of an assistant message: none when it calls tools, since that text only narrates the work. */
+function replyOf(content: unknown): string {
+	if (Array.isArray(content) && content.some((block) => block?.type === "toolCall")) return "";
+	return bound(textOf(content), SAID_LIMIT);
+}
+
 function toolDetail(args: unknown): string {
 	if (!args || typeof args !== "object") return "";
 	const record = args as Record<string, unknown>;
@@ -103,7 +109,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 		if (message.role === "assistant") {
 			addUsage(direct, message.usage);
 			addMinute(usageMinutes, timestamp, message.usage, now);
-			const said = bound(textOf(message.content), SAID_LIMIT);
+			const said = replyOf(message.content);
 			if (said) lastSaid = said;
 		} else if (message.role === "toolResult" && message.usage) {
 			addUsage(indirect, message.usage);
@@ -371,7 +377,7 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		const message = event.message;
 		if (message.role === "assistant") {
 			recordUsage(message.usage, "direct", message.timestamp);
-			const said = bound(textOf(message.content), SAID_LIMIT);
+			const said = replyOf(message.content);
 			if (said) set({ lastSaid: said });
 			// After a user abort pi can persist the interrupted turn as an error; that is not a failure.
 			const aborted = message.stopReason === "aborted" || ctx?.signal?.aborted === true;

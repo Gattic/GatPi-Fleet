@@ -142,7 +142,7 @@ Event → state mapping:
 | `agent_start` | `phase=working`, `since` |
 | `message_update` | `activity=thinking|streaming` (flag only — never per-token emits) |
 | `tool_execution_start/end` | `activity=tool:<name>` + short arg summary (e.g. first 60 chars of bash command); tool timeline entry; capture `bg_run`/`run_deck` job ids + pids from result details |
-| `message_end` (assistant) | direct usage delta `{ts, model, tokens…, cost}`; `stopReason=error|aborted` → `lastError`; `lastSaid` = assistant text (*updated:* the whole text, bounded to 32 000 chars, so the detail view can show and scroll it) |
+| `message_end` (assistant) | direct usage delta `{ts, model, tokens…, cost}`; `stopReason=error|aborted` → `lastError`; `lastSaid` = assistant text (*updated:* the whole text, bounded to 32 000 chars, so the detail view can show and scroll it; messages that call tools are skipped, as their text only narrates the work) |
 | `message_end` (toolResult with `usage`) | indirect usage delta |
 | `session_compact` | compaction usage; activity `compacting` |
 | `agent_end` (before settled) | `activity=continuing` (retry / compaction / queued follow-up) |
@@ -271,7 +271,7 @@ survive pid reuse. Per tick:
 ├─ 3 proja · ~/dev/ProjectA · opus-5.5 xhigh · ctx ▕██████░░░░▏58% · screen 7349.proja ─────────────┤
 │ PLAN  Audio mixer ▸ 5 Verify ▸ 5.2 Run full build                              ▰▰▰▰▰▰▰▰▰▱ 9/10      │
 │ NOW   ⚙ build_project  cmake --build build -j8        12m04s   unit run-p360222 ▕█████████░▏6.1/6.5G │
-│ SAID  "Mixer bus wired; running the full build before the verification gate."                       │
+│ SAID  "Mixer bus wired and unit-tested; the full build and verification are next."                  │
 │ 60m   ████████▒▒▒▒██████████░░░░██████████████████▒▒▒▒▒▒▒▒████████   working █  waiting on you ▒  idle ░ │
 ╰ 1-9/↑↓ select  ⏎ detail  p prompt  x abort  a attach  v peek  n new  r resume  c close  u usage  ? ──╯
 ```

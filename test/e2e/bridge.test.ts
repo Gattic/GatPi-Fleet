@@ -116,6 +116,15 @@ test("a multi-line reply arrives whole", async () => {
 	assert.equal(current().lastPrompt, "two lines");
 });
 
+test("while the session works, the text beside a tool call does not replace the latest reply", async () => {
+	const reply = current().lastSaid;
+	assert.ok(reply);
+	await hub.send(pid, { kind: "prompt", text: "sleep 1" });
+	await waitFor("tool activity", () => current().activity?.kind === "tool");
+	assert.equal(current().lastSaid, reply);
+	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "slept 1");
+});
+
 test("the prompt is visible in pi's own TUI (peek via screen hardcopy)", async () => {
 	const file = join(root, "peek.txt");
 	requestHardcopy(current().sty as string, current().window, file);
@@ -132,12 +141,22 @@ test("steer while working is delivered in the same run; the suggestion is withdr
 	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "echo: steered");
 });
 
-test("abort stops the run without reporting an error", async () => {
+test("abort stops the run without reporting an error or replacing the latest reply", async () => {
 	await hub.send(pid, { kind: "prompt", text: "sleep 30" });
 	await waitFor("tool running", () => current().activity?.kind === "tool");
 	await hub.send(pid, { kind: "abort" });
 	await waitFor("idle after abort", () => current().phase === "idle");
 	assert.equal(current().lastError, undefined);
+	assert.equal(current().lastSaid, "echo: steered");
+});
+
+test("a reload rebuilds the latest reply from history, skipping the aborted run's tool-call text", async () => {
+	execFileSync("screen", ["-S", screenName, "-p", "0", "-X", "stuff", "/reload\r"]);
+	await waitFor("bye reload", () => byes.includes("reload"));
+	states.delete(pid);
+	await waitFor("snapshot after reload", () => states.get(pid));
+	assert.equal(current().phase, "idle");
+	assert.equal(current().lastSaid, "echo: steered");
 });
 
 test("provider errors surface as lastError", async () => {
