@@ -1,0 +1,197 @@
+// Wire protocol between the in-process pi bridge extension and the pi-dash
+// dashboard: LF-delimited JSON over a per-process unix socket.
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+export const PROTOCOL_VERSION = 1;
+
+/** Directory holding one `<pid>.sock` per bridged pi process (mode 0700). */
+export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
+	const runtimeDir = env.XDG_RUNTIME_DIR;
+	return runtimeDir ? join(runtimeDir, "pi-dash") : join(tmpdir(), `pi-dash-${process.getuid?.() ?? "user"}`);
+}
+
+export function socketPath(pid: number, dir: string = socketDir()): string {
+	return join(dir, `${pid}.sock`);
+}
+
+export function pidFromSocketName(name: string): number | undefined {
+	const match = /^(\d+)\.sock$/.exec(name);
+	return match ? Number(match[1]) : undefined;
+}
+
+export interface UsageTotals {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	/** input + output + cacheRead + cacheWrite, matching pi's /session total. */
+	tokens: number;
+	/** API-equivalent dollars as computed by pi. */
+	cost: number;
+}
+
+/** Usage shape persisted by pi on assistant/toolResult messages and summaries. */
+export interface PiUsage {
+	input?: number;
+	output?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	cost?: { total?: number };
+}
+
+export function emptyUsage(): UsageTotals {
+	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, tokens: 0, cost: 0 };
+}
+
+export function addUsage(totals: UsageTotals, usage: PiUsage): void {
+	const input = usage.input ?? 0;
+	const output = usage.output ?? 0;
+	const cacheRead = usage.cacheRead ?? 0;
+	const cacheWrite = usage.cacheWrite ?? 0;
+	totals.input += input;
+	totals.output += output;
+	totals.cacheRead += cacheRead;
+	totals.cacheWrite += cacheWrite;
+	totals.tokens += input + output + cacheRead + cacheWrite;
+	totals.cost += usage.cost?.total ?? 0;
+}
+
+export function usageTokens(usage: PiUsage): number {
+	return (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+}
+
+export interface UsageMinute {
+	/** Epoch minute (ms / 60000, floored). */
+	minute: number;
+	tokens: number;
+	cost: number;
+}
+
+export type ActivityKind = "model" | "thinking" | "writing" | "tool" | "compacting" | "continuing";
+
+export interface Activity {
+	kind: ActivityKind;
+	/** Tool name when kind is "tool". */
+	tool?: string;
+	/** Short argument summary when kind is "tool". */
+	detail?: string;
+	since: number;
+}
+
+export interface PlanStep {
+	title: string;
+	status: string;
+	/** Dotted roadmap path such as "2.1.3". */
+	path?: string;
+}
+
+/** Published by the GatPi-Harness roadmap extension on the `roadmap:changed` event. */
+export interface PlanSnapshot {
+	title: string;
+	lifecycle: string;
+	complete: number;
+	total: number;
+	blocked: number;
+	milestones: PlanStep[];
+	activePath: PlanStep[];
+}
+
+export const ROADMAP_CHANGED_EVENT = "roadmap:changed";
+
+export interface ToolRun {
+	id: string;
+	name: string;
+	detail: string;
+	startedAt: number;
+	endedAt?: number;
+	isError?: boolean;
+}
+
+export type Phase = "working" | "idle";
+
+export interface SessionState {
+	pid: number;
+	/** GNU screen session (`$STY`) and window hosting this pi, when inside screen. */
+	sty?: string;
+	window?: string;
+	cwd: string;
+	sessionId: string;
+	sessionFile?: string;
+	name?: string;
+	/** "provider/modelId". */
+	model?: string;
+	thinking?: string;
+	phase: Phase;
+	phaseSince: number;
+	/** When the agent last settled in this process; absent until the first run completes. */
+	lastSettledAt?: number;
+	activity?: Activity;
+	/** Coarse heartbeat (≤ every 10 s) of the latest pi event, used to detect stalls. */
+	lastEventAt: number;
+	lastPrompt?: string;
+	lastSaid?: string;
+	lastError?: { message: string; at: number };
+	rateLimited?: { at: number; retryAfter?: string };
+	context?: { tokens: number | null; window: number; percent: number | null };
+	usage: { direct: UsageTotals; indirect: UsageTotals };
+	/** Per-minute usage (direct + indirect) for the last two hours. */
+	usageMinutes: UsageMinute[];
+	plan?: PlanSnapshot;
+	/** Most recent tool runs, oldest first. */
+	tools: ToolRun[];
+}
+
+/** Top-level field replacement; `null` clears a field. */
+export type SessionPatch = { [K in keyof SessionState]?: SessionState[K] | null };
+
+export type BridgeMessage =
+	| { type: "hello"; version: number }
+	| { type: "snapshot"; state: SessionState }
+	| { type: "patch"; changes: SessionPatch }
+	| { type: "ack"; id: number; ok: boolean; error?: string }
+	| { type: "bye"; reason: string };
+
+export type DeliverAs = "steer" | "followUp";
+
+export type Command =
+	| { kind: "prompt"; text: string; deliverAs?: DeliverAs }
+	| { kind: "abort" }
+	| { kind: "shutdown" }
+	| { kind: "rename"; name: string };
+
+export type ClientMessage = { type: "command"; id: number; command: Command };
+
+export function encodeMessage(message: BridgeMessage | ClientMessage): string {
+	return `${JSON.stringify(message)}\n`;
+}
+
+const MAX_LINE_CHARS = 8 * 1024 * 1024;
+
+/** Splits a UTF-8 text stream on LF only (never on Unicode line separators) and parses JSON lines. */
+export class LineDecoder {
+	private buffer = "";
+
+	push(chunk: string): unknown[] {
+		this.buffer += chunk;
+		const messages: unknown[] = [];
+		let newline = this.buffer.indexOf("\n");
+		while (newline !== -1) {
+			const line = this.buffer.slice(0, newline);
+			this.buffer = this.buffer.slice(newline + 1);
+			if (line.trim()) messages.push(JSON.parse(line));
+			newline = this.buffer.indexOf("\n");
+		}
+		if (this.buffer.length > MAX_LINE_CHARS) throw new Error("protocol line exceeds limit");
+		return messages;
+	}
+}
+
+export function applyPatch(state: SessionState, changes: SessionPatch): SessionState {
+	const next: Record<string, unknown> = { ...state };
+	for (const [key, value] of Object.entries(changes)) {
+		if (value === null) delete next[key];
+		else next[key] = value;
+	}
+	return next as unknown as SessionState;
+}

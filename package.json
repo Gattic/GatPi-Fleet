@@ -1,0 +1,37 @@
+{
+  "name": "pi-dash",
+  "version": "0.1.0",
+  "description": "Dashboard and manager TUI for running pi sessions",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "bin": {
+    "pi-dash": "bin/pi-dash"
+  },
+  "pi": {
+    "extensions": [
+      "./src/bridge/index.ts"
+    ]
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "start": "node src/dashboard/main.ts",
+    "check": "tsc -p tsconfig.json",
+    "test": "node --test --test-reporter=spec 'test/*.test.ts'",
+    "test:e2e": "node --test --test-reporter=spec 'test/e2e/*.test.ts'"
+  },
+  "dependencies": {
+    "@earendil-works/pi-tui": "^1.0.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^1.0.0",
+    "@earendil-works/pi-coding-agent": "^1.0.0",
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
+  }
+}

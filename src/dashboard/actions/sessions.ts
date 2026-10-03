@@ -1,0 +1,107 @@
+// Project and session listings for the launcher and resume pickers.
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { type FileMeta, scanBuffer } from "../usage/extract.ts";
+import type { UsageIndex } from "../usage/usage-index.ts";
+
+const HEAD_BYTES = 64 * 1024;
+
+/** pi's per-project session directory name. */
+export function sessionDirName(cwd: string): string {
+	return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+}
+
+function readHead(path: string): FileMeta {
+	const meta: FileMeta = {};
+	let fd: number | undefined;
+	try {
+		fd = openSync(path, "r");
+		const buffer = Buffer.alloc(HEAD_BYTES);
+		const read = readSync(fd, buffer, 0, HEAD_BYTES, 0);
+		scanBuffer(buffer.subarray(0, read), meta, []);
+	} catch {
+	} finally {
+		if (fd !== undefined) closeSync(fd);
+	}
+	return meta;
+}
+
+export interface Project {
+	cwd: string;
+	lastActive: number;
+	sessions: number;
+}
+
+export function listProjects(sessionRoot: string, liveCwds: readonly string[]): Project[] {
+	const projects = new Map<string, Project>();
+	let dirs: string[] = [];
+	try {
+		dirs = readdirSync(sessionRoot);
+	} catch {}
+	for (const dir of dirs) {
+		const full = join(sessionRoot, dir);
+		let files: { path: string; mtimeMs: number }[];
+		try {
+			files = readdirSync(full)
+				.filter((name) => name.endsWith(".jsonl"))
+				.map((name) => ({ path: join(full, name), mtimeMs: statSync(join(full, name)).mtimeMs }));
+		} catch {
+			continue;
+		}
+		if (!files.length) continue;
+		files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+		const cwd = readHead(files[0].path).cwd;
+		if (!cwd || !existsSync(cwd)) continue;
+		projects.set(cwd, { cwd, lastActive: files[0].mtimeMs, sessions: files.length });
+	}
+	for (const cwd of liveCwds) {
+		const existing = projects.get(cwd);
+		projects.set(cwd, { cwd, lastActive: Date.now(), sessions: existing?.sessions ?? 0 });
+	}
+	return [...projects.values()].sort((a, b) => b.lastActive - a.lastActive);
+}
+
+export interface SessionSummary {
+	path: string;
+	sessionId?: string;
+	title: string;
+	lastActive: number;
+	tokens?: number;
+	cost?: number;
+}
+
+export function listSessions(sessionRoot: string, cwd: string, index: UsageIndex): SessionSummary[] {
+	const dir = join(sessionRoot, sessionDirName(cwd));
+	let names: string[] = [];
+	try {
+		names = readdirSync(dir).filter((name) => name.endsWith(".jsonl"));
+	} catch {}
+	const sessions: SessionSummary[] = [];
+	for (const name of names) {
+		const path = join(dir, name);
+		let mtimeMs: number;
+		try {
+			mtimeMs = statSync(path).mtimeMs;
+		} catch {
+			continue;
+		}
+		const indexed = index.files.get(path);
+		const head = indexed ? undefined : readHead(path);
+		let tokens: number | undefined;
+		let cost: number | undefined;
+		if (indexed) {
+			tokens = 0;
+			cost = 0;
+			for (const models of Object.values(indexed.hours)) {
+				for (const bucket of Object.values(models)) {
+					tokens += bucket.tokens;
+					cost += bucket.cost;
+				}
+			}
+		}
+		const sessionName = indexed?.name ?? head?.name;
+		const prompt = indexed?.firstPrompt ?? head?.firstPrompt;
+		sessions.push({ path, sessionId: indexed?.sessionId ?? head?.sessionId, title: sessionName ?? prompt ?? "(empty session)", lastActive: mtimeMs, tokens, cost });
+	}
+	return sessions.sort((a, b) => b.lastActive - a.lastActive);
+}
