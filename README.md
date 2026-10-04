@@ -24,6 +24,9 @@ One terminal tab to watch and drive every running [pi](https://pi.dev) session.
   whole conversation since the last compaction with its summary, tool calls and their output) plus
   what has not reached the transcript yet (running tools and their output so far, the reply being
   written). Nothing is added to the session and its run is not interrupted.
+- **Hermes advisor**: a redacted cross-session management view asks Hermes for typed advice cards
+  (or uses local rules if Hermes is unavailable), lets you confirm actions, and records
+  shown/accepted/dismissed/executed outcomes so future advice can adapt.
 - **Control without switching tabs**: prompt (steer or follow-up while working, or take the
   suggested next prompt), abort, compact, switch model or thinking level, close,
   close-and-restart, new session, resume, rename, live read-only peek, and full attach.
@@ -33,7 +36,8 @@ One terminal tab to watch and drive every running [pi](https://pi.dev) session.
 - Linux (`/proc`, cgroup v2), Node ≥ 22.19 (runs the TypeScript sources directly), GNU screen.
 - pi ≥ 0.84 with the bridge extension installed (below).
 - Optional: `nvidia-smi` for GPU stats, GatPi-Harness for roadmap progress and next-prompt
-  suggestions, the `pi-multi-account` failover state for quota gauges.
+  suggestions, the `pi-multi-account` failover state for quota gauges, `hermes` on PATH for the
+  advisor's model-refined cards (local rule cards still work without it).
 
 ## Install
 
@@ -62,6 +66,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `⏎` / `Esc` | detail view / back |
 | `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run). When it is idle, the suggested next prompt shows under the empty editor and `Tab` takes it |
 | `i` | ask the session a side question about its work (full screen: earlier questions and answers above, the editor below; `PgUp` `PgDn` scroll). One question at a time; closing the view does not cancel it, and the footer says when the answer arrives |
+| `H` | Hermes advisor: refresh cross-session advice cards, dismiss noisy cards, or confirm a proposed ask / prompt / compact / notification / proposal action |
 | `x` | abort the current run |
 | `Z` | compact the conversation (idle sessions; asks first) |
 | `M` / `T` | switch the model / thinking level (pi limits the level to what the model supports) |
@@ -106,6 +111,13 @@ pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.soc
 - `src/protocol/`: LF-delimited JSON messages shared by both sides.
 - `src/dashboard/`: the TUI (built on `@earendil-works/pi-tui`), collectors, and usage index. It
   holds no durable state; restarting it loses nothing.
+- The Hermes advisor (`H`) runs in pi-dash, not in the bridge. It sends Hermes only a redacted
+  dashboard snapshot: session labels, cwd basenames, statuses, timers, activity names, context
+  fill, roadmap titles, resource totals, current prompt suggestions, and errors. It does not send
+  `lastSaid`, ask answers, raw transcripts, full prompts, or tool output. Hermes must return typed
+  action cards, and pi-dash executes only confirmed cards through the same bridge commands you can
+  trigger manually. If the Hermes CLI is missing, times out, or returns invalid JSON, local
+  deterministic cards are shown instead.
 - An ask (`i`) runs in the bridge, inside the pi process: it rebuilds the request the session's
   model would get (`buildSessionContext` + `convertToLlm`, the current system prompt and active
   tools), answers the still-running tool calls with "still running, output so far", adds a status
@@ -118,7 +130,9 @@ pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.soc
   prompt-suggestions extension (`prompt-suggestion:changed`).
 
 Files written: the usage index cache at `~/.cache/pi-dash/usage-index.json` (derived, keeps
-30 days, about 200 KB), and short-lived peek captures and sockets in `$XDG_RUNTIME_DIR/pi-dash/`.
+30 days, about 200 KB), Hermes advisor feedback at
+`~/.cache/pi-dash/hermes-advisor-events.jsonl`, and short-lived peek captures and sockets in
+`$XDG_RUNTIME_DIR/pi-dash/`.
 The first start indexes recent session files in a background thread; on this machine that took
 about 17 s for 3.6 GB, and later scans take milliseconds.
 

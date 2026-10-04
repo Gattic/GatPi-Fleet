@@ -20,6 +20,7 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { AskRun, DeliverAs } from "../../protocol/index.ts";
+import type { HermesAdviceCard, HermesAdviceReview } from "../hermes/advisor.ts";
 import { ELLIPSIS, fit, fmtCost, fmtDuration, fmtTokens } from "./format.ts";
 import { TextPane } from "./text-pane.ts";
 import { keycap, keyHints, theme } from "./theme.ts";
@@ -295,6 +296,124 @@ export class AskView implements Component, Focusable {
 	}
 }
 
+export interface HermesAdviceViewOptions {
+	review: () => HermesAdviceReview | undefined;
+	loading: () => boolean;
+	error: () => string | undefined;
+	height: () => number;
+	onRefresh: () => void;
+	onExecute: (card: HermesAdviceCard) => void;
+	onDismiss: (card: HermesAdviceCard) => void;
+	onClose: () => void;
+}
+
+const ADVICE_ICON: Record<HermesAdviceCard["severity"], string> = { critical: "✖", warning: "⚠", suggestion: "◆", info: "·" };
+
+function advicePaint(card: HermesAdviceCard): (text: string) => string {
+	if (card.severity === "critical") return theme.error;
+	if (card.severity === "warning") return theme.waiting;
+	if (card.severity === "suggestion") return theme.accent;
+	return theme.dim;
+}
+
+function adviceAction(action: HermesAdviceCard["action"]): string {
+	if (!action) return "no action";
+	switch (action.kind) {
+		case "ask":
+			return "ask session";
+		case "prompt":
+			return action.deliverAs === "followUp" ? "queue follow-up" : action.deliverAs === "steer" ? "steer session" : "send prompt";
+		case "compact":
+			return "compact session";
+		case "notify":
+			return "show notification";
+		case "memory_proposal":
+			return "record memory proposal";
+		case "skill_proposal":
+			return "record skill proposal";
+	}
+}
+
+/** Full-screen-ish Hermes manager advice cards. */
+export class HermesAdviceView implements Component {
+	private selected = 0;
+	private readonly options: HermesAdviceViewOptions;
+
+	constructor(options: HermesAdviceViewOptions) {
+		this.options = options;
+	}
+
+	invalidate(): void {}
+
+	private cards(): readonly HermesAdviceCard[] {
+		return this.options.review()?.cards ?? [];
+	}
+
+	private selectedCard(): HermesAdviceCard | undefined {
+		const cards = this.cards();
+		if (!cards.length) return undefined;
+		this.selected = Math.max(0, Math.min(cards.length - 1, this.selected));
+		return cards[this.selected];
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, Key.escape) || data === "q" || data === "H") return this.options.onClose();
+		if (data === "r") return this.options.onRefresh();
+		if (matchesKey(data, Key.up) || data === "k") {
+			this.selected = Math.max(0, this.selected - 1);
+			return;
+		}
+		if (matchesKey(data, Key.down) || data === "j") {
+			this.selected = Math.min(Math.max(0, this.cards().length - 1), this.selected + 1);
+			return;
+		}
+		const card = this.selectedCard();
+		if (!card) return;
+		if (matchesKey(data, Key.enter)) return this.options.onExecute(card);
+		if (data === "d") return this.options.onDismiss(card);
+	}
+
+	render(width: number): string[] {
+		const inner = frameInner(width);
+		const review = this.options.review();
+		const loading = this.options.loading();
+		const status = loading
+			? `${theme.working("◌")} ${theme.text("asking Hermes…")}`
+			: review
+				? `${theme.text(review.source === "hermes" ? "Hermes" : "local rules")} ${theme.dim(`· ${fmtDuration(Date.now() - review.generatedAt)} ago${review.error ? ` · ${review.error}` : ""}`)}`
+				: theme.dim("No review yet.");
+		const error = this.options.error();
+		const body: string[] = [status];
+		if (error) body.push(theme.error(`✖ ${error}`));
+		const cards = this.cards();
+		if (!cards.length) {
+			body.push("", theme.dim("No advice cards yet. Press r to refresh."));
+		} else {
+			body.push("");
+			for (const [index, card] of cards.entries()) {
+				const selected = index === this.selected;
+				const paint = advicePaint(card);
+				const prefix = selected ? theme.accent("▌") : " ";
+				const text = `${prefix}${paint(ADVICE_ICON[card.severity])} ${theme.text(card.title)} ${theme.dim(card.targetLabel ? `· ${card.targetLabel}` : "")} ${theme.dim(`· ${adviceAction(card.action)}`)}`;
+				body.push(selected ? theme.selected(fit(text, inner)) : fit(text, inner));
+			}
+			const card = this.selectedCard();
+			if (card) {
+				body.push("", theme.bold(theme.text(card.title)));
+				body.push(...card.body.split("\n").flatMap((line) => wrapTextWithAnsi(line, inner)));
+				if (card.evidence.length) {
+					body.push(theme.dim("Evidence"));
+					for (const item of card.evidence) body.push(...wrapTextWithAnsi(`${theme.dim("• ")}${theme.muted(item)}`, inner));
+				}
+				body.push(`${theme.dim("Action")} ${theme.text(adviceAction(card.action))}`);
+			}
+		}
+		const maxBody = Math.max(4, this.options.height() - 2);
+		const shown = body.slice(0, maxBody);
+		return frame("Hermes advisor", shown, width, keyHints([["↑↓", "select"], ["⏎", "act"], ["d", "dismiss"], ["r", "refresh"], ["Esc", "close"]]));
+	}
+}
+
 export interface PickerOptions {
 	title: string;
 	items: SelectItem[];
@@ -517,6 +636,7 @@ const HELP: [string, [string, string][]][] = [
 		[
 			["p", "prompt (steer or follow-up while working; Tab takes the suggestion)"],
 			["i", "ask the session about its work; nothing is added to the session"],
+			["H", "Hermes advisor: cross-session action cards with feedback"],
 			["s", "read the latest reply full screen (or click SAID)"],
 			["PgUp PgDn", "scroll SAID in the detail view (or mouse wheel)"],
 			["x", "abort the current run"],

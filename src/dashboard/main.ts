@@ -8,6 +8,7 @@ import { BridgeHub } from "./collectors/bridges.ts";
 import { GpuMonitor } from "./collectors/gpu.ts";
 import { ProcSampler } from "./collectors/procs.ts";
 import { QuotaMonitor } from "./collectors/quota.ts";
+import { HermesAdvisor } from "./hermes/advisor.ts";
 import { rowCwd, SAMPLE_MS, Store } from "./model/store.ts";
 import { App } from "./ui/app.ts";
 import { UsageIndex } from "./usage/usage-index.ts";
@@ -51,7 +52,8 @@ function main(): void {
 	const sessionRoot = join(agent, "sessions");
 	const runtimeDir = socketDir();
 	mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
-	const cachePath = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "pi-dash", "usage-index.json");
+	const cacheDir = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "pi-dash");
+	const cachePath = join(cacheDir, "usage-index.json");
 
 	const terminal = new ProcessTerminal();
 	const tui = new TuiAltScreen(terminal);
@@ -72,6 +74,7 @@ function main(): void {
 	const usage = new UsageIndex({ sessionRoot, cachePath, retentionMs: USAGE_RETENTION_MS, onUpdate: render });
 	const quota = new QuotaMonitor(join(agent, "provider-failover-state.json"));
 	const gpu = new GpuMonitor();
+	const advisor = new HermesAdvisor({ ledgerPath: join(cacheDir, "hermes-advisor-events.jsonl") });
 	const sampler = new ProcSampler();
 
 	const timers: NodeJS.Timeout[] = [];
@@ -86,7 +89,7 @@ function main(): void {
 		process.exit(0);
 	};
 
-	app = new App({ tui, store, hub, usage, quota, gpu, sessionRoot, runtimeDir, quit });
+	app = new App({ tui, store, hub, usage, quota, gpu, advisor, sessionRoot, runtimeDir, quit });
 	tui.setLayoutRoot(app);
 	tui.setFocus(app);
 

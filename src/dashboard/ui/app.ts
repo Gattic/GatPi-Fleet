@@ -8,12 +8,13 @@ import { attachSession, launchSession, readHardcopy, requestHardcopy } from "../
 import { listProjects, listSessions } from "../actions/sessions.ts";
 import type { BridgeHub } from "../collectors/bridges.ts";
 import type { GpuMonitor } from "../collectors/gpu.ts";
+import { buildHermesSnapshot, feedbackFor, type HermesAdviceCard, type HermesAdvisorClient, type HermesCardAction } from "../hermes/advisor.ts";
 import type { QuotaMonitor } from "../collectors/quota.ts";
 import { isAlert } from "../model/status.ts";
 import { rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../model/store.ts";
 import type { UsageIndex } from "../usage/usage-index.ts";
 import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
-import { AskView, Composer, Confirm, Help, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
+import { AskView, Composer, Confirm, Help, HermesAdviceView, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
 import { TextPane } from "./text-pane.ts";
 import { keyHints, theme } from "./theme.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
@@ -28,6 +29,7 @@ export interface Services {
 	usage: UsageIndex;
 	quota: QuotaMonitor;
 	gpu: GpuMonitor;
+	advisor: HermesAdvisorClient;
 	sessionRoot: string;
 	/** Private runtime directory for transient files (peek captures). */
 	runtimeDir: string;
@@ -38,8 +40,8 @@ const FLASH_MS = 5000;
 const PEEK_REFRESH_MS = 1000;
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["i", "ask"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["Tab", "next ◆"], ["p", "prompt"], ["i", "ask"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["Tab", "next ◆"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["?", "help"]],
 };
 
@@ -161,6 +163,7 @@ export class App implements Component {
 		const store = this.services.store;
 		if (matchesKey(data, Key.ctrl("c")) || data === "q") return this.requestQuit();
 		if (data === "?") return this.showHelp();
+		if (data === "H") return this.openHermes();
 		if (/^[1-9]$/.test(data)) {
 			this.select(store.bySlot(Number(data)));
 		} else if (matchesKey(data, Key.tab)) {
@@ -422,6 +425,170 @@ export class App implements Component {
 		);
 		// After show(), which closes any earlier overlay.
 		this.askViewPid = row.pid;
+	}
+
+	private openHermes(): void {
+		let review: Awaited<ReturnType<HermesAdvisorClient["review"]>> | undefined;
+		let loading = false;
+		let error: string | undefined;
+		const refresh = () => {
+			if (loading) return;
+			loading = true;
+			error = undefined;
+			this.services.tui.requestRender();
+			const snapshot = buildHermesSnapshot(this.services.store);
+			this.services.advisor.review(snapshot).then(
+				(result) => {
+					review = result;
+					loading = false;
+					error = result.error;
+					for (const card of result.cards) void this.services.advisor.recordFeedback(feedbackFor(card, "shown", result.error));
+					this.services.tui.requestRender();
+				},
+				(failure: Error) => {
+					loading = false;
+					error = failure.message;
+					this.services.tui.requestRender();
+				},
+			);
+		};
+		this.show(
+			new HermesAdviceView({
+				review: () => review,
+				loading: () => loading,
+				error: () => error,
+				height: () => this.services.tui.terminal.rows,
+				onRefresh: refresh,
+				onExecute: (card) => this.confirmHermesAction(card),
+				onDismiss: (card) => {
+					void this.services.advisor.recordFeedback(feedbackFor(card, "dismissed"));
+					if (review) review = { ...review, cards: review.cards.filter((item) => item.id !== card.id) };
+					this.services.tui.requestRender();
+				},
+				onClose: () => this.closeOverlay(),
+			}),
+			{ width: "90%", maxHeight: "85%" },
+		);
+		refresh();
+	}
+
+	private confirmHermesAction(card: HermesAdviceCard): void {
+		if (!card.action) {
+			this.notify("Hermes card has no action");
+			void this.services.advisor.recordFeedback(feedbackFor(card, "accepted", "no action"));
+			return;
+		}
+		const message = this.hermesActionMessage(card.action);
+		this.confirm("Hermes action", `${message}\n\n${card.body}`, () => {
+			void this.services.advisor.recordFeedback(feedbackFor(card, "accepted"));
+			this.executeHermesAction(card);
+		});
+	}
+
+	private hermesRow(pid: number): SessionRow | undefined {
+		return this.services.store.rows.get(pid);
+	}
+
+	private hermesActionMessage(action: HermesCardAction): string {
+		switch (action.kind) {
+			case "ask": {
+				const row = this.hermesRow(action.pid);
+				return `Ask ${row ? rowLabel(row) : `pid ${action.pid}`}: "${action.question}"?`;
+			}
+			case "prompt": {
+				const row = this.hermesRow(action.pid);
+				return `Send prompt to ${row ? rowLabel(row) : `pid ${action.pid}`}: "${action.text}"?`;
+			}
+			case "compact": {
+				const row = this.hermesRow(action.pid);
+				return `Compact ${row ? rowLabel(row) : `pid ${action.pid}`}?`;
+			}
+			case "notify":
+				return `Show notification: "${action.message}"?`;
+			case "memory_proposal":
+				return `Record this memory proposal in the Hermes feedback ledger?\n${action.text}`;
+			case "skill_proposal":
+				return `Record this skill proposal in the Hermes feedback ledger?\n${action.title}`;
+		}
+	}
+
+	private executeHermesAction(card: HermesAdviceCard): void {
+		const action = card.action;
+		if (!action) return;
+		const succeeded = (detail?: string) => void this.services.advisor.recordFeedback(feedbackFor(card, "executed", detail));
+		const failed = (detail: string) => void this.services.advisor.recordFeedback(feedbackFor(card, "failed", detail));
+		switch (action.kind) {
+			case "ask": {
+				const row = this.hermesRow(action.pid);
+				if (!row || !this.requireBridge(row)) {
+					failed("session unavailable");
+					return;
+				}
+				this.services.hub.send(row.pid, { kind: "ask", question: action.question }).then(
+					() => {
+						const id = this.services.store.rows.get(row.pid)?.bridge?.asks.at(-1)?.id;
+						if (id !== undefined) this.awaitingAnswer.set(row.pid, id);
+						this.notify(`asked ${rowLabel(row)}`);
+						succeeded();
+					},
+					(error: Error) => {
+						this.notify(`${rowLabel(row)}: ${error.message}`, true);
+						failed(error.message);
+					},
+				);
+				return;
+			}
+			case "prompt": {
+				const row = this.hermesRow(action.pid);
+				if (!row || !this.requireBridge(row)) {
+					failed("session unavailable");
+					return;
+				}
+				const working = row.bridge?.phase === "working";
+				const deliverAs = working ? (action.deliverAs ?? "steer") : undefined;
+				this.services.hub.send(row.pid, { kind: "prompt", text: action.text, deliverAs }).then(
+					() => {
+						this.notify(working ? `queued Hermes prompt for ${rowLabel(row)}` : `sent Hermes prompt to ${rowLabel(row)}`);
+						succeeded();
+					},
+					(error: Error) => {
+						this.notify(`${rowLabel(row)}: ${error.message}`, true);
+						failed(error.message);
+					},
+				);
+				return;
+			}
+			case "compact": {
+				const row = this.hermesRow(action.pid);
+				if (!row || !this.requireBridge(row)) {
+					failed("session unavailable");
+					return;
+				}
+				this.services.hub.send(row.pid, { kind: "compact" }).then(
+					() => {
+						this.notify(`compacting ${rowLabel(row)}`);
+						succeeded();
+					},
+					(error: Error) => {
+						this.notify(`${rowLabel(row)}: ${error.message}`, true);
+						failed(error.message);
+					},
+				);
+				return;
+			}
+			case "notify":
+				this.notify(action.message);
+				succeeded();
+				return;
+			case "memory_proposal":
+				this.notify("Hermes memory proposal recorded for review");
+				succeeded(action.text);
+				return;
+			case "skill_proposal":
+				this.notify("Hermes skill proposal recorded for review");
+				succeeded(`${action.title}: ${action.body}`);
+				return;
+		}
 	}
 
 	private confirmClose(row: SessionRow, recycle: boolean): void {

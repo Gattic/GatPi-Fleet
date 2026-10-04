@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -7,6 +7,7 @@ import type { Component, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { sessionDirName } from "../src/dashboard/actions/sessions.ts";
 import type { BridgeHub } from "../src/dashboard/collectors/bridges.ts";
 import { GpuMonitor } from "../src/dashboard/collectors/gpu.ts";
+import { HermesAdvisor, type HermesAdvisorClient, type HermesFeedbackEvent, type HermesSnapshot } from "../src/dashboard/hermes/advisor.ts";
 import { QuotaMonitor } from "../src/dashboard/collectors/quota.ts";
 import { Store } from "../src/dashboard/model/store.ts";
 import { App } from "../src/dashboard/ui/app.ts";
@@ -15,8 +16,30 @@ import { type Command, emptyUsage, type SessionState } from "../src/protocol/ind
 
 const strip = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "");
 
+async function eventually(assertion: () => void, timeoutMs = 1000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	let last: unknown;
+	while (Date.now() < deadline) {
+		try {
+			assertion();
+			return;
+		} catch (error) {
+			last = error;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+	}
+	if (last) throw last;
+}
+
+function readLedger(path: string): HermesFeedbackEvent[] {
+	return readFileSync(path, "utf8")
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as HermesFeedbackEvent);
+}
+
 /** App with a terminal-free TUI stand-in: keys go to the top overlay, like pi-tui's overlay focus. */
-function harness(sessionRoot: string) {
+function harness(sessionRoot: string, advisor?: HermesAdvisorClient) {
 	const overlays: Component[] = [];
 	const tui = {
 		terminal: { rows: 40, columns: 120 },
@@ -35,6 +58,11 @@ function harness(sessionRoot: string) {
 	const sent: Command[] = [];
 	const hub = { isConnected: () => true, send: async (_pid: number, command: Command) => void sent.push(command) } as unknown as BridgeHub;
 	const store = new Store(() => {});
+	const feedback: HermesFeedbackEvent[] = [];
+	const advisorService = advisor ?? {
+		review: async (snapshot: HermesSnapshot) => ({ generatedAt: Date.now(), snapshotAt: snapshot.generatedAt, source: "local" as const, cards: [], feedbackSummary: [] }),
+		recordFeedback: async (event: HermesFeedbackEvent) => void feedback.push(event),
+	};
 	let quits = 0;
 	const app = new App({
 		tui,
@@ -43,6 +71,7 @@ function harness(sessionRoot: string) {
 		usage: new UsageIndex({ sessionRoot, cachePath: "", retentionMs: 0, onUpdate: () => {} }),
 		quota: new QuotaMonitor("/nonexistent"),
 		gpu: new GpuMonitor(),
+		advisor: advisorService,
 		sessionRoot,
 		runtimeDir: "/nonexistent",
 		quit: () => quits++,
@@ -52,6 +81,7 @@ function harness(sessionRoot: string) {
 		store,
 		sent,
 		quits: () => quits,
+		feedback,
 		press: (...keys: string[]) => {
 			for (const key of keys) {
 				const target = overlays.at(-1) ?? app;
@@ -121,6 +151,98 @@ function session(overrides: Partial<SessionState>): SessionState {
 	const now = Date.now();
 	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], ...overrides };
 }
+
+test("Hermes advisor shows action cards and confirms an ask action", async () => {
+	const feedback: HermesFeedbackEvent[] = [];
+	const advisor: HermesAdvisorClient = {
+		review: async (snapshot) => ({
+			generatedAt: Date.now(),
+			snapshotAt: snapshot.generatedAt,
+			source: "hermes",
+			feedbackSummary: [],
+			cards: [
+				{
+					id: "hermes_stalled",
+					severity: "warning",
+					title: "Ask about the blocker",
+					body: "Hermes thinks the selected session should explain its blocker.",
+					evidence: ["Session is waiting on the operator."],
+					source: "hermes",
+					targetPid: 101,
+					targetLabel: "proj",
+					action: { kind: "ask", pid: 101, question: "What is blocking you?" },
+				},
+			],
+		}),
+		recordFeedback: async (event) => void feedback.push(event),
+	};
+	const ui = harness("/nonexistent", advisor);
+	ui.store.setState(101, session({ lastSettledAt: Date.now() - 10_000 }));
+
+	ui.press("H");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.match(ui.dialog() ?? "", /Hermes advisor[\s\S]*Ask about the blocker[\s\S]*ask session/);
+	ui.press("\r");
+	assert.match(ui.dialog() ?? "", /Ask proj: "What is blocking you\?"\?/);
+	ui.press("y");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.deepEqual(ui.sent, [{ kind: "ask", question: "What is blocking you?" }]);
+	assert.deepEqual(feedback.map((event) => event.kind), ["shown", "accepted", "executed"]);
+});
+
+test("Hermes advisor TUI smoke covers refresh, dismiss, confirmed notify, ledger, and fallback", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-hermes-smoke-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const fakeHermes = join(root, "fake-hermes");
+	writeFileSync(
+		fakeHermes,
+		`#!/usr/bin/env node
+console.log(JSON.stringify({cards:[
+  {id:"dismiss-me",severity:"info",title:"Dismiss this card",body:"A scripted card used by the smoke test.",evidence:["fake hermes"],action:{kind:"memory_proposal",text:"Ignore this scripted smoke card."}},
+  {id:"notify",severity:"suggestion",title:"Smoke notify",body:"Confirming this card should only show a dashboard notification.",evidence:["fake hermes"],action:{kind:"notify",message:"Hermes smoke notification"}}
+]}));
+`,
+	);
+	chmodSync(fakeHermes, 0o755);
+
+	const ledgerPath = join(root, "events.jsonl");
+	const ui = harness("/nonexistent", new HermesAdvisor({ ledgerPath, command: fakeHermes, timeoutMs: 1000 }));
+	ui.store.setState(101, session({ lastSettledAt: Date.now() - 10_000, suggestion: "Run the smoke check" }));
+
+	ui.press("H");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Hermes advisor[\s\S]*Dismiss this card[\s\S]*Smoke notify/));
+	ui.press("r");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Hermes[\s\S]*Dismiss this card[\s\S]*Smoke notify/));
+	ui.press("d");
+	assert.doesNotMatch(ui.dialog() ?? "", /Dismiss this card/);
+	assert.match(ui.dialog() ?? "", /Smoke notify/);
+	ui.press("\r");
+	assert.match(ui.dialog() ?? "", /Show notification: "Hermes smoke notification"\?/);
+	ui.press("y");
+	await eventually(() => {
+		const events = readLedger(ledgerPath);
+		assert.equal(events.filter((event) => event.kind === "shown").length, 4);
+		assert.ok(events.some((event) => event.kind === "dismissed" && event.cardTitle === "Dismiss this card"));
+		assert.ok(events.some((event) => event.kind === "accepted" && event.actionKind === "notify"));
+		assert.ok(events.some((event) => event.kind === "executed" && event.actionKind === "notify"));
+	});
+	assert.match(strip(ui.app.render(120).join("\n")), /Hermes smoke notification/);
+
+	const fallbackLedger = join(root, "fallback-events.jsonl");
+	const fallback = harness("/nonexistent", new HermesAdvisor({ ledgerPath: fallbackLedger, command: join(root, "missing-hermes"), timeoutMs: 1000 }));
+	fallback.store.setState(101, session({ lastSettledAt: Date.now() - 10_000, suggestion: "Use the local fallback card" }));
+	fallback.press("H");
+	await eventually(() => {
+		const dialog = fallback.dialog() ?? "";
+		assert.match(dialog, /local rules/);
+		assert.match(dialog, /has a next prompt ready/);
+		assert.match(dialog, /ENOENT/);
+	});
+	await eventually(() => {
+		const events = readLedger(fallbackLedger);
+		assert.ok(events.some((event) => event.kind === "shown" && event.source === "local" && event.actionKind === "prompt"));
+	});
+});
 
 test("the composer offers the suggested next prompt while idle; Tab takes it", () => {
 	const ui = harness("/nonexistent");
