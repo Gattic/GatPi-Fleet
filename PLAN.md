@@ -4,7 +4,8 @@ Status: implemented (all phases), 2026-10-03. Usage and install are in `README.m
 is the design record. Decisions changed by your answers (§10) or by the Phase 0 spikes are
 marked *Updated*. Results are in §12. The evaluation follow-up (protocol v2, tokens for unpriced
 models, resumed-session state, session control, background badges) is planned and recorded in
-`PLAN-2.md`; its decisions are marked *Updated (plan 2)* here.
+`PLAN-2.md`; its decisions are marked *Updated (plan 2)* here. Asking a session about itself
+(protocol v3) is planned and recorded in `PLAN-3.md`; its decisions are marked *Updated (plan 3)*.
 
 ## 1. Goal
 
@@ -167,6 +168,7 @@ Commands (each with request id and ack/error):
 | `compact` (*added, plan 2*) | `ctx.compact()`; rejected while working; a failure becomes `lastError` |
 | `model {provider, id}` (*added, plan 2*) | `ctx.modelRegistry.find` + `pi.setModel`; errors for unknown models or missing credentials |
 | `thinking {level}` (*added, plan 2*) | `pi.setThinkingLevel` (pi clamps it to the model); the change arrives as `thinking_level_select` |
+| `ask {question}` (*added, plan 3*) | a side question to the session's model, from the session's own prompt, tools and compaction-aware context plus what is in flight (running tools, the reply being streamed); streamed into `asks`; nothing is written to the session. One at a time; acknowledged once the answer starts. See `PLAN-3.md` |
 
 *Updated (plan 2):* commands may be asynchronous and are acknowledged when they finish; unknown
 commands are rejected instead of acknowledged.
@@ -185,7 +187,8 @@ was enough. Shared TypeScript types are used by both sides, with one version con
 *Updated (plan 2):* version 2 adds `timeline`, `models` and the `compact` / `model` / `thinking`
 commands, with no compatibility path. The hub reports an older bridge as `✖ bridge v1: /reload it`
 and connects again once `/reload` replaces its socket (verified: `/reload` loads the changed
-bridge code).
+bridge code). *Updated (plan 3):* version 3 adds `asks` (the last 10 side questions with their
+answers, status and usage) and the `ask` command.
 
 ### 3.4 Session status model
 
@@ -365,13 +368,20 @@ Compact (< 100 cols) drops MEM, API/min and the plan title:
   screen) while you use it from the dashboard tab. The dashboard tab works like any other
   `screen -rx` viewer. Run pi-dash in a plain tab, not inside screen, to avoid nested
   screen key prefixes.
+- **Ask** (`i`, *added, plan 3*): full-screen thread of the session's side questions (question,
+  Markdown answer, age, tokens, cache share, cost) above pi's editor. `⏎` asks (refused while the
+  previous answer is still coming), `PgUp`/`PgDn`/wheel scroll (and `↑↓` with an empty editor),
+  `Esc` closes without cancelling. An answer that arrives while the view is closed is announced in
+  the footer.
 
 ### 4.6 Keymap
 
 `1-9`/`↑↓`/`jk` select · `⏎` detail · `Esc` back · `p` prompt · `x` abort (confirm) ·
 `a` attach · `v` peek · `n` new · `r` resume · `c` close · `C` recycle · `u` usage ·
 `?` help · `q` quit. *Added (plan 2):* `Tab` next session needing attention · `M` model ·
-`T` thinking level · `Z` compact (confirm) · `$` cost/tokens in the usage view.
+`T` thinking level · `Z` compact (confirm) · `$` cost/tokens in the usage view. *Added (plan 3):*
+`i` ask the session about its work (`A` was the alternative; `i` is unique rather than a case
+variant of attach).
 
 ## 5. Repository layout and tooling
 
@@ -422,7 +432,9 @@ Each phase ends with a working tool; later phases add capability on top.
   detached screen, with a local scripted-model extension (`test/fixtures/`): no network,
   no cost, and it exercises the real extension loading path. Covered: working→idle
   transitions, usage totals, prompt/steer delivery, abort, errors, rename, `/new`
-  replacement, and shutdown with socket and screen cleanup.
+  replacement, and shutdown with socket and screen cleanup. *Updated (plan 3):* `npm run test:e2e`
+  puts `node_modules/.bin` first on `PATH`, so it runs the dev dependency's pi (1.0.x), not the
+  installed one. `node --test 'test/e2e/*.test.ts'` runs the `pi` on your `PATH`; plan 3 ran both.
 - **Attribution**: real processes, not mocks — spawn a busy child, a `setsid` orphan with
   a `PI_SESSION_ID`, and (when available) a `systemd-run --user` unit; assert each lands in
   the right bucket.

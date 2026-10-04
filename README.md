@@ -19,6 +19,11 @@ One terminal tab to watch and drive every running [pi](https://pi.dev) session.
 - **Conversation**: the last prompt, the recent tool calls with their arguments, the latest reply
   (previewed under the session list; whole, as Markdown, scrollable, or full screen), and the
   suggested next prompt from the GatPi-Harness prompt suggestions.
+- **Ask a session about itself**: "what are you doing right now?", "why did you change X?". The
+  session's own model answers from the same context its requests carry (system prompt, tools, the
+  whole conversation since the last compaction with its summary, tool calls and their output) plus
+  what has not reached the transcript yet (running tools and their output so far, the reply being
+  written). Nothing is added to the session and its run is not interrupted.
 - **Control without switching tabs**: prompt (steer or follow-up while working, or take the
   suggested next prompt), abort, compact, switch model or thinking level, close,
   close-and-restart, new session, resume, rename, live read-only peek, and full attach.
@@ -43,8 +48,8 @@ bridge loads only in interactive pi sessions, not in `pi -p` or RPC subagents. S
 before the install show up as `? no bridge` (resources only) until they are restarted or resumed.
 
 After an update that changes the bridge protocol, sessions still running the old bridge show
-`✖ bridge v1: /reload it`. Type `/reload` in such a session (attach with `a`): pi loads the current
-bridge and pi-dash connects to it.
+`✖ bridge v2: /reload it`. Restart pi-dash, then type `/reload` in each such session (attach with
+`a`): pi loads the current bridge and pi-dash connects to it.
 
 ## Use
 
@@ -56,6 +61,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `Tab` | select the next session that needs you (needs you, error, stalled; longest waiting first) |
 | `⏎` / `Esc` | detail view / back |
 | `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run). When it is idle, the suggested next prompt shows under the empty editor and `Tab` takes it |
+| `i` | ask the session a side question about its work (full screen: earlier questions and answers above, the editor below; `PgUp` `PgDn` scroll). One question at a time; closing the view does not cancel it, and the footer says when the answer arrives |
 | `x` | abort the current run |
 | `Z` | compact the conversation (idle sessions; asks first) |
 | `M` / `T` | switch the model / thinking level (pi limits the level to what the model supports) |
@@ -100,6 +106,13 @@ pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.soc
 - `src/protocol/`: LF-delimited JSON messages shared by both sides.
 - `src/dashboard/`: the TUI (built on `@earendil-works/pi-tui`), collectors, and usage index. It
   holds no durable state; restarting it loses nothing.
+- An ask (`i`) runs in the bridge, inside the pi process: it rebuilds the request the session's
+  model would get (`buildSessionContext` + `convertToLlm`, the current system prompt and active
+  tools), answers the still-running tool calls with "still running, output so far", adds a status
+  block and the question, and streams the answer through the model's provider with the session's
+  model, thinking level and session id. The request therefore shares the provider's prompt cache
+  with the session: answers typically read 99% of their input from cache (about $0.02 for a 75k
+  token context on Claude). Answers live in the bridge's memory for the life of the pi process.
 - Roadmap progress comes from the GatPi-Harness roadmap extension, which emits `roadmap:changed` on
   pi's extension event bus. The suggested next prompt comes the same way from the GatPi-Harness
   prompt-suggestions extension (`prompt-suggestion:changed`).
@@ -112,7 +125,8 @@ about 17 s for 3.6 GB, and later scans take milliseconds.
 $ figures are pi's API-equivalent cost. With subscription logins, the quota windows are the
 limit that actually applies. Models without a price in pi report no cost: they count in tokens,
 and their quota share is estimated from tokens. LLM calls that extensions make outside the session
-transcript are not counted.
+transcript are not counted. That includes asks (`i`): each answer shows its own tokens, cache
+share and cost, but they are not added to the session's totals.
 
 ## Development
 
@@ -123,4 +137,6 @@ npm run test:e2e   # real interactive pi in a detached screen with a local scrip
 ```
 
 The e2e test needs `pi` and `screen` on PATH. It uses an isolated agent directory, does not
-call any network or API, and cleans up after itself.
+call any network or API, and cleans up after itself. `npm run` puts `node_modules/.bin` first on
+PATH, so `npm run test:e2e` runs the dev dependency's pi; `node --test 'test/e2e/*.test.ts'` runs
+the pi you have installed.
