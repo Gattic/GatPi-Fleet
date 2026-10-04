@@ -34,6 +34,8 @@ export interface GitOperationResult {
 export interface GitService {
 	getSummary(cwd: string): Promise<GitSummary>;
 	listBranches(cwd: string): Promise<GitBranch[]>;
+	/** `git status` output as git prints it. */
+	status(cwd: string): Promise<string>;
 	pull(cwd: string): Promise<GitOperationResult>;
 	push(cwd: string): Promise<GitOperationResult>;
 	pushSetUpstream(cwd: string, remote: string): Promise<GitOperationResult>;
@@ -180,6 +182,10 @@ export class GitCli implements GitService {
 				return { name, current: head.trim() === "*", upstream: upstream || undefined };
 			})
 			.filter((branch) => branch.name);
+	}
+
+	async status(cwd: string): Promise<string> {
+		return (await runGit(cwd, ["status"])).stdout;
 	}
 
 	pull(cwd: string): Promise<GitOperationResult> {

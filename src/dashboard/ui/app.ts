@@ -417,6 +417,7 @@ export class App implements Component {
 				onPull: () => this.confirmGitPull(cwd, summary),
 				onPush: () => this.confirmGitPush(cwd, summary),
 				onSwitch: () => void this.pickGitBranch(row, cwd, summary),
+				onStatus: () => void this.showGitStatus(row, cwd),
 				onCommitPrompt: () => this.openCommitPrompt(row, summary),
 				onRefresh: refresh,
 				onClose: () => this.closeOverlay(),
@@ -487,6 +488,33 @@ export class App implements Component {
 				},
 				onCancel: () => this.closeOverlay(),
 			}),
+		);
+	}
+
+	private async showGitStatus(row: SessionRow, cwd: string): Promise<void> {
+		const menu = this.overlay;
+		let output: string;
+		try {
+			output = await this.services.git.status(cwd);
+		} catch (error) {
+			this.notify(this.gitMessage(error as Error), true);
+			return;
+		}
+		// git status can be slow; if the user left the Git menu meanwhile, opening the view would replace
+		// whatever they moved on to (a half-typed prompt, a confirmation).
+		if (this.overlay !== menu) return;
+		this.show(
+			new Reader({
+				title: `git status · ${rowLabel(row)}`,
+				text: () => output,
+				plain: true,
+				height: () => this.services.tui.terminal.rows,
+				keys: [["Esc", "close"]],
+				onKey: (data) => {
+					if (matchesKey(data, Key.escape) || data === "v" || data === "q") this.closeOverlay();
+				},
+			}),
+			{ width: "100%", maxHeight: "100%" },
 		);
 	}
 
@@ -893,6 +921,7 @@ export class App implements Component {
 				title: `said · ${rowLabel(row)}`,
 				text: () => store.rows.get(row.pid)?.bridge?.lastSaid ?? "",
 				height: () => this.services.tui.terminal.rows,
+				keys: [["p", "prompt"], ["Esc", "close"]],
 				onKey: (data) => {
 					if (matchesKey(data, Key.escape) || data === "s" || data === "q") this.closeOverlay();
 					else if (data === "p") {

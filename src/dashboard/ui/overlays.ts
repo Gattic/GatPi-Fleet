@@ -580,18 +580,23 @@ export interface ReaderOptions {
 	title: string;
 	/** Read on every render, so the reader follows new replies. */
 	text: () => string;
+	/** Show the text as is (command output) instead of rendering it as Markdown. */
+	plain?: boolean;
 	height: () => number;
+	/** Hints for the keys `onKey` handles. */
+	keys: [string, string][];
 	/** Keys the reader does not use for scrolling. */
 	onKey: (data: string) => void;
 }
 
-/** Full-screen, scrollable Markdown text. */
+/** Full-screen, scrollable text. */
 export class Reader implements Component {
-	private readonly pane = new TextPane();
+	private readonly pane: TextPane;
 	private readonly options: ReaderOptions;
 
 	constructor(options: ReaderOptions) {
 		this.options = options;
+		this.pane = new TextPane(options.plain);
 	}
 
 	invalidate(): void {}
@@ -620,7 +625,7 @@ export class Reader implements Component {
 		while (body.length < height) body.push("");
 		const total = view.above + view.lines.length + view.below;
 		const position = total > view.lines.length ? `${theme.muted(`${view.above + 1}–${view.above + view.lines.length}/${total}`)}  ` : "";
-		return frame(this.options.title, body, width, `${position}${keyHints([["↑↓ PgUp PgDn", "scroll"], ["p", "prompt"], ["Esc", "close"]])}`);
+		return frame(this.options.title, body, width, `${position}${keyHints([["↑↓ PgUp PgDn", "scroll"], ...this.options.keys])}`);
 	}
 }
 

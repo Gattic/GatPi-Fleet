@@ -1,5 +1,6 @@
-// Scrollable window over Markdown text: the SAID pane in the detail view and the reader overlay.
-import { Markdown } from "@earendil-works/pi-tui";
+// Scrollable window over text: Markdown (the SAID pane in the detail view and the reply reader) or plain
+// command output.
+import { Markdown, Text } from "@earendil-works/pi-tui";
 import { markdownTheme, theme } from "./theme.ts";
 
 export interface PaneWindow {
@@ -10,17 +11,25 @@ export interface PaneWindow {
 }
 
 export class TextPane {
-	private readonly markdown = new Markdown("", 0, 0, markdownTheme, { color: theme.text });
+	private readonly plain: boolean;
+	private readonly content: Markdown | Text;
 	private text = "";
 	private offset = 0;
 	private height = 1;
+
+	/** `plain` shows the text as is (tabs expanded) instead of rendering it as Markdown. */
+	constructor(plain = false) {
+		this.plain = plain;
+		this.content = plain ? new Text("", 0, 0) : new Markdown("", 0, 0, markdownTheme, { color: theme.text });
+	}
 
 	/** A different text starts at its top, unless `keepPosition` (a text that grows). */
 	setText(text: string, keepPosition = false): void {
 		if (text === this.text) return;
 		this.text = text;
 		if (!keepPosition) this.offset = 0;
-		this.markdown.setText(text);
+		// Markdown applies the default text color itself; plain text gets the same color here.
+		this.content.setText(this.plain ? theme.text(text) : text);
 	}
 
 	/** Positive values scroll down; the next render clamps to the text. */
@@ -39,7 +48,7 @@ export class TextPane {
 
 	/** Up to `maxHeight` lines of the text wrapped to `width`, from the scroll position. */
 	render(width: number, maxHeight: number): PaneWindow {
-		const all = this.markdown.render(width);
+		const all = this.content.render(width);
 		this.height = Math.max(1, Math.min(maxHeight, all.length));
 		this.offset = Math.min(this.offset, Math.max(0, all.length - this.height));
 		const lines = all.slice(this.offset, this.offset + this.height);

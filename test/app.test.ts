@@ -53,6 +53,7 @@ function gitStub(summary: GitSummary = cleanGitSummary()) {
 			{ name: "main", current: summary.branch === "main", upstream: "origin/main" },
 			{ name: "feature", current: summary.branch === "feature", upstream: "origin/feature" },
 		],
+		status: async () => "On branch main\nChanges not staged for commit:\n\tmodified:   README.md\n",
 		pull: async () => {
 			calls.push("pull");
 			return ok();
@@ -395,6 +396,49 @@ test("Git status and command failures are reported", async () => {
 	ui.press("y");
 	await eventually(() => assert.match(strip(ui.app.render(120).join("\n")), /network failed/));
 	assert.deepEqual(commandFailure.calls, ["pull"]);
+});
+
+test("Git status shortcut shows git's own status output; a failure is reported", async () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({}));
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /v view status/));
+	ui.press("v");
+	await eventually(() => assert.match(ui.dialog() ?? "", /git status · proj[\s\S]*On branch main[\s\S]*Changes not staged for commit:[\s\S]* {3}modified: {3}README\.md/));
+	assert.doesNotMatch(ui.dialog() ?? "", /\t/, "tabs are expanded");
+	ui.press("\x1b");
+	assert.equal(ui.dialog(), undefined);
+
+	const failing = gitStub();
+	failing.service.status = async () => {
+		throw new Error("not a git repository");
+	};
+	const broken = harness("/nonexistent", undefined, failing.service);
+	broken.store.setState(101, session({}));
+	broken.press("g");
+	await eventually(() => assert.match(broken.dialog() ?? "", /Git · proj/));
+	broken.press("v");
+	await eventually(() => assert.match(strip(broken.app.render(120).join("\n")), /not a git repository/));
+	assert.match(broken.dialog() ?? "", /Git · proj/, "the Git menu stays open");
+});
+
+test("a slow git status does not replace what the user moved on to", async () => {
+	let finish: (output: string) => void = () => {};
+	const slow = gitStub();
+	slow.service.status = () =>
+		new Promise((resolve) => {
+			finish = resolve;
+		});
+	const ui = harness("/nonexistent", undefined, slow.service);
+	ui.store.setState(101, session({}));
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj/));
+	ui.press("v", "\x1b", "p", ..."half-typed");
+	assert.match(ui.dialog() ?? "", /Prompt → 1 proj[\s\S]*half-typed/);
+
+	finish("On branch main\n");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.match(ui.dialog() ?? "", /Prompt → 1 proj[\s\S]*half-typed/, "the composer keeps the focus and its text");
 });
 
 test("Git commit shortcut opens the standard AI review prompt", async () => {

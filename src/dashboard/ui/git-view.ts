@@ -14,6 +14,7 @@ export interface GitViewOptions {
 	onPull: () => void;
 	onPush: () => void;
 	onSwitch: () => void;
+	onStatus: () => void;
 	onCommitPrompt: () => void;
 	onRefresh: () => void;
 	onClose: () => void;
@@ -47,6 +48,7 @@ export class GitView implements Component {
 		if (data === "u") return this.options.onPull();
 		if (data === "s") return this.options.onPush();
 		if (data === "b") return this.options.onSwitch();
+		if (data === "v") return this.options.onStatus();
 		if (data === "c") return this.options.onCommitPrompt();
 	}
 
@@ -67,12 +69,12 @@ export class GitView implements Component {
 			body.push(
 				"",
 				`${theme.accent("u")} ${enabled("update (pull --ff-only)")}   ${theme.accent("s")} ${enabled("send (push)")}   ${theme.accent("b")} ${enabled("switch branch")}`,
-				`${theme.accent("c")} ${enabled("ask AI to review/commit")}   ${theme.accent("r")} ${enabled("refresh")}`,
+				`${theme.accent("v")} ${enabled("view status")}   ${theme.accent("c")} ${enabled("ask AI to review/commit")}   ${theme.accent("r")} ${enabled("refresh")}`,
 			);
 		} else if (!loading) {
 			body.push(theme.dim("No git status loaded. Press r to refresh."));
 		}
 		const shown = body.slice(0, Math.max(4, this.options.height() - 2));
-		return frame(this.options.title, shown, width, keyHints([["u", "update/pull"], ["s", "send/push"], ["b", "branch"], ["c", "commit prompt"], ["r", "refresh"], ["Esc", "close"]]));
+		return frame(this.options.title, shown, width, keyHints([["u", "update/pull"], ["s", "send/push"], ["b", "branch"], ["v", "status"], ["c", "commit prompt"], ["r", "refresh"], ["Esc", "close"]]));
 	}
 }

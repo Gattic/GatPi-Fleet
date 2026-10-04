@@ -68,7 +68,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run). When it is idle, the suggested next prompt shows under the empty editor and `Tab` takes it |
 | `i` | ask the session a side question about its work (full screen: earlier questions and answers above, the editor below; `PgUp` `PgDn` scroll). One question at a time; closing the view does not cancel it, and the footer says when the answer arrives |
 | `H` | Hermes advisor: refresh cross-session advice cards, dismiss noisy cards, or confirm a proposed ask / prompt / compact / notification / proposal action |
-| `g` | Git shortcuts for the selected project (`u` update/pull, `s` send/push, `b` branch, `c` AI commit-review prompt, `r` refresh) |
+| `g` | Git shortcuts for the selected project (`u` update/pull, `s` send/push, `b` branch, `v` view `git status` full screen, `c` AI commit-review prompt, `r` refresh) |
 | `x` | abort the current run |
 | `Z` | compact the conversation (idle sessions; asks first) |
 | `M` / `T` | switch the model / thinking level (pi limits the level to what the model supports) |
