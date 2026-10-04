@@ -44,8 +44,8 @@ export class GitView implements Component {
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.escape) || data === "q" || data === "g") return this.options.onClose();
 		if (data === "r") return this.options.onRefresh();
-		if (data === "p") return this.options.onPull();
-		if (data === "P") return this.options.onPush();
+		if (data === "u") return this.options.onPull();
+		if (data === "s") return this.options.onPush();
 		if (data === "b") return this.options.onSwitch();
 		if (data === "c") return this.options.onCommitPrompt();
 	}
@@ -66,13 +66,13 @@ export class GitView implements Component {
 			if (!summary.upstream && summary.branch && summary.remotes.length === 1) body.push(theme.dim(`push will offer to create upstream ${summary.remotes[0]}/${summary.branch}`));
 			body.push(
 				"",
-				`${theme.accent("p")} ${enabled("pull --ff-only")}   ${theme.accent("P")} ${enabled("push")}   ${theme.accent("b")} ${enabled("switch branch")}`,
+				`${theme.accent("u")} ${enabled("update (pull --ff-only)")}   ${theme.accent("s")} ${enabled("send (push)")}   ${theme.accent("b")} ${enabled("switch branch")}`,
 				`${theme.accent("c")} ${enabled("ask AI to review/commit")}   ${theme.accent("r")} ${enabled("refresh")}`,
 			);
 		} else if (!loading) {
 			body.push(theme.dim("No git status loaded. Press r to refresh."));
 		}
 		const shown = body.slice(0, Math.max(4, this.options.height() - 2));
-		return frame(this.options.title, shown, width, keyHints([["p", "pull"], ["P", "push"], ["b", "branch"], ["c", "commit prompt"], ["r", "refresh"], ["Esc", "close"]]));
+		return frame(this.options.title, shown, width, keyHints([["u", "update/pull"], ["s", "send/push"], ["b", "branch"], ["c", "commit prompt"], ["r", "refresh"], ["Esc", "close"]]));
 	}
 }

@@ -279,14 +279,14 @@ console.log(JSON.stringify({cards:[
 	});
 });
 
-test("Git menu confirms pull and push actions", async () => {
+test("Git menu confirms update/pull and send/push actions", async () => {
 	const git = gitStub(cleanGitSummary({ ahead: 1 }));
 	const ui = harness("/nonexistent", undefined, git.service);
 	ui.store.setState(101, session({}));
 
 	ui.press("g");
-	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj[\s\S]*main → origin\/main[\s\S]*ahead 1/));
-	ui.press("p");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj[\s\S]*main → origin\/main[\s\S]*ahead 1[\s\S]*u update \(pull --ff-only\)[\s\S]*s send \(push\)/));
+	ui.press("u");
 	assert.match(ui.dialog() ?? "", /Run git pull --ff-only/);
 	assert.deepEqual(git.calls, []);
 	ui.press("y");
@@ -295,7 +295,7 @@ test("Git menu confirms pull and push actions", async () => {
 
 	ui.press("g");
 	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj/));
-	ui.press("P");
+	ui.press("s");
 	assert.match(ui.dialog() ?? "", /Run git push and publish main \(1 ahead\) to origin\/main\?/);
 	ui.press("y");
 	await new Promise((resolve) => setImmediate(resolve));
@@ -309,7 +309,7 @@ test("Git push offers upstream creation when one remote is available", async () 
 
 	ui.press("g");
 	await eventually(() => assert.match(ui.dialog() ?? "", /push will offer to create upstream origin\/main/));
-	ui.press("P");
+	ui.press("s");
 	assert.match(ui.dialog() ?? "", /git push -u origin HEAD/);
 	ui.press("y");
 	await new Promise((resolve) => setImmediate(resolve));
@@ -323,9 +323,9 @@ test("Git blocks pull and push from detached HEAD", async () => {
 
 	ui.press("g");
 	await eventually(() => assert.match(ui.dialog() ?? "", /detached abcdef123456/));
-	ui.press("p");
+	ui.press("u");
 	assert.match(strip(ui.app.render(120).join("\n")), /Cannot pull from detached HEAD/);
-	ui.press("P");
+	ui.press("s");
 	assert.match(strip(ui.app.render(120).join("\n")), /Cannot push from detached HEAD/);
 	assert.deepEqual(git.calls, []);
 });
@@ -337,9 +337,9 @@ test("Git blocks pull and push when no upstream or remote is configured", async 
 
 	ui.press("g");
 	await eventually(() => assert.match(ui.dialog() ?? "", /main · no upstream/));
-	ui.press("p");
+	ui.press("u");
 	assert.match(strip(ui.app.render(120).join("\n")), /No upstream is configured; set one in git first/);
-	ui.press("P");
+	ui.press("s");
 	assert.match(strip(ui.app.render(120).join("\n")), /No upstream is configured; set one in git first/);
 	assert.deepEqual(git.calls, []);
 });
@@ -390,7 +390,7 @@ test("Git status and command failures are reported", async () => {
 	ui.store.setState(101, session({}));
 	ui.press("g");
 	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj/));
-	ui.press("p");
+	ui.press("u");
 	assert.match(ui.dialog() ?? "", /Run git pull --ff-only/);
 	ui.press("y");
 	await eventually(() => assert.match(strip(ui.app.render(120).join("\n")), /network failed/));
