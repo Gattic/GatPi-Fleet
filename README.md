@@ -29,7 +29,8 @@ One terminal tab to watch and drive every running [pi](https://pi.dev) session.
   shown/accepted/dismissed/executed outcomes so future advice can adapt.
 - **Control without switching tabs**: prompt (steer or follow-up while working, or take the
   suggested next prompt), abort, compact, switch model or thinking level, close,
-  close-and-restart, new session, resume, rename, live read-only peek, and full attach.
+  close-and-restart, new session, resume, rename, live read-only peek, full attach, and common
+  Git project shortcuts.
 
 ## Requirements
 
@@ -67,6 +68,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run). When it is idle, the suggested next prompt shows under the empty editor and `Tab` takes it |
 | `i` | ask the session a side question about its work (full screen: earlier questions and answers above, the editor below; `PgUp` `PgDn` scroll). One question at a time; closing the view does not cancel it, and the footer says when the answer arrives |
 | `H` | Hermes advisor: refresh cross-session advice cards, dismiss noisy cards, or confirm a proposed ask / prompt / compact / notification / proposal action |
+| `g` | Git shortcuts for the selected project: pull, push, switch branch, refresh status, or open an AI commit-review prompt |
 | `x` | abort the current run |
 | `Z` | compact the conversation (idle sessions; asks first) |
 | `M` / `T` | switch the model / thinking level (pi limits the level to what the model supports) |
@@ -83,10 +85,14 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `?` | help and legend |
 | `q` | quit (sessions keep running) |
 
-Abort, compact, close and close-and-restart ask before they act. Resume also asks when the project has a
-live session without a bridge: pi-dash cannot see which session file that pi has open, and two pi
-processes writing one file mix its history. Quit asks while a close-and-restart is still waiting
-for its session to exit, because only a running pi-dash starts the replacement.
+Abort, compact, close and close-and-restart ask before they act. Git pull runs `git pull --ff-only`
+and asks first; push always asks first and can create an upstream only when there is exactly one
+remote; branch switching uses local branches and requires a clean working tree. The commit shortcut
+opens the standard AI prompt to review the changes and commit if everything looks good; pi-dash does
+not commit directly. Resume also asks when the project has a live session without a bridge: pi-dash
+cannot see which session file that pi has open, and two pi processes writing one file mix its
+history. Quit asks while a close-and-restart is still waiting for its session to exit, because only a
+running pi-dash starts the replacement.
 
 Sessions started from the dashboard run pi in a detached screen named `pi-<project>` using
 [`config/screenrc`](config/screenrc) (your usual settings, but only one window). When pi exits,
