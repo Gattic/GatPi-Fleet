@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -57,7 +57,10 @@ test("UsageIndexer indexes incrementally, handles rewrites, and enforces retenti
 	mkdirSync(dir, { recursive: true });
 	const file = join(dir, "s1.jsonl");
 	const lines = sessionLines("s1", "/proj", T0);
+	// Retention compares file mtimes with the scan's `now`, so each write is dated on this test's clock.
+	const writtenAt = (at: number) => utimesSync(file, new Date(at), new Date(at));
 	writeFileSync(file, `${lines.slice(0, 3).join("\n")}\n`);
+	writtenAt(T0 + 2000);
 	const cache = join(root, "cache.json");
 	const request = { type: "scan" as const, sessionRoot: sessions, subagentCwds: [], retentionMs: 30 * 86_400_000 };
 	const now = T0 + 10_000;
@@ -68,6 +71,7 @@ test("UsageIndexer indexes incrementally, handles rewrites, and enforces retenti
 	assert.equal(tokens(), 1150);
 
 	appendFileSync(file, `${lines.slice(3).join("\n")}\n`);
+	writtenAt(T0 + 5000);
 	indexer.scan(request, now);
 	assert.equal(tokens(), 1195, "appended lines are added without re-reading");
 	assert.equal(indexer.scan(request, now).changed.length, 0, "unchanged files are skipped");
@@ -79,6 +83,7 @@ test("UsageIndexer indexes incrementally, handles rewrites, and enforces retenti
 
 	// pi may rewrite a file (e.g. migrating its format); offsets no longer line up.
 	writeFileSync(file, `${lines.slice(0, 1).join("\n")}\n${lines.slice(2, 3).join("\n").replace('"input":100', '"input":200')}\n${"x".repeat(5)}\n`);
+	writtenAt(T0 + 6000);
 	reloaded.scan(request, now);
 	const reindexed = Object.values(reloaded.files.get(file)?.hours ?? {}).flatMap((models) => Object.values(models)).reduce((sum, bucket) => sum + bucket.tokens, 0);
 	assert.equal(reindexed, 1250, "a rewritten file is re-indexed from the start");
