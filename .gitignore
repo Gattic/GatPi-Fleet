@@ -2,3 +2,4 @@ node_modules/
 
 # pi harness runtime state for this project (roadmap, traces, caches)
 .pi/
+.codegraph/
