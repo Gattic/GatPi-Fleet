@@ -1,5 +1,5 @@
 // Git integration for the dashboard's project-management shortcuts.
-import { execFile } from "node:child_process";
+import { type ExecFileException, execFile } from "node:child_process";
 
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_NETWORK_TIMEOUT_MS = 120_000;
@@ -40,19 +40,6 @@ export interface GitService {
 	push(cwd: string): Promise<GitOperationResult>;
 	pushSetUpstream(cwd: string, remote: string): Promise<GitOperationResult>;
 	switchBranch(cwd: string, branch: string): Promise<GitOperationResult>;
-}
-
-export class GitCommandError extends Error {
-	readonly stdout: string;
-	readonly stderr: string;
-
-	constructor(args: readonly string[], stdout: string, stderr: string, fallback: string) {
-		const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
-		super(output || fallback || `git ${args.join(" ")} failed`);
-		this.name = "GitCommandError";
-		this.stdout = stdout;
-		this.stderr = stderr;
-	}
 }
 
 interface ParseStatusOptions {
@@ -142,7 +129,18 @@ function parseRemotes(output: string): string[] {
 		.sort((a, b) => a.localeCompare(b));
 }
 
-function runGit(cwd: string, args: readonly string[], timeoutMs = GIT_TIMEOUT_MS): Promise<GitOperationResult> {
+/**
+ * Why a git command failed: git's own message, or why it was stopped. A stopped command leaves partial
+ * output behind that would otherwise hide the reason.
+ */
+function failureMessage(command: string, error: ExecFileException, stdout: string, stderr: string, timeoutMs: number): string {
+	if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return `git ${command} printed more than ${MAX_GIT_OUTPUT / 1024} KB of output; run it in a terminal`;
+	// Node kills the command itself only when it runs past the timeout (the output limit is handled above).
+	if (error.killed) return `git ${command} timed out after ${timeoutMs / 1000}s`;
+	return [stderr.trim(), stdout.trim()].filter(Boolean).join("\n") || error.message;
+}
+
+function runGit(cwd: string, args: readonly string[], timeoutMs: number): Promise<GitOperationResult> {
 	const gitArgs = ["-C", cwd, "-c", "color.ui=false", "-c", "core.pager=cat", ...args];
 	return new Promise((resolve, reject) => {
 		execFile(
@@ -155,25 +153,36 @@ function runGit(cwd: string, args: readonly string[], timeoutMs = GIT_TIMEOUT_MS
 				timeout: timeoutMs,
 			},
 			(error, stdout, stderr) => {
-				if (error) reject(new GitCommandError(args, stdout, stderr, error.message));
+				if (error) reject(new Error(failureMessage(args[0], error, stdout, stderr, timeoutMs)));
 				else resolve({ stdout, stderr });
 			},
 		);
 	});
 }
 
+export interface GitCliOptions {
+	/** How long a local git command may run; pull and push wait on the network and get longer. */
+	timeoutMs?: number;
+}
+
 export class GitCli implements GitService {
+	private readonly timeoutMs: number;
+
+	constructor(options: GitCliOptions = {}) {
+		this.timeoutMs = options.timeoutMs ?? GIT_TIMEOUT_MS;
+	}
+
 	async getSummary(cwd: string): Promise<GitSummary> {
 		const [root, status, remotes] = await Promise.all([
-			runGit(cwd, ["rev-parse", "--show-toplevel"]),
-			runGit(cwd, ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"]),
-			runGit(cwd, ["remote"]),
+			runGit(cwd, ["rev-parse", "--show-toplevel"], this.timeoutMs),
+			runGit(cwd, ["status", "--porcelain=v2", "--branch", "--untracked-files=normal"], this.timeoutMs),
+			runGit(cwd, ["remote"], this.timeoutMs),
 		]);
 		return parseGitStatus(status.stdout, { cwd, root: root.stdout.trim(), remotes: parseRemotes(remotes.stdout) });
 	}
 
 	async listBranches(cwd: string): Promise<GitBranch[]> {
-		const { stdout } = await runGit(cwd, ["for-each-ref", "--sort=refname:short", "--format=%(refname:short)%00%(HEAD)%00%(upstream:short)", "refs/heads"]);
+		const { stdout } = await runGit(cwd, ["for-each-ref", "--sort=refname:short", "--format=%(refname:short)%00%(HEAD)%00%(upstream:short)", "refs/heads"], this.timeoutMs);
 		return stdout
 			.split(/\r?\n/)
 			.filter(Boolean)
@@ -185,7 +194,7 @@ export class GitCli implements GitService {
 	}
 
 	async status(cwd: string): Promise<string> {
-		return (await runGit(cwd, ["status"])).stdout;
+		return (await runGit(cwd, ["status"], this.timeoutMs)).stdout;
 	}
 
 	pull(cwd: string): Promise<GitOperationResult> {
@@ -203,6 +212,6 @@ export class GitCli implements GitService {
 	async switchBranch(cwd: string, branch: string): Promise<GitOperationResult> {
 		const summary = await this.getSummary(cwd);
 		if (!isGitSummaryClean(summary)) throw new Error("Working tree has changes; ask the agent to review, commit, or stash first");
-		return runGit(cwd, ["switch", "--", branch]);
+		return runGit(cwd, ["switch", "--", branch], this.timeoutMs);
 	}
 }

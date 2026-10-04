@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -77,4 +77,28 @@ test("GitCli refuses to switch branches when the worktree became dirty", async (
 	writeFileSync(join(repo, "file.txt"), "dirty\n");
 
 	await assert.rejects(new GitCli().switchBranch(repo, "feature"), /Working tree has changes/);
+});
+
+test("GitCli reports why git failed: git's own error, a timeout, or too much output", async (t) => {
+	const bin = mkdtempSync(join(tmpdir(), "pi-dash-fake-git-"));
+	const path = process.env.PATH;
+	t.after(() => {
+		process.env.PATH = path;
+		rmSync(bin, { recursive: true, force: true });
+	});
+	process.env.PATH = `${bin}:${path}`;
+	const fakeGit = (script: string) => {
+		writeFileSync(join(bin, "git"), `#!/bin/sh\n${script}\n`);
+		chmodSync(join(bin, "git"), 0o755);
+	};
+
+	fakeGit('echo "fatal: not a git repository" >&2; exit 128');
+	await assert.rejects(new GitCli().status(bin), { message: "fatal: not a git repository" });
+
+	// A stopped command's partial output must not stand in for the reason it was stopped.
+	fakeGit('echo "On branch main"; echo "warning: slow" >&2; exec sleep 5');
+	await assert.rejects(new GitCli({ timeoutMs: 200 }).status(bin), { message: "git status timed out after 0.2s" });
+
+	fakeGit("exec head -c 600000 /dev/zero");
+	await assert.rejects(new GitCli().status(bin), { message: "git status printed more than 512 KB of output; run it in a terminal" });
 });

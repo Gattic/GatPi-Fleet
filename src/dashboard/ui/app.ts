@@ -461,6 +461,7 @@ export class App implements Component {
 	private async pickGitBranch(row: SessionRow, cwd: string, summary: GitSummary | undefined): Promise<void> {
 		if (!summary) return this.notify("Git status has not loaded yet", true);
 		if (!isGitSummaryClean(summary)) return this.notify("Working tree has changes; ask the agent to review, commit, or stash first", true);
+		const menu = this.overlay;
 		let branches: GitBranch[];
 		try {
 			branches = await this.services.git.listBranches(cwd);
@@ -468,6 +469,8 @@ export class App implements Component {
 			this.notify(this.gitMessage(error as Error), true);
 			return;
 		}
+		// As with git status: a picker opening late would replace whatever the user moved on to.
+		if (this.overlay !== menu) return;
 		if (!branches.length) return this.notify("No local branches found", true);
 		const items: SelectItem[] = branches.map((branch) => ({
 			value: branch.name,

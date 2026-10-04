@@ -422,23 +422,30 @@ test("Git status shortcut shows git's own status output; a failure is reported",
 	assert.match(broken.dialog() ?? "", /Git · proj/, "the Git menu stays open");
 });
 
-test("a slow git status does not replace what the user moved on to", async () => {
-	let finish: (output: string) => void = () => {};
-	const slow = gitStub();
-	slow.service.status = () =>
-		new Promise((resolve) => {
-			finish = resolve;
-		});
-	const ui = harness("/nonexistent", undefined, slow.service);
-	ui.store.setState(101, session({}));
-	ui.press("g");
-	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj/));
-	ui.press("v", "\x1b", "p", ..."half-typed");
-	assert.match(ui.dialog() ?? "", /Prompt → 1 proj[\s\S]*half-typed/);
+test("a slow git status or branch list does not replace what the user moved on to", async () => {
+	for (const key of ["v", "b"]) {
+		let finish: () => void = () => assert.fail(`${key} did not run git`);
+		const slow = gitStub();
+		slow.service.status = () =>
+			new Promise((resolve) => {
+				finish = () => resolve("On branch main\n");
+			});
+		slow.service.listBranches = () =>
+			new Promise((resolve) => {
+				finish = () => resolve([{ name: "feature", current: false }]);
+			});
+		const ui = harness("/nonexistent", undefined, slow.service);
+		ui.store.setState(101, session({}));
+		ui.press("g");
+		// Branch switching needs the loaded summary (a clean tree) before it lists branches.
+		await eventually(() => assert.match(ui.dialog() ?? "", /tree clean/));
+		ui.press(key, "\x1b", "p", ..."half-typed");
+		assert.match(ui.dialog() ?? "", /Prompt → 1 proj[\s\S]*half-typed/);
 
-	finish("On branch main\n");
-	await new Promise((resolve) => setImmediate(resolve));
-	assert.match(ui.dialog() ?? "", /Prompt → 1 proj[\s\S]*half-typed/, "the composer keeps the focus and its text");
+		finish();
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.match(ui.dialog() ?? "", /Prompt → 1 proj[\s\S]*half-typed/, `${key}: the composer keeps the focus and its text`);
+	}
 });
 
 test("Git commit shortcut opens the standard AI review prompt", async () => {
