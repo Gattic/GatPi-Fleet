@@ -13,7 +13,7 @@ import { isAlert } from "../model/status.ts";
 import { rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../model/store.ts";
 import type { UsageIndex } from "../usage/usage-index.ts";
 import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
-import { Composer, Confirm, Help, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
+import { AskView, Composer, Confirm, Help, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
 import { TextPane } from "./text-pane.ts";
 import { keyHints, theme } from "./theme.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
@@ -38,8 +38,8 @@ const FLASH_MS = 5000;
 const PEEK_REFRESH_MS = 1000;
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["Tab", "next ◆"], ["p", "prompt"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["i", "ask"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["Tab", "next ◆"], ["p", "prompt"], ["i", "ask"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["?", "help"]],
 };
 
@@ -56,6 +56,9 @@ export class App implements Component {
 	private peekTimer?: NodeJS.Timeout;
 	private peekFile?: string;
 	private readonly recycles = new Map<number, { cwd: string; label: string }>();
+	// Asks sent from here that are still answering (pid → ask id), and the session whose ask view is open.
+	private readonly awaitingAnswer = new Map<number, number>();
+	private askViewPid?: number;
 	// The detail view's SAID pane: scroll position, and where it was last drawn (for the mouse).
 	private readonly said = new TextPane();
 	private saidArea: DetailView["said"];
@@ -78,13 +81,22 @@ export class App implements Component {
 		return this.services.store.ordered().some((row) => row.status.kind === "working");
 	}
 
-	/** Periodic housekeeping: launch replacement sessions for closed recycles. */
+	/** Periodic housekeeping: launch replacement sessions for closed recycles; report answers that arrive unseen. */
 	onTick(): void {
 		for (const [pid, recycle] of this.recycles) {
 			const row = this.services.store.rows.get(pid);
 			if (row && row.exitedAt === undefined) continue;
 			this.recycles.delete(pid);
 			this.launch(recycle.cwd, recycle.label, undefined, row);
+		}
+		for (const [pid, id] of this.awaitingAnswer) {
+			const row = this.services.store.rows.get(pid);
+			const ask = row?.bridge?.asks.find((run) => run.id === id);
+			if (ask?.status === "answering") continue;
+			this.awaitingAnswer.delete(pid);
+			if (!row || !ask || this.askViewPid === pid) continue;
+			if (ask.status === "answered") this.notify(`${rowLabel(row)} answered your question (i to read it)`);
+			else this.notify(`${rowLabel(row)} could not answer: ${ask.error ?? "failed"}`, true);
 		}
 	}
 
@@ -178,7 +190,7 @@ export class App implements Component {
 		} else {
 			const row = this.selected();
 			if (!row) {
-				if ("pxsvacCRrdMTZ".includes(data)) this.notify("No session selected", true);
+				if ("pixsvacCRrdMTZ".includes(data)) this.notify("No session selected", true);
 				return;
 			}
 			this.rowAction(row, data);
@@ -221,6 +233,8 @@ export class App implements Component {
 		switch (key) {
 			case "p":
 				return this.compose(row);
+			case "i":
+				return this.openAsk(row);
 			case "x":
 				if (row.status.kind !== "working" && row.status.kind !== "stalled" && row.status.kind !== "rate-limited") return this.notify(`${label} is not working`, true);
 				return this.confirm("Abort", `Abort the current run of ${label}?`, () => this.send(row, { kind: "abort" }, `aborted ${label}`));
@@ -331,6 +345,7 @@ export class App implements Component {
 	private closeOverlay(): void {
 		this.overlay?.hide();
 		this.overlay = undefined;
+		this.askViewPid = undefined;
 		if (this.peekTimer) clearInterval(this.peekTimer);
 		this.peekTimer = undefined;
 		if (this.peekFile) {
@@ -382,6 +397,31 @@ export class App implements Component {
 			}),
 			{ width: "80%", maxHeight: "60%" },
 		);
+	}
+
+	private openAsk(row: SessionRow): void {
+		if (!this.requireBridge(row)) return;
+		const { store, hub, tui } = this.services;
+		this.show(
+			new AskView(tui, {
+				target: `${row.slot ?? "·"} ${rowLabel(row)}`,
+				asks: () => store.rows.get(row.pid)?.bridge?.asks ?? [],
+				height: () => tui.terminal.rows,
+				onAsk: (question) =>
+					hub
+						.send(row.pid, { kind: "ask", question })
+						.then(() => {
+							// The bridge sends the new ask before its ack.
+							const id = store.rows.get(row.pid)?.bridge?.asks.at(-1)?.id;
+							if (id !== undefined) this.awaitingAnswer.set(row.pid, id);
+						})
+						.finally(() => tui.requestRender()),
+				onClose: () => this.closeOverlay(),
+			}),
+			{ width: "100%", maxHeight: "100%" },
+		);
+		// After show(), which closes any earlier overlay.
+		this.askViewPid = row.pid;
 	}
 
 	private confirmClose(row: SessionRow, recycle: boolean): void {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import { GpuMonitor } from "../src/dashboard/collectors/gpu.ts";
 import { QuotaMonitor } from "../src/dashboard/collectors/quota.ts";
 import { Store } from "../src/dashboard/model/store.ts";
 import { activityLane, gauge, LANE, planBar, sparkline, splitBar, stackedArea, stretch } from "../src/dashboard/ui/charts.ts";
+import { AskView } from "../src/dashboard/ui/overlays.ts";
 import { TextPane } from "../src/dashboard/ui/text-pane.ts";
 import { theme } from "../src/dashboard/ui/theme.ts";
 import { renderDetail } from "../src/dashboard/ui/views/detail.ts";
@@ -12,7 +13,7 @@ import { renderOverview } from "../src/dashboard/ui/views/overview.ts";
 import type { ViewContext } from "../src/dashboard/ui/views/shared.ts";
 import { renderUsage } from "../src/dashboard/ui/views/usage.ts";
 import { UsageIndex } from "../src/dashboard/usage/usage-index.ts";
-import { emptyUsage, type SessionState } from "../src/protocol/index.ts";
+import { type AskRun, emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
 const strip = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "");
 
@@ -283,4 +284,38 @@ test("detail shows the whole reply in a scrollable SAID pane, then the suggested
 	pane.scrollTo("end");
 	const end = render();
 	assert.match(end.said.at(-1) ?? "", /^ +reply line 60 /, "nothing below the end");
+});
+
+test("the ask view fills 80×24 and 150×45 with the newest answer in view, and keeps a scrolled-up position as answers grow", () => {
+	const now = Date.now();
+	const usage = { ...emptyUsage(), input: 4, cacheRead: 76_600, cacheWrite: 396, output: 300, tokens: 77_300, cost: 0.0231 };
+	const long = Array.from({ length: 40 }, (_, index) => `- finding ${index + 1}`).join("\n");
+	let asks: AskRun[] = [
+		{ id: 1, question: "What changed?", askedAt: now - 2 * 86_400_000, status: "answered", answer: `# Summary\n\n${long}`, usage },
+		{ id: 2, question: "Why did it fail?", askedAt: now - 120_000, status: "failed", answer: "", error: "prompt is too long" },
+		{ id: 3, question: "What are you doing now?", askedAt: now - 2000, status: "answering", answer: "Running npm test" },
+	];
+	for (const [width, height] of [[80, 24], [150, 45]]) {
+		const tui = { terminal: { rows: height, columns: width }, requestRender: () => {} } as unknown as TUI;
+		const view = new AskView(tui, { target: "1 proj", asks: () => asks, height: () => height, onAsk: async () => {}, onClose: () => {} });
+		const lines = view.render(width);
+		assert.equal(lines.length, height, `${width}×${height} height`);
+		for (const line of lines) assert.equal(visibleWidth(line), width, `${width}×${height} width`);
+		const text = lines.map(strip);
+		assert.match(text[0], /ask · 1 proj/);
+		assert.match(text.at(-1) ?? "", /⏎ ask.*PgUp PgDn scroll.*Esc close/);
+		const body = text.join("\n");
+		assert.match(body, /What are you doing now\?[\s\S]*Running npm test[\s\S]*answering…/, "the newest ask is in view");
+		assert.match(body, /● answering · the next question waits for this answer/);
+
+		view.handleInput("\x1b[5~");
+		const scrolled = view.render(width).slice(1, -1);
+		assert.doesNotMatch(scrolled.map(strip).join("\n"), /Running npm test/, "PgUp leaves the newest answer");
+		asks = asks.map((ask) => (ask.id === 3 ? { ...ask, answer: "Running npm test, then the linter" } : ask));
+		assert.deepEqual(view.render(width).slice(1, -1), scrolled, "a growing answer does not move a scrolled-up thread");
+		asks = asks.map((ask) => (ask.id === 3 ? { ...ask, answer: "Running npm test" } : ask));
+	}
+	const tui = { terminal: { rows: 24, columns: 80 }, requestRender: () => {} } as unknown as TUI;
+	const failed = new AskView(tui, { target: "1 proj", asks: () => asks.slice(0, 2), height: () => 24, onAsk: async () => {}, onClose: () => {} });
+	assert.match(failed.render(80).map(strip).join("\n"), /Why did it fail\?[\s\S]*✖ prompt is too long/);
 });

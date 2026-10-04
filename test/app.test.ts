@@ -216,3 +216,45 @@ test("M and T switch the model and thinking level; Z compacts after asking, only
 	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj is working; compact it when it is idle/);
 	assert.equal(ui.sent.length, sent);
 });
+
+test("i asks the selected session a side question; one at a time; an answer that lands unseen is announced", async () => {
+	const ui = harness("/nonexistent");
+	const asked = Date.now();
+	const answering = { id: 7, question: "What are you doing?", askedAt: asked, status: "answering" as const, answer: "Running the" };
+	ui.store.setState(101, session({ phase: "working" }));
+
+	ui.press("i");
+	assert.match(ui.dialog() ?? "", /ask · 1 proj[\s\S]*Ask this session about its work/);
+	ui.press(..."What are you doing?", "\r");
+	assert.deepEqual(ui.sent, [{ kind: "ask", question: "What are you doing?" }]);
+	// The bridge publishes the new ask before it acknowledges the command.
+	ui.store.setState(101, session({ phase: "working", asks: [answering] }));
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.match(ui.dialog() ?? "", /What are you doing\?[\s\S]*Running the[\s\S]*answering…/);
+
+	ui.press(..."And then?", "\r");
+	assert.equal(ui.sent.length, 1, "a second question waits for the answer");
+	assert.match(ui.dialog() ?? "", /And then\?[\s\S]*✖ still answering the previous question|✖ still answering the previous question[\s\S]*And then\?/);
+
+	ui.press("\x1b");
+	assert.equal(ui.dialog(), undefined);
+	const usage = { ...emptyUsage(), input: 4, cacheRead: 76_600, cacheWrite: 396, output: 300, tokens: 77_300, cost: 0.0231 };
+	ui.store.setState(101, session({ phase: "working", asks: [{ ...answering, status: "answered", answer: "Running the tests.", usage }] }));
+	ui.app.onTick();
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj answered your question \(i to read it\)/);
+
+	ui.press("i");
+	assert.match(ui.dialog() ?? "", /Running the tests\.[\s\S]*ago · 77\.3k tokens, 99% from cache · \$0\.02/);
+});
+
+test("an answer that lands while its ask view is open is not announced; a failure shows its reason", async () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({}));
+	ui.press("i", ..."Why?", "\r");
+	ui.store.setState(101, session({ asks: [{ id: 1, question: "Why?", askedAt: Date.now(), status: "answering", answer: "" }] }));
+	await new Promise((resolve) => setImmediate(resolve));
+	ui.store.setState(101, session({ asks: [{ id: 1, question: "Why?", askedAt: Date.now(), status: "failed", answer: "", error: "prompt is too long" }] }));
+	ui.app.onTick();
+	assert.doesNotMatch(strip(ui.app.render(120).at(-1) ?? ""), /could not answer/);
+	assert.match(ui.dialog() ?? "", /Why\?[\s\S]*✖ prompt is too long/);
+});

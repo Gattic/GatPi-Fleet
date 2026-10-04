@@ -15,11 +15,11 @@ export class TextPane {
 	private offset = 0;
 	private height = 1;
 
-	/** A different text starts at its top. */
-	setText(text: string): void {
+	/** A different text starts at its top, unless `keepPosition` (a text that grows). */
+	setText(text: string, keepPosition = false): void {
 		if (text === this.text) return;
 		this.text = text;
-		this.offset = 0;
+		if (!keepPosition) this.offset = 0;
 		this.markdown.setText(text);
 	}
 

@@ -1,4 +1,4 @@
-// Modal overlays: prompt composer, filterable picker, confirm, text input, peek, reader, help.
+// Modal overlays: prompt composer, ask view, filterable picker, confirm, text input, peek, reader, help.
 import {
 	type Component,
 	Container,
@@ -19,8 +19,8 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import type { DeliverAs } from "../../protocol/index.ts";
-import { ELLIPSIS, fit } from "./format.ts";
+import type { AskRun, DeliverAs } from "../../protocol/index.ts";
+import { ELLIPSIS, fit, fmtCost, fmtDuration, fmtTokens } from "./format.ts";
 import { TextPane } from "./text-pane.ts";
 import { keycap, keyHints, theme } from "./theme.ts";
 
@@ -148,6 +148,150 @@ export class Composer extends Container implements Focusable {
 		if (this.error) body.push(theme.error(`✖ ${this.error}`));
 		const hints: [string, string][] = working ? [["⏎", "send"], ["Tab", "steer/follow-up"]] : [["⏎", "send"], ...(suggestion ? [["Tab", "accept suggestion"] as [string, string]] : [])];
 		return frame(`Prompt → ${this.options.target}`, body, width, keyHints([...hints, ["⇧⏎", "newline"], ["Esc", "cancel"]]));
+	}
+}
+
+export interface AskViewOptions {
+	target: string;
+	asks: () => readonly AskRun[];
+	height: () => number;
+	/** Resolves once the session has started answering; rejects with its reason. */
+	onAsk: (question: string) => Promise<void>;
+	onClose: () => void;
+}
+
+const ASK_INTRO =
+	"Ask this session about its work: what it is doing, why, what is left. It answers from its own context with its own model. Nothing is added to the session, and its run is not interrupted.";
+
+function askFooter(ask: AskRun, now: number): string {
+	if (ask.status === "answering") return "answering…";
+	if (ask.status === "failed") return `✖ ${ask.error ?? "failed"}`;
+	const parts = [`${fmtDuration(now - ask.askedAt)} ago`];
+	const usage = ask.usage;
+	if (usage?.tokens) parts.push(`${fmtTokens(usage.tokens)} tokens, ${Math.round((100 * usage.cacheRead) / usage.tokens)}% from cache`);
+	if (usage?.cost) parts.push(`$${fmtCost(usage.cost)}`);
+	return parts.join(" · ");
+}
+
+/** The asks as Markdown, oldest first: each question quoted, its answer, then its status. */
+function askThread(asks: readonly AskRun[], now: number): string {
+	if (!asks.length) return `*${ASK_INTRO}*`;
+	return asks
+		.map((ask) => {
+			const question = ask.question
+				.split("\n")
+				.map((line) => `> ${line}`)
+				.join("\n");
+			return [question, ask.answer, `*${askFooter(ask, now)}*`].filter(Boolean).join("\n\n");
+		})
+		.join("\n\n---\n\n");
+}
+
+/** Full-screen thread of a session's side questions, with pi's editor for the next one. */
+export class AskView implements Component, Focusable {
+	private readonly editor: Editor;
+	private readonly pane = new TextPane();
+	private readonly options: AskViewOptions;
+	// Stay on the newest answer until the reader scrolls up.
+	private follow = true;
+	private sending = false;
+	private error = "";
+	private _focused = false;
+
+	constructor(tui: TUI, options: AskViewOptions) {
+		this.options = options;
+		this.editor = new Editor(tui, editorTheme);
+		this.editor.onSubmit = (text) => this.submit(text);
+	}
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		this.editor.focused = value;
+	}
+
+	invalidate(): void {
+		this.editor.invalidate();
+	}
+
+	private answering(): boolean {
+		return this.sending || this.options.asks().at(-1)?.status === "answering";
+	}
+
+	private submit(text: string): void {
+		const question = text.trim();
+		if (!question) return;
+		if (this.answering()) {
+			this.error = "still answering the previous question";
+			this.editor.setText(text);
+			return;
+		}
+		this.sending = true;
+		this.error = "";
+		this.follow = true;
+		this.options.onAsk(question).then(
+			() => {
+				this.sending = false;
+			},
+			(error: Error) => {
+				this.sending = false;
+				this.error = error.message;
+				if (!this.editor.getText()) this.editor.setText(question);
+			},
+		);
+	}
+
+	private scroll(lines: number): void {
+		this.pane.scrollBy(lines);
+		if (lines < 0) this.follow = false;
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, Key.escape)) return this.options.onClose();
+		if (matchesKey(data, Key.pageUp)) {
+			this.pane.page(-1);
+			this.follow = false;
+			return;
+		}
+		if (matchesKey(data, Key.pageDown)) return this.pane.page(1);
+		// With nothing typed, the arrows scroll the thread instead of moving the cursor.
+		if (!this.editor.getText() && (matchesKey(data, Key.up) || matchesKey(data, Key.down))) return this.scroll(matchesKey(data, Key.up) ? -1 : 1);
+		this.error = "";
+		this.editor.handleInput(data);
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "wheel") return undefined;
+		this.scroll(event.wheelDelta ?? 0);
+		return { handled: true };
+	}
+
+	private status(): string {
+		if (this.error) return theme.error(`✖ ${this.error}`);
+		if (this.sending) return `${theme.working("◌")} ${theme.text("asking…")}`;
+		if (this.answering()) return `${theme.working("●")} ${theme.text("answering")} ${theme.dim("· the next question waits for this answer")}`;
+		return `${theme.dim("○")} ${theme.dim("answers come from the session's own model and context")}`;
+	}
+
+	render(width: number): string[] {
+		const inner = frameInner(width);
+		const height = Math.max(4, this.options.height() - 2);
+		const editor = this.editor.render(inner);
+		const threadHeight = Math.max(1, height - editor.length - 1);
+		this.pane.setText(askThread(this.options.asks(), Date.now()), true);
+		if (this.follow) this.pane.scrollTo("end");
+		const view = this.pane.render(inner, threadHeight);
+		if (view.below === 0) this.follow = true;
+		// The thread sits on the editor, like a chat.
+		const body = [...view.lines];
+		while (body.length < threadHeight) body.unshift("");
+		body.push(this.status(), ...editor);
+		const total = view.above + view.lines.length + view.below;
+		const position = total > view.lines.length ? `${theme.muted(`${view.above + 1}–${view.above + view.lines.length}/${total}`)}  ` : "";
+		return frame(`ask · ${this.options.target}`, body, width, `${position}${keyHints([["⏎", "ask"], ["PgUp PgDn", "scroll"], ["⇧⏎", "newline"], ["Esc", "close"]])}`);
 	}
 }
 
@@ -372,6 +516,7 @@ const HELP: [string, [string, string][]][] = [
 		"SESSION",
 		[
 			["p", "prompt (steer or follow-up while working; Tab takes the suggestion)"],
+			["i", "ask the session about its work; nothing is added to the session"],
 			["s", "read the latest reply full screen (or click SAID)"],
 			["PgUp PgDn", "scroll SAID in the detail view (or mouse wheel)"],
 			["x", "abort the current run"],
