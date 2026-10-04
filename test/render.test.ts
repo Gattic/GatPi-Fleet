@@ -182,7 +182,7 @@ test("background jobs and subagents show as a BG badge on wide terminals and as 
 	const ctx = context();
 	const row = ctx.store.rows.get(101);
 	assert.ok(row);
-	const now = Date.now();
+	const now = ctx.now;
 	row.resources = {
 		directCpu: 0.1,
 		indirectCpu: 0,
