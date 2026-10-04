@@ -69,6 +69,8 @@ export interface ComposerOptions {
 	isWorking: () => boolean;
 	/** The session's suggested next prompt, offered while idle and the editor is empty. */
 	suggestion: () => string | undefined;
+	initialText?: string;
+	initialMode?: DeliverAs;
 	onSubmit: (text: string, deliverAs: DeliverAs) => void;
 	onCancel: () => void;
 }
@@ -78,15 +80,17 @@ export class Composer extends Container implements Focusable {
 	private readonly editor: Editor;
 	private readonly options: ComposerOptions;
 	// Matches pi: Enter while the agent works steers; follow-up waits for it to finish.
-	private mode: DeliverAs = "steer";
+	private mode: DeliverAs;
 	private error = "";
 	private _focused = false;
 
 	constructor(tui: TUI, options: ComposerOptions) {
 		super();
 		this.options = options;
+		this.mode = options.initialMode ?? "steer";
 		this.editor = new Editor(tui, editorTheme);
 		this.editor.onSubmit = (text) => this.submit(text);
+		if (options.initialText) this.editor.setText(options.initialText);
 	}
 
 	get focused(): boolean {

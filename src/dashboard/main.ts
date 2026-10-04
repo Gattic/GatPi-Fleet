@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { getKeybindings, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { socketDir } from "../protocol/index.ts";
+import { GitCli } from "./actions/git.ts";
 import { BridgeHub } from "./collectors/bridges.ts";
 import { GpuMonitor } from "./collectors/gpu.ts";
 import { ProcSampler } from "./collectors/procs.ts";
@@ -75,6 +76,7 @@ function main(): void {
 	const quota = new QuotaMonitor(join(agent, "provider-failover-state.json"));
 	const gpu = new GpuMonitor();
 	const advisor = new HermesAdvisor({ ledgerPath: join(cacheDir, "hermes-advisor-events.jsonl") });
+	const git = new GitCli();
 	const sampler = new ProcSampler();
 
 	const timers: NodeJS.Timeout[] = [];
@@ -89,7 +91,7 @@ function main(): void {
 		process.exit(0);
 	};
 
-	app = new App({ tui, store, hub, usage, quota, gpu, advisor, sessionRoot, runtimeDir, quit });
+	app = new App({ tui, store, hub, usage, quota, gpu, advisor, git, sessionRoot, runtimeDir, quit });
 	tui.setLayoutRoot(app);
 	tui.setFocus(app);
 

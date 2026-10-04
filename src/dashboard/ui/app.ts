@@ -3,7 +3,8 @@ import { existsSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { type Component, Key, matchesKey, type OverlayHandle, type OverlayOptions, type SelectItem, stripTerminalSequences, type TUI, type TuiMouseEvent, type TuiMouseEventResult, visibleWidth } from "@earendil-works/pi-tui";
-import { type Command, THINKING_LEVELS } from "../../protocol/index.ts";
+import { type Command, THINKING_LEVELS, type DeliverAs } from "../../protocol/index.ts";
+import { gitDirtySummary, gitHeadLabel, type GitBranch, type GitOperationResult, type GitService, type GitSummary, isGitSummaryClean } from "../actions/git.ts";
 import { attachSession, launchSession, readHardcopy, requestHardcopy } from "../actions/screen.ts";
 import { listProjects, listSessions } from "../actions/sessions.ts";
 import type { BridgeHub } from "../collectors/bridges.ts";
@@ -17,6 +18,7 @@ import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
 import { AskView, Composer, Confirm, Help, HermesAdviceView, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
 import { TextPane } from "./text-pane.ts";
 import { keyHints, theme } from "./theme.ts";
+import { GitView } from "./git-view.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
 import { renderOverview } from "./views/overview.ts";
 import { background, SPINNER, type ViewContext, type ViewName } from "./views/shared.ts";
@@ -30,6 +32,7 @@ export interface Services {
 	quota: QuotaMonitor;
 	gpu: GpuMonitor;
 	advisor: HermesAdvisorClient;
+	git: GitService;
 	sessionRoot: string;
 	/** Private runtime directory for transient files (peek captures). */
 	runtimeDir: string;
@@ -38,10 +41,13 @@ export interface Services {
 
 const FLASH_MS = 5000;
 const PEEK_REFRESH_MS = 1000;
+const GIT_MESSAGE_LIMIT = 500;
+
+export const COMMIT_REVIEW_PROMPT = "Review the current git changes. If everything looks good, create a focused commit with an appropriate message; otherwise explain what needs attention. Do not push.";
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["Tab", "next ◆"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["Tab", "next ◆"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["?", "help"]],
 };
 
@@ -193,7 +199,7 @@ export class App implements Component {
 		} else {
 			const row = this.selected();
 			if (!row) {
-				if ("pixsvacCRrdMTZ".includes(data)) this.notify("No session selected", true);
+				if ("gpixsvacCRrdMTZ".includes(data)) this.notify("No session selected", true);
 				return;
 			}
 			this.rowAction(row, data);
@@ -238,6 +244,8 @@ export class App implements Component {
 				return this.compose(row);
 			case "i":
 				return this.openAsk(row);
+			case "g":
+				return this.openGit(row);
 			case "x":
 				if (row.status.kind !== "working" && row.status.kind !== "stalled" && row.status.kind !== "rate-limited") return this.notify(`${label} is not working`, true);
 				return this.confirm("Abort", `Abort the current run of ${label}?`, () => this.send(row, { kind: "abort" }, `aborted ${label}`));
@@ -375,6 +383,149 @@ export class App implements Component {
 		);
 	}
 
+	private openGit(row: SessionRow): void {
+		const cwd = rowCwd(row);
+		if (!cwd) return this.notify("Unknown project directory", true);
+		let summary: GitSummary | undefined;
+		let loading = false;
+		let error: string | undefined;
+		const refresh = () => {
+			if (loading) return;
+			loading = true;
+			error = undefined;
+			this.services.tui.requestRender();
+			this.services.git.getSummary(cwd).then(
+				(result) => {
+					summary = result;
+					loading = false;
+					this.services.tui.requestRender();
+				},
+				(failure: Error) => {
+					loading = false;
+					error = this.gitMessage(failure);
+					this.services.tui.requestRender();
+				},
+			);
+		};
+		this.show(
+			new GitView({
+				title: `Git · ${rowLabel(row)}`,
+				summary: () => summary,
+				loading: () => loading,
+				error: () => error,
+				height: () => this.services.tui.terminal.rows,
+				onPull: () => this.confirmGitPull(cwd, summary),
+				onPush: () => this.confirmGitPush(cwd, summary),
+				onSwitch: () => void this.pickGitBranch(row, cwd, summary),
+				onCommitPrompt: () => this.openCommitPrompt(row, summary),
+				onRefresh: refresh,
+				onClose: () => this.closeOverlay(),
+			}),
+			{ width: "80%", maxHeight: "85%" },
+		);
+		refresh();
+	}
+
+	private confirmGitPull(cwd: string, summary: GitSummary | undefined): void {
+		if (!summary) return this.notify("Git status has not loaded yet", true);
+		if (!summary.branch) return this.notify("Cannot pull from detached HEAD", true);
+		if (!summary.upstream) return this.notify("No upstream is configured; set one in git first", true);
+		const dirty = isGitSummaryClean(summary) ? "" : `\n\nWorking tree is ${gitDirtySummary(summary)}; git may refuse if local changes overlap.`;
+		const message = `Run git pull --ff-only in ${shortPath(summary.root)} on ${gitHeadLabel(summary)}?${dirty}${this.workingSessionWarning(cwd)}`;
+		this.confirm("Git pull", message, () => this.runGitAction(() => this.services.git.pull(cwd), `pulled ${gitHeadLabel(summary)}`));
+	}
+
+	private confirmGitPush(cwd: string, summary: GitSummary | undefined): void {
+		if (!summary) return this.notify("Git status has not loaded yet", true);
+		if (!summary.branch) return this.notify("Cannot push from detached HEAD", true);
+		let action: () => Promise<GitOperationResult>;
+		let command: string;
+		let target: string;
+		if (summary.upstream) {
+			action = () => this.services.git.push(cwd);
+			command = "git push";
+			target = summary.upstream;
+		} else {
+			if (summary.remotes.length !== 1) return this.notify("No upstream is configured; set one in git first", true);
+			const remote = summary.remotes[0];
+			action = () => this.services.git.pushSetUpstream(cwd, remote);
+			command = `git push -u ${remote} HEAD`;
+			target = `${remote}/${summary.branch}`;
+		}
+		const behind = summary.behind ? `\n\n${gitHeadLabel(summary)} is behind ${summary.upstream ?? target} by ${summary.behind}; push may be rejected until you pull.` : "";
+		const ahead = summary.ahead ? ` (${summary.ahead} ahead)` : "";
+		this.confirm("Git push", `Run ${command} and publish ${gitHeadLabel(summary)}${ahead} to ${target}?${behind}`, () => this.runGitAction(action, `pushed ${gitHeadLabel(summary)}`));
+	}
+
+	private async pickGitBranch(row: SessionRow, cwd: string, summary: GitSummary | undefined): Promise<void> {
+		if (!summary) return this.notify("Git status has not loaded yet", true);
+		if (!isGitSummaryClean(summary)) return this.notify("Working tree has changes; ask the agent to review, commit, or stash first", true);
+		let branches: GitBranch[];
+		try {
+			branches = await this.services.git.listBranches(cwd);
+		} catch (error) {
+			this.notify(this.gitMessage(error as Error), true);
+			return;
+		}
+		if (!branches.length) return this.notify("No local branches found", true);
+		const items: SelectItem[] = branches.map((branch) => ({
+			value: branch.name,
+			label: branch.name,
+			description: [branch.current ? "current" : undefined, branch.upstream ? `tracks ${branch.upstream}` : undefined].filter(Boolean).join(" · "),
+		}));
+		this.show(
+			new Picker({
+				title: `Switch branch in ${shortPath(summary.root)}`,
+				items,
+				onSelect: (item) => {
+					if (item.value === summary.branch) {
+						this.notify(`${item.label} is already checked out`);
+						return;
+					}
+					const message = `Switch ${rowLabel(row)} from ${gitHeadLabel(summary)} to ${item.value}?${this.workingSessionWarning(cwd)}`;
+					this.confirm("Switch branch", message, () => this.runGitAction(() => this.services.git.switchBranch(cwd, item.value), `switched ${rowLabel(row)} to ${item.value}`));
+				},
+				onCancel: () => this.closeOverlay(),
+			}),
+		);
+	}
+
+	private openCommitPrompt(row: SessionRow, summary: GitSummary | undefined): void {
+		if (!summary) return this.notify("Git status has not loaded yet", true);
+		if (!this.requireBridge(row)) return;
+		this.compose(row, COMMIT_REVIEW_PROMPT, row.bridge?.phase === "working" ? "followUp" : "steer");
+	}
+
+	private runGitAction(action: () => Promise<GitOperationResult>, success: string): void {
+		action().then(
+			(result) => this.notify(this.gitOperationMessage(success, result)),
+			(error: Error) => this.notify(this.gitMessage(error), true),
+		);
+	}
+
+	private gitOperationMessage(success: string, result: GitOperationResult): string {
+		const detail = [...result.stderr.split(/\r?\n/), ...result.stdout.split(/\r?\n/)].map((line) => line.trim()).find(Boolean);
+		return detail ? this.clipMessage(`${success}: ${detail}`) : success;
+	}
+
+	private gitMessage(error: Error): string {
+		return this.clipMessage(error.message || "git command failed");
+	}
+
+	private clipMessage(message: string): string {
+		const compact = message.replace(/\s+/g, " ").trim();
+		return compact.length > GIT_MESSAGE_LIMIT ? `${compact.slice(0, GIT_MESSAGE_LIMIT - 1)}…` : compact;
+	}
+
+	private workingSessionWarning(cwd: string): string {
+		const working = this.services.store
+			.ordered()
+			.filter((row) => row.exitedAt === undefined && rowCwd(row) === cwd && row.bridge?.phase === "working")
+			.map((row) => rowLabel(row));
+		if (!working.length) return "";
+		return `\n\n${working.join(", ")} ${working.length === 1 ? "is" : "are"} working in this project. Let active tools finish before changing repository files or branches.`;
+	}
+
 	/** Pending recycles live only in this process, so quitting drops their replacement launch. */
 	private requestQuit(): void {
 		const pending = [...this.recycles.values()].map((recycle) => recycle.label);
@@ -383,7 +534,7 @@ export class App implements Component {
 		this.confirm("Quit", message, () => this.services.quit());
 	}
 
-	private compose(row: SessionRow): void {
+	private compose(row: SessionRow, initialText = "", initialMode: DeliverAs = "steer"): void {
 		if (!this.requireBridge(row)) return;
 		const store = this.services.store;
 		this.show(
@@ -391,6 +542,8 @@ export class App implements Component {
 				target: `${row.slot ?? "·"} ${rowLabel(row)}`,
 				isWorking: () => store.rows.get(row.pid)?.bridge?.phase === "working",
 				suggestion: () => store.rows.get(row.pid)?.bridge?.suggestion,
+				initialText,
+				initialMode,
 				onSubmit: (text, deliverAs) => {
 					this.closeOverlay();
 					const working = store.rows.get(row.pid)?.bridge?.phase === "working";

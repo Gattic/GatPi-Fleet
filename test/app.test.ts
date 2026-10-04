@@ -6,11 +6,12 @@ import { test } from "node:test";
 import type { Component, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { sessionDirName } from "../src/dashboard/actions/sessions.ts";
 import type { BridgeHub } from "../src/dashboard/collectors/bridges.ts";
+import type { GitOperationResult, GitService, GitSummary } from "../src/dashboard/actions/git.ts";
 import { GpuMonitor } from "../src/dashboard/collectors/gpu.ts";
 import { HermesAdvisor, type HermesAdvisorClient, type HermesFeedbackEvent, type HermesSnapshot } from "../src/dashboard/hermes/advisor.ts";
 import { QuotaMonitor } from "../src/dashboard/collectors/quota.ts";
 import { Store } from "../src/dashboard/model/store.ts";
-import { App } from "../src/dashboard/ui/app.ts";
+import { App, COMMIT_REVIEW_PROMPT } from "../src/dashboard/ui/app.ts";
 import { UsageIndex } from "../src/dashboard/usage/usage-index.ts";
 import { type Command, emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
@@ -39,7 +40,40 @@ function readLedger(path: string): HermesFeedbackEvent[] {
 }
 
 /** App with a terminal-free TUI stand-in: keys go to the top overlay, like pi-tui's overlay focus. */
-function harness(sessionRoot: string, advisor?: HermesAdvisorClient) {
+function cleanGitSummary(overrides: Partial<GitSummary> = {}): GitSummary {
+	return { cwd: "/home/user/dev/proj", root: "/home/user/dev/proj", branch: "main", upstream: "origin/main", ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicted: 0, remotes: ["origin"], ...overrides };
+}
+
+function gitStub(summary: GitSummary = cleanGitSummary()) {
+	const calls: string[] = [];
+	const ok = async (): Promise<GitOperationResult> => ({ stdout: "", stderr: "" });
+	const service: GitService = {
+		getSummary: async () => summary,
+		listBranches: async () => [
+			{ name: "main", current: summary.branch === "main", upstream: "origin/main" },
+			{ name: "feature", current: summary.branch === "feature", upstream: "origin/feature" },
+		],
+		pull: async () => {
+			calls.push("pull");
+			return ok();
+		},
+		push: async () => {
+			calls.push("push");
+			return ok();
+		},
+		pushSetUpstream: async (_cwd, remote) => {
+			calls.push(`push-upstream:${remote}`);
+			return ok();
+		},
+		switchBranch: async (_cwd, branch) => {
+			calls.push(`switch:${branch}`);
+			return ok();
+		},
+	};
+	return { service, calls };
+}
+
+function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitService = gitStub().service) {
 	const overlays: Component[] = [];
 	const tui = {
 		terminal: { rows: 40, columns: 120 },
@@ -72,6 +106,7 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient) {
 		quota: new QuotaMonitor("/nonexistent"),
 		gpu: new GpuMonitor(),
 		advisor: advisorService,
+		git,
 		sessionRoot,
 		runtimeDir: "/nonexistent",
 		quit: () => quits++,
@@ -242,6 +277,144 @@ console.log(JSON.stringify({cards:[
 		const events = readLedger(fallbackLedger);
 		assert.ok(events.some((event) => event.kind === "shown" && event.source === "local" && event.actionKind === "prompt"));
 	});
+});
+
+test("Git menu confirms pull and push actions", async () => {
+	const git = gitStub(cleanGitSummary({ ahead: 1 }));
+	const ui = harness("/nonexistent", undefined, git.service);
+	ui.store.setState(101, session({}));
+
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj[\s\S]*main → origin\/main[\s\S]*ahead 1/));
+	ui.press("p");
+	assert.match(ui.dialog() ?? "", /Run git pull --ff-only/);
+	assert.deepEqual(git.calls, []);
+	ui.press("y");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.deepEqual(git.calls, ["pull"]);
+
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj/));
+	ui.press("P");
+	assert.match(ui.dialog() ?? "", /Run git push and publish main \(1 ahead\) to origin\/main\?/);
+	ui.press("y");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.deepEqual(git.calls, ["pull", "push"]);
+});
+
+test("Git push offers upstream creation when one remote is available", async () => {
+	const git = gitStub(cleanGitSummary({ upstream: undefined }));
+	const ui = harness("/nonexistent", undefined, git.service);
+	ui.store.setState(101, session({}));
+
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /push will offer to create upstream origin\/main/));
+	ui.press("P");
+	assert.match(ui.dialog() ?? "", /git push -u origin HEAD/);
+	ui.press("y");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.deepEqual(git.calls, ["push-upstream:origin"]);
+});
+
+test("Git blocks pull and push from detached HEAD", async () => {
+	const git = gitStub(cleanGitSummary({ branch: undefined, detachedOid: "abcdef1234567890", upstream: undefined }));
+	const ui = harness("/nonexistent", undefined, git.service);
+	ui.store.setState(101, session({}));
+
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /detached abcdef123456/));
+	ui.press("p");
+	assert.match(strip(ui.app.render(120).join("\n")), /Cannot pull from detached HEAD/);
+	ui.press("P");
+	assert.match(strip(ui.app.render(120).join("\n")), /Cannot push from detached HEAD/);
+	assert.deepEqual(git.calls, []);
+});
+
+test("Git blocks pull and push when no upstream or remote is configured", async () => {
+	const git = gitStub(cleanGitSummary({ upstream: undefined, remotes: [] }));
+	const ui = harness("/nonexistent", undefined, git.service);
+	ui.store.setState(101, session({}));
+
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /main · no upstream/));
+	ui.press("p");
+	assert.match(strip(ui.app.render(120).join("\n")), /No upstream is configured; set one in git first/);
+	ui.press("P");
+	assert.match(strip(ui.app.render(120).join("\n")), /No upstream is configured; set one in git first/);
+	assert.deepEqual(git.calls, []);
+});
+
+test("Git branch switching requires a clean tree and confirms the target branch", async () => {
+	const dirty = gitStub(cleanGitSummary({ unstaged: 1 }));
+	const blocked = harness("/nonexistent", undefined, dirty.service);
+	blocked.store.setState(101, session({}));
+	blocked.press("g");
+	await eventually(() => assert.match(blocked.dialog() ?? "", /tree 1 changed/));
+	blocked.press("b");
+	assert.match(strip(blocked.app.render(120).join("\n")), /Working tree has changes; ask the agent to review, commit, or stash first/);
+	assert.deepEqual(dirty.calls, []);
+
+	const clean = gitStub(cleanGitSummary());
+	const ui = harness("/nonexistent", undefined, clean.service);
+	ui.store.setState(101, session({}));
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj/));
+	ui.press("b");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Switch branch in/));
+	ui.press("\x1b[B", "\r");
+	assert.match(ui.dialog() ?? "", /Switch proj from main to feature\?/);
+	ui.press("y");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.deepEqual(clean.calls, ["switch:feature"]);
+});
+
+test("Git status and command failures are reported", async () => {
+	const statusFailure = gitStub();
+	statusFailure.service.getSummary = async () => {
+		throw new Error("not a git repository");
+	};
+	const broken = harness("/nonexistent", undefined, statusFailure.service);
+	broken.store.setState(101, session({}));
+	broken.press("g");
+	await eventually(() => assert.match(broken.dialog() ?? "", /not a git repository/));
+	broken.press("c");
+	assert.match(strip(broken.app.render(120).join("\n")), /Git status has not loaded yet/);
+	assert.deepEqual(broken.sent, []);
+
+	const commandFailure = gitStub();
+	commandFailure.service.pull = async () => {
+		commandFailure.calls.push("pull");
+		throw new Error("network failed");
+	};
+	const ui = harness("/nonexistent", undefined, commandFailure.service);
+	ui.store.setState(101, session({}));
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj/));
+	ui.press("p");
+	assert.match(ui.dialog() ?? "", /Run git pull --ff-only/);
+	ui.press("y");
+	await eventually(() => assert.match(strip(ui.app.render(120).join("\n")), /network failed/));
+	assert.deepEqual(commandFailure.calls, ["pull"]);
+});
+
+test("Git commit shortcut opens the standard AI review prompt", async () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({}));
+
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj/));
+	ui.press("c");
+	assert.match(ui.dialog() ?? "", /Prompt → 1 proj[\s\S]*Review the current git changes/);
+	ui.press("\r");
+	assert.deepEqual(ui.sent.at(-1), { kind: "prompt", text: COMMIT_REVIEW_PROMPT, deliverAs: undefined });
+
+	ui.store.setState(101, session({ phase: "working" }));
+	ui.press("g");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Git · proj/));
+	ui.press("c");
+	assert.match(ui.dialog() ?? "", /delivers as follow-up/);
+	ui.press("\r");
+	assert.deepEqual(ui.sent.at(-1), { kind: "prompt", text: COMMIT_REVIEW_PROMPT, deliverAs: "followUp" });
 });
 
 test("the composer offers the suggested next prompt while idle; Tab takes it", () => {
