@@ -3,7 +3,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Directory holding one `<pid>.sock` per bridged pi process (mode 0700). */
 export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -125,6 +125,21 @@ export interface TimelineEntry {
 /** How far back the timeline reaches. */
 export const TIMELINE_MS = 3_600_000;
 
+/** A side question to the session's model about the session; it is not added to the session. */
+export interface AskRun {
+	id: number;
+	question: string;
+	askedAt: number;
+	status: "answering" | "answered" | "failed";
+	/** Markdown; grows while answering. */
+	answer: string;
+	error?: string;
+	usage?: UsageTotals;
+}
+
+/** How many asks a session keeps. */
+export const MAX_ASKS = 10;
+
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
@@ -165,6 +180,8 @@ export interface SessionState {
 	timeline: TimelineEntry[];
 	/** Models the session can switch to ("provider/modelId"): its scoped models, else all with configured auth. */
 	models: string[];
+	/** Side questions asked since the session started in this process, the last MAX_ASKS, oldest first. */
+	asks: AskRun[];
 }
 
 /** Top-level field replacement; `null` clears a field. */
@@ -187,7 +204,9 @@ export type Command =
 	/** Only while idle. */
 	| { kind: "compact" }
 	| { kind: "model"; provider: string; id: string }
-	| { kind: "thinking"; level: ThinkingLevel };
+	| { kind: "thinking"; level: ThinkingLevel }
+	/** Acknowledged once the answer starts; one ask at a time. */
+	| { kind: "ask"; question: string };
 
 export type ClientMessage = { type: "command"; id: number; command: Command };
 

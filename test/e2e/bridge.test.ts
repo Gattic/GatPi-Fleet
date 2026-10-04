@@ -2,7 +2,7 @@
 // with the bridge and a local scripted model, driven through the dashboard's BridgeHub.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -38,6 +38,8 @@ async function waitFor<T>(what: string, check: () => T | undefined | false, time
 }
 
 const current = () => states.get(pid) as SessionState;
+const lastAsk = () => current().asks.at(-1);
+const sessionLines = () => readFileSync(current().sessionFile as string, "utf8").split("\n").filter(Boolean).length;
 
 before(async () => {
 	mkdirSync(join(root, "agent"), { recursive: true });
@@ -218,12 +220,62 @@ test("compact runs only while idle, reports failures, and compacts a long sessio
 	assert.equal(current().lastError, undefined, "the finished compaction clears the earlier failure");
 });
 
+test("an ask while idle sees the whole context (summary, tool output, system prompt, tools) and changes nothing", async () => {
+	await hub.send(pid, { kind: "prompt", text: "shell echo marker-42" });
+	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "tool finished");
+	const before = { lines: sessionLines(), said: current().lastSaid, tokens: current().usage.direct.tokens };
+
+	await hub.send(pid, { kind: "ask", question: "Where is the marker?" });
+	assert.deepEqual([lastAsk()?.status, lastAsk()?.question], ["answering", "Where is the marker?"], "the question arrives before the ack");
+	await waitFor("answered", () => lastAsk()?.status === "answered");
+	const seen = JSON.parse(lastAsk()?.answer ?? "");
+	assert.equal(seen.prompt, true, "the session's system prompt");
+	assert.ok(seen.tools.includes("bash"), "the session's tools");
+	assert.match(seen.first, /compacted into the following summary/, "the compaction summary of the earlier conversation");
+	assert.match(seen.lastResult, /^marker-42\s*$/, "the tool's output");
+	assert.match(seen.roles, /,user,assistant,toolResult,assistant,user$/);
+	assert.match(seen.status, /^Session status: idle for \d+s, waiting for the user\.$/);
+	assert.equal(seen.question, "Where is the marker?");
+	assert.equal(lastAsk()?.usage?.tokens, 1100);
+
+	assert.equal(sessionLines(), before.lines, "nothing is written to the session");
+	assert.equal(current().lastSaid, before.said);
+	assert.equal(current().usage.direct.tokens, before.tokens, "an ask is not session usage");
+	assert.equal(current().phase, "idle");
+});
+
+test("an ask during a tool run sees the tool still running; one ask at a time", async () => {
+	await hub.send(pid, { kind: "prompt", text: "sleep 4" });
+	await waitFor("tool running", () => current().activity?.kind === "tool");
+	await hub.send(pid, { kind: "ask", question: "What are you doing?" });
+	await assert.rejects(hub.send(pid, { kind: "ask", question: "And now?" }), /still answering the previous question/);
+	await waitFor("answered", () => lastAsk()?.status === "answered");
+	const seen = JSON.parse(lastAsk()?.answer ?? "");
+	assert.match(seen.lastResult, /^Still running \(started \d+s ago\)\. No output yet\.$/, "the unanswered call is answered as running, not failed");
+	assert.match(seen.roles, /,user,assistant,toolResult,user$/);
+	assert.match(seen.status, /^Session status: working for \d+s\.$/);
+	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "slept 4");
+	assert.deepEqual(
+		current().asks.map((ask) => ask.question),
+		["Where is the marker?", "What are you doing?"],
+	);
+});
+
+test("an empty question is rejected, and a provider failure fails only the ask", async () => {
+	await assert.rejects(hub.send(pid, { kind: "ask", question: "  " }), /question is empty/);
+	await hub.send(pid, { kind: "ask", question: "fail" });
+	await waitFor("failed", () => lastAsk()?.status === "failed");
+	assert.equal(lastAsk()?.error, "scripted failure");
+	assert.equal(current().lastError, undefined, "a failed ask is not a session error");
+});
+
 test("/new replaces the session: bye, then a fresh snapshot on the same pid", async () => {
 	const before = current().sessionId;
 	execFileSync("screen", ["-S", screenName, "-p", "0", "-X", "stuff", "/new\r"]);
 	await waitFor("bye new", () => byes.includes("new"));
 	await waitFor("new session snapshot", () => states.get(pid)?.sessionId !== before && hub.isConnected(pid));
 	assert.equal(current().usage.direct.tokens, 0);
+	assert.deepEqual(current().asks, [], "asks belong to the session they were asked in");
 	assert.equal(current().plan?.title, "E2E plan", "plan is republished for the new session");
 });
 

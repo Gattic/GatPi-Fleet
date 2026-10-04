@@ -66,7 +66,7 @@ function harness(sessionRoot: string) {
 test("quit asks first while a close-and-restart is waiting for its session to exit", () => {
 	const ui = harness("/nonexistent");
 	const now = Date.now();
-	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [] });
+	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] });
 
 	ui.press("C");
 	assert.match(ui.dialog() ?? "", /Close and start a fresh session/);
@@ -119,7 +119,7 @@ test("resume asks first when a live session in the project has no bridge", (t) =
 
 function session(overrides: Partial<SessionState>): SessionState {
 	const now = Date.now();
-	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], ...overrides };
+	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], ...overrides };
 }
 
 test("the composer offers the suggested next prompt while idle; Tab takes it", () => {

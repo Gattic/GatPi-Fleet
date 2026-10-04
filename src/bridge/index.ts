@@ -2,15 +2,18 @@
 // session state over a unix socket and executes dashboard commands.
 import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model, SimpleStreamOptions, Tool } from "@earendil-works/pi-ai";
+import { buildSessionContext, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type Activity,
+	type AskRun,
 	addUsage,
 	type BridgeMessage,
 	type Command,
 	emptyUsage,
 	encodeMessage,
 	LineDecoder,
+	MAX_ASKS,
 	type PiUsage,
 	type PlanSnapshot,
 	PROMPT_SUGGESTION_CHANGED_EVENT,
@@ -28,6 +31,7 @@ import {
 	type UsageMinute,
 	usageTokens,
 } from "../protocol/index.ts";
+import { answerOf, buildAskContext, cacheBeforeQuestion, textOf } from "./ask.ts";
 
 const FLUSH_INTERVAL_MS = 250;
 const HEARTBEAT_MS = 10_000;
@@ -49,15 +53,6 @@ function bound(text: string, limit: number): string {
 	return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
 }
 
-function textOf(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.filter((block): block is { type: "text"; text: string } => block?.type === "text" && typeof block.text === "string")
-		.map((block) => block.text)
-		.join("\n");
-}
-
 /** SAID text of an assistant message: none when it calls tools, since that text only narrates the work. */
 function replyOf(content: unknown): string {
 	if (Array.isArray(content) && content.some((block) => block?.type === "toolCall")) return "";
@@ -72,6 +67,16 @@ function toolDetail(args: unknown): string {
 	}
 	const firstString = Object.values(record).find((value) => typeof value === "string" && value);
 	return typeof firstString === "string" ? clip(firstString, DETAIL_LIMIT) : "";
+}
+
+/**
+ * The model's provider, called with the auth the registry resolves, as the registry itself does. The
+ * provider applies its own request shaping (pi-multi-account's Claude OAuth shaping lives there).
+ * pi 0.84's registry has no streamSimple. Its providers take a raw Context; pi 1.x providers take a
+ * transcript that declares the prompt and tools, which buildAskContext sends unchanged.
+ */
+interface AskProvider {
+	streamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
 }
 
 function modelName(model: { provider: string; id: string } | undefined): string | undefined {
@@ -190,8 +195,12 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 		tools: recentTools,
 		timeline,
 		models: models.map((model) => `${model.provider}/${model.id}`),
+		asks: [],
 	};
 }
+
+// Unique per process, so an answer that outlives its session cannot land in the next one.
+let askSeq = 0;
 
 export default function piDashBridge(pi: ExtensionAPI): void {
 	let ctx: ExtensionContext | undefined;
@@ -205,6 +214,11 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 	const pending = new Map<string, unknown>();
 	let flushTimer: NodeJS.Timeout | undefined;
 	const runningTools = new Map<string, ToolRun>();
+	/** Latest output snapshot of each running tool that reports progress. */
+	const toolOutput = new Map<string, string>();
+	/** The assistant message being streamed. */
+	let partial: AssistantMessage | undefined;
+	let asking: AbortController | undefined;
 
 	function broadcast(message: BridgeMessage): void {
 		const line = encodeMessage(message);
@@ -293,6 +307,91 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		recordTimeline();
 	}
 
+	function updateAsk(id: number, changes: Partial<AskRun>): void {
+		if (!state?.asks.some((run) => run.id === id)) return;
+		set({ asks: state.asks.map((run) => (run.id === id ? { ...run, ...changes } : run)) });
+	}
+
+	/** The session's tools as its requests declare them: the active ones, in their order. */
+	function activeTools(): Tool[] {
+		const all = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));
+		return pi.getActiveTools().flatMap((name) => {
+			const tool = all.get(name);
+			return tool ? [{ name, description: tool.description, parameters: tool.parameters }] : [];
+		});
+	}
+
+	/**
+	 * Asks the session's model about the session: its own system prompt, tools, context, model,
+	 * thinking level and session id, so the request reuses the provider's cache of the session's
+	 * prefix. Nothing is written to the session.
+	 */
+	async function startAsk(question: string): Promise<void> {
+		if (!ctx || !state) throw new Error("session is not ready");
+		const text = question.trim();
+		if (!text) throw new Error("question is empty");
+		if (asking) throw new Error("still answering the previous question");
+		const model = ctx.model;
+		if (!model) throw new Error("no model selected");
+		const provider: AskProvider | undefined = ctx.modelRegistry.getProvider(model.provider);
+		if (!provider) throw new Error(`unknown provider ${model.provider}`);
+		const controller = new AbortController();
+		asking = controller;
+		let stream: AssistantMessageEventStream;
+		try {
+			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+			if (!auth.ok) throw new Error(auth.error);
+			if (controller.signal.aborted || !ctx || !state) throw new Error("session closed");
+			const now = Date.now();
+			const running = [...runningTools.values()].map((run) => ({ id: run.id, name: run.name, startedAt: run.startedAt, output: toolOutput.get(run.id) ?? "" }));
+			const context = buildAskContext({
+				systemPrompt: ctx.getSystemPrompt(),
+				tools: activeTools(),
+				messages: buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId()).messages,
+				live: { phase: state.phase, phaseSince: state.phaseSince, partial, running },
+				question: text,
+				now,
+			});
+			const level = pi.getThinkingLevel();
+			stream = provider.streamSimple(auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model, context, {
+				apiKey: auth.apiKey,
+				headers: auth.headers,
+				env: auth.env,
+				reasoning: level === "off" ? undefined : level,
+				sessionId: ctx.sessionManager.getSessionId(),
+				signal: controller.signal,
+				onPayload: cacheBeforeQuestion,
+			});
+		} catch (error) {
+			if (asking === controller) asking = undefined;
+			throw error;
+		}
+		const run: AskRun = { id: ++askSeq, question: text, askedAt: Date.now(), status: "answering", answer: "" };
+		set({ asks: [...state.asks, run].slice(-MAX_ASKS) });
+		// The question reaches the dashboard before the ack does.
+		if (flushTimer) clearTimeout(flushTimer);
+		flush();
+		void answer(run.id, stream, controller);
+	}
+
+	async function answer(id: number, stream: AssistantMessageEventStream, controller: AbortController): Promise<void> {
+		try {
+			for await (const event of stream) {
+				if (event.type === "text_delta" || event.type === "text_end") updateAsk(id, { answer: bound(textOf(event.partial.content), SAID_LIMIT) });
+			}
+			const message = await stream.result();
+			const usage = emptyUsage();
+			addUsage(usage, message.usage);
+			const result = answerOf(message);
+			if ("answer" in result) updateAsk(id, { status: "answered", answer: bound(result.answer, SAID_LIMIT), usage });
+			else updateAsk(id, { status: "failed", error: clip(result.error, TEXT_LIMIT), usage });
+		} catch (error) {
+			updateAsk(id, { status: "failed", error: clip(error instanceof Error ? error.message : String(error), TEXT_LIMIT) });
+		} finally {
+			if (asking === controller) asking = undefined;
+		}
+	}
+
 	async function runCommand(command: Command): Promise<void> {
 		if (!ctx || !state) throw new Error("session is not ready");
 		switch (command.kind) {
@@ -332,6 +431,9 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 				if (!THINKING_LEVELS.includes(command.level)) throw new Error(`unknown thinking level ${command.level}`);
 				// pi clamps the level to the model; a change arrives as thinking_level_select.
 				pi.setThinkingLevel(command.level);
+				return;
+			case "ask":
+				await startAsk(command.question);
 				return;
 			default:
 				throw new Error(`unknown command ${(command as { kind?: unknown }).kind}`);
@@ -395,9 +497,13 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		}
 		server = undefined;
 		serverPath = undefined;
+		asking?.abort();
+		asking = undefined;
 		state = undefined;
 		ctx = undefined;
 		runningTools.clear();
+		toolOutput.clear();
+		partial = undefined;
 	}
 
 	pi.events.on(ROADMAP_CHANGED_EVENT, (data) => {
@@ -438,6 +544,7 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 
 	pi.on("message_update", (event) => {
 		touch();
+		if (event.message.role === "assistant") partial = event.message;
 		if (runningTools.size) return;
 		const type = event.assistantMessageEvent.type;
 		if (type.startsWith("thinking")) setActivity({ kind: "thinking" });
@@ -453,8 +560,14 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		setActivity(currentToolActivity());
 	});
 
+	pi.on("tool_execution_update", (event) => {
+		const content: unknown = event.partialResult?.content;
+		if (runningTools.has(event.toolCallId) && Array.isArray(content)) toolOutput.set(event.toolCallId, textOf(content));
+	});
+
 	pi.on("tool_execution_end", (event) => {
 		touch();
+		toolOutput.delete(event.toolCallId);
 		if (!state) return;
 		runningTools.delete(event.toolCallId);
 		const endedAt = Date.now();
@@ -464,6 +577,7 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 
 	pi.on("message_end", (event) => {
 		touch();
+		partial = undefined;
 		const message = event.message;
 		if (message.role === "assistant") {
 			recordUsage(message.usage, "direct", message.timestamp);
@@ -494,6 +608,8 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 	pi.on("agent_settled", () => {
 		touch();
 		runningTools.clear();
+		toolOutput.clear();
+		partial = undefined;
 		setActivity(undefined);
 		set({ lastSettledAt: Date.now() });
 		setPhase("idle");

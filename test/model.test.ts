@@ -23,6 +23,7 @@ function bridge(overrides: Partial<SessionState> = {}): SessionState {
 		tools: [],
 		timeline: [],
 		models: [],
+		asks: [],
 		...overrides,
 	};
 }

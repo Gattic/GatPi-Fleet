@@ -46,6 +46,7 @@ function state(pid: number, overrides: Partial<SessionState>): SessionState {
 		tools: [{ id: "1", name: "bash", detail: "npm test", startedAt: Date.now() - 5000 }],
 		timeline: [],
 		models: [],
+		asks: [],
 		...overrides,
 	};
 }
