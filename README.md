@@ -89,9 +89,10 @@ Abort, compact, close and close-and-restart ask before they act. Git pull runs `
 and asks first; push always asks first and can create an upstream only when there is exactly one
 remote; branch switching uses local branches and requires a clean working tree. The commit shortcut
 opens the standard AI prompt to review the changes and commit if everything looks good; pi-dash does
-not commit directly. Resume also asks when the project has a live session without a bridge: pi-dash
+not commit directly. Resume refuses when the project has a live session without a current bridge: pi-dash
 cannot see which session file that pi has open, and two pi processes writing one file mix its
-history. Quit asks while a close-and-restart is still waiting for its session to exit, because only a
+history. All manager-created resumes use a shared exclusive reservation; resolve unknown
+ownership locally instead of overriding it. Quit asks while a close-and-restart is still waiting for its session to exit, because only a
 running pi-dash starts the replacement.
 
 Sessions started from the dashboard run pi in a detached screen named `pi-<project>` using
@@ -115,8 +116,11 @@ pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.soc
 - `src/bridge/`: pi extension. It publishes session state (snapshot, then coalesced patches) and runs
   commands over a per-process unix socket (mode 0600, directory 0700).
 - `src/protocol/`: LF-delimited JSON messages shared by both sides.
-- `src/dashboard/`: the TUI (built on `@earendil-works/pi-tui`), collectors, and usage index. It
-  holds no durable state; restarting it loses nothing.
+- `src/manager/`: shared headless runtime, collectors, model, usage index and nonterminal actions.
+- `src/dashboard/`: the TUI (built on `@earendil-works/pi-tui`), terminal-only interactions and Hermes.
+- `src/server/`: authenticated HTTPS/WSS intranet gateway with typed inputs and command receipts.
+- `android/`: native Kotlin/Compose dashboard and optional direct G1 display; see the
+  [setup, security and build guide](docs/ANDROID.md) and [acceptance status](docs/ANDROID-ACCEPTANCE.md).
 - The Hermes advisor (`H`) runs in pi-dash, not in the bridge. It sends Hermes only a redacted
   dashboard snapshot: session labels, cwd basenames, statuses, timers, activity names, context
   fill, roadmap titles, resource totals, current prompt suggestions, and errors. It does not send
@@ -147,6 +151,14 @@ limit that actually applies. Models without a price in pi report no cost: they c
 and their quota share is estimated from tokens. LLM calls that extensions make outside the session
 transcript are not counted. That includes asks (`i`): each answer shows its own tokens, cache
 share and cost, but they are not added to the session's totals.
+
+## Android and Even Realities G1
+
+The optional `pi-dash-server` gateway exposes session management to the Android companion over
+local HTTPS/WSS. G1 glasses are a read-only glance surface; actions remain on the phone. There is
+no cloud, microphone, arbitrary shell endpoint, or automatic command replay. Use the
+[Android guide](docs/ANDROID.md) for pairing, deployment, build/install and recovery.
+Physical phone/G1 acceptance is still required before relying on screen-off monitoring.
 
 ## Development
 

@@ -1,0 +1,111 @@
+# Intranet API v1
+
+Source of truth: [`src/server/contract.ts`](../src/server/contract.ts) defines strict
+TypeBox request schemas, exported by `npm run api:generate` to
+[`api/requests.schema.json`](../api/requests.schema.json). Host tests compare the
+checked-in schemas and snapshot fixture with current projections; Android JVM
+tests decode that same fixture. Responses are projected in `sessions.ts`, not
+raw bridge objects. Any incompatible wire change must change the API version
+and both clients. The local bridge protocol is separately versioned (currently 4).
+
+Every route, including WebSocket upgrade and info, requires
+`Authorization: Bearer DEVICE_TOKEN` over TLS. Tokens never appear in URLs.
+Browser Origin requests are rejected, no CORS/cookie authentication is provided,
+and there are no unauthenticated pairing, shell, file-download or secret routes.
+Errors use HTTP status plus `{ "error": "description" }`.
+
+## Queries
+
+| Method/path | Response |
+|---|---|
+| `GET /api/v1/info` | `version`, `epoch`, host `label` |
+| `GET /api/v1/sessions` | `sessions` overview array (epoch is supplied by info/the stream) |
+| `GET /api/v1/sessions/:id` | Selected detail object |
+| `GET /api/v1/projects` | `projects`: opaque `id`, `label`, canonical approved `path` |
+| `GET /api/v1/projects/:id/sessions` | `sessions`: opaque `id`, title, lastActive, blocked reason or null |
+| `GET /api/v1/commands/:requestId` | Receipt, or unknown if absent |
+
+Session IDs are opaque SHA-256-derived references to the PID, pi session ID and
+random bridge incarnation. A PID is never sufficient to dispatch a command.
+References are not credentials. Overview fields include revision, label/project,
+status/since, attention transition key, bridge connected flag, model/thinking,
+contextPercent, plan, resource/usage aggregates, and per-command disabled reasons.
+Unknown values are null, not invented zero measurements. Status `stalled` remains
+a CPU/inactivity heuristic. Overview deliberately omits prompts, replies, asks,
+raw errors, transcripts and tools.
+
+Selected detail adds a 200-character last-prompt preview, up to 32,000 characters
+of latest reply, suggested prompt, error, model choices, 20 recent tool summaries
+and 10 bounded side-question records. It is not terminal mirroring or arbitrary
+history access. Terminal control sequences are stripped. Raw provider credentials,
+full process environment and tool output are never projected.
+
+## Stream
+
+`WSS /api/v1/events` immediately sends a full overview. Every frame has `version`,
+server `epoch` (random UUID on restart), per-connection strictly increasing `seq`,
+and `at` (host wall-clock milliseconds).
+
+- `snapshot`: `sessions` replaces the entire overview.
+- `detail`: `id`, `detail` (or null if the selected session ended).
+- `receipt`: command `receipt`, only to that device's connections.
+- `heartbeat`: at least every five seconds without requiring state changes.
+
+Client subscription: `{ "type": "subscribe", "sessionId": "OPAQUE_ID" }`;
+use null to unsubscribe. One selected detail per socket. There is no delta log,
+cursor replay or offline command queue. After reconnect a new full snapshot
+resynchronizes state; prior per-connection sequence numbers do not carry over.
+Old callbacks are generation-guarded on Android. Fifteen seconds without a valid
+frame makes Android stale and disables actions. Out-of-order/incompatible frames
+fail closed. Revocation closes sockets with code 4001.
+
+Updates coalesce for 250 ms, only changed projections are sent, and slow readers
+are disconnected rather than accumulating frames. Maximum body: 128 KiB;
+maximum frame/backpressure: 1 MiB. Limits: 240 HTTP/upgrade requests per source IP
+per minute, 60 mutation requests/device/minute, 120 subscriptions/device/minute,
+and bounded socket/device counts. There is no credential-independent health data.
+
+## Mutations and receipts
+
+`POST /api/v1/sessions/:id/commands`:
+
+```json
+{
+  "requestId": "a fresh UUID",
+  "epoch": "current gateway UUID",
+  "revision": "revision from the selected session",
+  "command": { "kind": "prompt", "text": "Do this", "deliverAs": "followUp" }
+}
+```
+
+Typed commands: prompt (32k characters; `steer`/`followUp` required while working),
+ask (4k), rename (120), model (`provider`, `id`), thinking (`level`), abort,
+shutdown, compact. No unknown properties/commands are accepted. Prompts beginning
+with `/` are rejected: extension dialogs/slash commands require local pi. Prompts
+still grant the session its normal tool authority, so a paired phone is privileged.
+Compact requires idle state. Ask is refused while another side question is active.
+The bridge independently checks the exact target immediately before dispatch.
+
+`POST /api/v1/sessions` launches a new session in an approved project:
+`{requestId, epoch, projectId}`. Include `sessionRef` from that project's history
+to resume. Canonical root checks, current ownership checks and shared exclusive
+resume reservations apply; arbitrary paths/launch arguments are not accepted.
+
+A mutation returns a receipt:
+`{requestId, state, at, error?}`. States are `received`, `accepted`, `failed`,
+`unknown`. Acceptance is dispatch acknowledgement, not eventual turn completion.
+Bridge disconnect/timeout after dispatch is unknown, never a guaranteed failure.
+The gateway records at most 1,000 receipts/device for 24 hours in memory. Reusing
+an ID with identical content returns the same receipt, not another dispatch;
+different content is 409. Server restart creates a new epoch and loses receipts.
+There is no claim of durable exactly-once execution across restarts.
+
+Android persists one pending receipt before sending, disables automatic POST
+retry/redirect and never resends after transport uncertainty. Reconnect queries
+its receipt and state. An old epoch/absent receipt requires explicit human
+inspection, not a guessed retry. A rejected stale revision/identity requires a
+fresh selection and confirmation.
+
+Auditing records time, opaque device/target ID, action kind and outcome only.
+It does not contain prompts, replies, tokens or BLE payloads. See the
+[operations guide](ANDROID.md) for credential/storage retention and recovery.
