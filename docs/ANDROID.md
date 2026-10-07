@@ -166,6 +166,10 @@ pairing/drafts; revoke the old device token and re-pair afterward.
 
 ## 3. Session management
 
+The app has four tabs: **Sessions**, **Projects** (new/resume in approved projects),
+**Glasses** and **Pairing**. Tapping a session opens its detail, grouped into status,
+latest exchange, prompt, glasses, side question, recent tools and session management.
+
 The overview shows status, project, model, context and roadmap progress. Filter
 by text or attention. Detail contains bounded latest prompt/reply, recent tools,
 resources, usage and side-question answers; it is not a full transcript browser.
