@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window/launcher colours from the Compose palette in ui/Theme.kt, shown before Compose draws. -->
+    <color name="background">#FF101417</color>
+    <color name="launcher_background">#FF1E2326</color>
+    <color name="launcher_accent">#FF69ADD0</color>
+</resources>

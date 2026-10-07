@@ -1,4 +1,4 @@
-package dev.pidash.android
+package dev.pidash.android.ui
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.MaterialTheme

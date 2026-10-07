@@ -16,6 +16,9 @@ data class Session(
     val plan: Plan?, val metrics: Metrics?, val tokens: Double?, val cost: Double?,
     val commands: Map<String, String?>,
 ) {
+    /** A run is in progress, so a prompt must be delivered as a steer or follow-up. */
+    val running: Boolean get() = status in listOf("working", "stalled", "rate-limited")
+
     companion object {
         fun parse(j: JSONObject): Session {
             val status = j.getJSONObject("status")

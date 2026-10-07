@@ -1,20 +1,24 @@
-package dev.pidash.android
+package dev.pidash.android.ui
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,10 +36,10 @@ internal fun SessionGlassesControls(
     onPin: () -> Unit, onExcerpt: () -> Unit, onPage: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.horizontalScroll(rememberScrollState())) {
-            OutlinedButton(onClick = onPin) { Text("Pin on G1") }
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(onClick = onExcerpt, enabled = replyAvailable) { Text("Reply excerpt on G1") }
+        // Equal-height halves, even when the longer label wraps.
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = onPin, modifier = Modifier.weight(1f).fillMaxHeight()) { Text("Pin on G1") }
+            FilledTonalButton(onClick = onExcerpt, enabled = replyAvailable, modifier = Modifier.weight(1f).fillMaxHeight()) { Text("Reply excerpt on G1") }
         }
         if (displayingSession) GlassesPagingControls(state, running, onPage)
     }
@@ -63,21 +67,26 @@ internal fun GlassesPagingControls(state: GlassesState, running: Boolean, onPage
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("G1 display", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(if (state.page > 0) "Page ${state.page} / ${state.pageCount}" else "No page", maxLines = 1, softWrap = false)
+            Text("G1 display", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(if (state.page > 0) "Page ${state.page} / ${state.pageCount}" else "No page", style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
             // Normal ACK waits change only this fixed-size slot, never the wrapping connection text.
             Box(Modifier.size(24.dp).clearAndSetSemantics { contentDescription = description }, contentAlignment = Alignment.Center) {
                 when (status) {
                     DisplayStatus.PENDING -> CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    DisplayStatus.ACKNOWLEDGED -> Text("✓", color = MaterialTheme.colorScheme.primary)
-                    DisplayStatus.FAILED -> Text("!", color = MaterialTheme.colorScheme.error)
-                    DisplayStatus.IDLE -> Text("—")
+                    DisplayStatus.ACKNOWLEDGED -> Text("✓", color = Pi.Working)
+                    DisplayStatus.FAILED -> Text("!", color = Pi.Error)
+                    DisplayStatus.IDLE -> Text("—", color = Pi.Dim)
                 }
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { onPage(-1) }, enabled = available && state.page > 1, modifier = Modifier.weight(1f)) { Text("Previous") }
-            TextButton(onClick = { onPage(1) }, enabled = available && state.page < state.pageCount, modifier = Modifier.weight(1f)) { Text("Next") }
+            OutlinedButton(onClick = { onPage(-1) }, enabled = available && state.page > 1, modifier = Modifier.weight(1f), contentPadding = ButtonDefaults.TextButtonContentPadding) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, null, Modifier.size(ButtonDefaults.IconSize)); Text("Previous")
+            }
+            OutlinedButton(onClick = { onPage(1) }, enabled = available && state.page < state.pageCount, modifier = Modifier.weight(1f), contentPadding = ButtonDefaults.TextButtonContentPadding) {
+                Text("Next"); Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(ButtonDefaults.IconSize))
+            }
         }
         // Suppression/failure remains readable; pending and acknowledged have identical geometry.
         Text(message, style = MaterialTheme.typography.bodySmall, minLines = 2,
