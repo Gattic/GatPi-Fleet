@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
-import { GpuMonitor } from "../src/dashboard/collectors/gpu.ts";
-import { QuotaMonitor } from "../src/dashboard/collectors/quota.ts";
-import { Store } from "../src/dashboard/model/store.ts";
-import { activityLane, gauge, LANE, planBar, sparkline, splitBar, stackedArea, stretch } from "../src/dashboard/ui/charts.ts";
+import { GpuMonitor } from "../src/manager/collectors/gpu.ts";
+import { QuotaMonitor } from "../src/manager/collectors/quota.ts";
+import { Store } from "../src/manager/model/store.ts";
+import { activityLane, gauge, planBar, sparkline, splitBar, stackedArea, stretch } from "../src/dashboard/ui/charts.ts";
+import { LANE } from "../src/manager/model/status.ts";
 import { AskView } from "../src/dashboard/ui/overlays.ts";
 import { TextPane } from "../src/dashboard/ui/text-pane.ts";
 import { theme } from "../src/dashboard/ui/theme.ts";
@@ -12,7 +13,7 @@ import { renderDetail } from "../src/dashboard/ui/views/detail.ts";
 import { renderOverview } from "../src/dashboard/ui/views/overview.ts";
 import type { ViewContext } from "../src/dashboard/ui/views/shared.ts";
 import { renderUsage } from "../src/dashboard/ui/views/usage.ts";
-import { UsageIndex } from "../src/dashboard/usage/usage-index.ts";
+import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 import { type AskRun, emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
 const strip = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -39,6 +40,7 @@ function state(pid: number, overrides: Partial<SessionState>): SessionState {
 		window: "0",
 		cwd: `/home/user/dev/project-${pid}`,
 		sessionId: `session-${pid}`,
+		instanceId: `instance-${pid}`,
 		phase: "idle",
 		phaseSince: Date.now(),
 		lastEventAt: Date.now(),

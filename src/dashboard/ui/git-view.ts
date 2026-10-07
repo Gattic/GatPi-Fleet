@@ -1,6 +1,6 @@
 // Git shortcut overlay for a selected project.
 import { type Component, Key, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { gitDirtySummary, gitHeadLabel, type GitSummary, isGitSummaryClean } from "../actions/git.ts";
+import { gitDirtySummary, gitHeadLabel, type GitSummary, isGitSummaryClean } from "../../manager/actions/git.ts";
 import { shortPath } from "./format.ts";
 import { frame } from "./overlays.ts";
 import { keyHints, theme } from "./theme.ts";

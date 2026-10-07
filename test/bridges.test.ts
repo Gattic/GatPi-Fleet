@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BridgeHub } from "../src/dashboard/collectors/bridges.ts";
+import { BridgeHub } from "../src/manager/collectors/bridges.ts";
 import { emptyUsage, encodeMessage, PROTOCOL_VERSION, type SessionState, socketPath } from "../src/protocol/index.ts";
 
 function sleep(ms: number): Promise<void> {
@@ -14,7 +14,7 @@ function sleep(ms: number): Promise<void> {
 
 /** A bridge that greets with `version` and sends a snapshot right after, as real bridges of every version do. */
 function fakeBridge(path: string, version: number): Promise<Server> {
-	const state: SessionState = { pid: process.pid, cwd: "/p", sessionId: "s", phase: "idle", phaseSince: 0, lastEventAt: 0, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] };
+	const state: SessionState = { pid: process.pid, cwd: "/p", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: 0, lastEventAt: 0, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] };
 	const server = createServer((socket) => {
 		socket.write(encodeMessage({ type: "hello", version }));
 		socket.write(encodeMessage({ type: "snapshot", state }));

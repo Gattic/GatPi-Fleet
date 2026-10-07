@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "epoch": "00000000-0000-4000-8000-000000000000",
+  "seq": 1,
+  "at": 1000,
+  "type": "snapshot",
+  "sessions": [
+    {
+      "id": "178464e5ea5f1f1ac96e9627b16da774",
+      "revision": "564fcbfafa7433d8080146d1316bed7d",
+      "label": "project",
+      "project": "/project",
+      "status": {
+        "kind": "ready",
+        "label": "ready",
+        "since": 1
+      },
+      "attentionKey": null,
+      "connected": true,
+      "model": null,
+      "thinking": null,
+      "contextPercent": null,
+      "plan": null,
+      "resources": null,
+      "usage": {
+        "tokens": 0,
+        "cost": 0
+      },
+      "commands": {
+        "prompt": null,
+        "ask": null,
+        "abort": null,
+        "shutdown": null,
+        "compact": null,
+        "rename": null,
+        "model": null,
+        "thinking": null
+      }
+    }
+  ]
+}

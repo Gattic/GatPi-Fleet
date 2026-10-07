@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { buildHermesSnapshot, deriveLocalCards, HermesAdvisor, normalizeHermesCards } from "../src/dashboard/hermes/advisor.ts";
-import { Store } from "../src/dashboard/model/store.ts";
+import { Store } from "../src/manager/model/store.ts";
 import { emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
 function session(overrides: Partial<SessionState> = {}): SessionState {
@@ -13,6 +13,7 @@ function session(overrides: Partial<SessionState> = {}): SessionState {
 		pid: 101,
 		cwd: "/home/user/dev/proj",
 		sessionId: "s",
+		instanceId: "instance",
 		phase: "idle",
 		phaseSince: now,
 		lastEventAt: now,

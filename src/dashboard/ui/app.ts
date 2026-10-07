@@ -4,16 +4,17 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { type Component, Key, matchesKey, type OverlayHandle, type OverlayOptions, type SelectItem, stripTerminalSequences, type TUI, type TuiMouseEvent, type TuiMouseEventResult, visibleWidth } from "@earendil-works/pi-tui";
 import { type Command, THINKING_LEVELS, type DeliverAs } from "../../protocol/index.ts";
-import { gitDirtySummary, gitHeadLabel, type GitBranch, type GitOperationResult, type GitService, type GitSummary, isGitSummaryClean } from "../actions/git.ts";
-import { attachSession, launchSession, readHardcopy, requestHardcopy } from "../actions/screen.ts";
-import { listProjects, listSessions } from "../actions/sessions.ts";
-import type { BridgeHub } from "../collectors/bridges.ts";
-import type { GpuMonitor } from "../collectors/gpu.ts";
+import { gitDirtySummary, gitHeadLabel, type GitBranch, type GitOperationResult, type GitService, type GitSummary, isGitSummaryClean } from "../../manager/actions/git.ts";
+import { attachSession, readHardcopy, requestHardcopy } from "../actions/screen.ts";
+import { launchSession, resumeBlocked } from "../../manager/actions/launch.ts";
+import { listProjects, listSessions } from "../../manager/actions/sessions.ts";
+import type { BridgeHub } from "../../manager/collectors/bridges.ts";
+import type { GpuMonitor } from "../../manager/collectors/gpu.ts";
 import { buildHermesSnapshot, feedbackFor, type HermesAdviceCard, type HermesAdvisorClient, type HermesCardAction } from "../hermes/advisor.ts";
-import type { QuotaMonitor } from "../collectors/quota.ts";
-import { isAlert } from "../model/status.ts";
-import { rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../model/store.ts";
-import type { UsageIndex } from "../usage/usage-index.ts";
+import type { QuotaMonitor } from "../../manager/collectors/quota.ts";
+import { isAlert } from "../../manager/model/status.ts";
+import { rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../../manager/model/store.ts";
+import type { UsageIndex } from "../../manager/usage/usage-index.ts";
 import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
 import { AskView, Composer, Confirm, Help, HermesAdviceView, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
 import { TextPane } from "./text-pane.ts";
@@ -238,6 +239,8 @@ export class App implements Component {
 	}
 
 	private rowAction(row: SessionRow, key: string): void {
+		// An action overlay retains the identity it showed, even if the live row switches.
+		row = { ...row };
 		const label = rowLabel(row);
 		switch (key) {
 			case "p":
@@ -341,7 +344,7 @@ export class App implements Component {
 	}
 
 	private send(row: SessionRow, command: Command, success: string): void {
-		this.services.hub.send(row.pid, command).then(
+		this.services.hub.send(row.bridge!, command).then(
 			() => this.notify(success),
 			(error: Error) => this.notify(`${rowLabel(row)}: ${error.message}`, true),
 		);
@@ -596,7 +599,7 @@ export class App implements Component {
 				height: () => tui.terminal.rows,
 				onAsk: (question) =>
 					hub
-						.send(row.pid, { kind: "ask", question })
+						.send(row.bridge!, { kind: "ask", question })
 						.then(() => {
 							// The bridge sends the new ask before its ack.
 							const id = store.rows.get(row.pid)?.bridge?.asks.at(-1)?.id;
@@ -708,7 +711,7 @@ export class App implements Component {
 					failed("session unavailable");
 					return;
 				}
-				this.services.hub.send(row.pid, { kind: "ask", question: action.question }).then(
+				this.services.hub.send(row.bridge!, { kind: "ask", question: action.question }).then(
 					() => {
 						const id = this.services.store.rows.get(row.pid)?.bridge?.asks.at(-1)?.id;
 						if (id !== undefined) this.awaitingAnswer.set(row.pid, id);
@@ -730,7 +733,7 @@ export class App implements Component {
 				}
 				const working = row.bridge?.phase === "working";
 				const deliverAs = working ? (action.deliverAs ?? "steer") : undefined;
-				this.services.hub.send(row.pid, { kind: "prompt", text: action.text, deliverAs }).then(
+				this.services.hub.send(row.bridge!, { kind: "prompt", text: action.text, deliverAs }).then(
 					() => {
 						this.notify(working ? `queued Hermes prompt for ${rowLabel(row)}` : `sent Hermes prompt to ${rowLabel(row)}`);
 						succeeded();
@@ -748,7 +751,7 @@ export class App implements Component {
 					failed("session unavailable");
 					return;
 				}
-				this.services.hub.send(row.pid, { kind: "compact" }).then(
+				this.services.hub.send(row.bridge!, { kind: "compact" }).then(
 					() => {
 						this.notify(`compacting ${rowLabel(row)}`);
 						succeeded();
@@ -789,7 +792,7 @@ export class App implements Component {
 
 	private launch(cwd: string, label: string, sessionFile?: string, replaces?: SessionRow): void {
 		try {
-			const name = launchSession({ cwd, label, sessionFile });
+			const name = launchSession({ cwd, label, sessionFile }, this.services.store.ordered(), this.services.runtimeDir);
 			this.services.store.expectLaunch(name, replaces?.slot, replaces?.pid);
 			this.notify(`started ${name} in a detached screen (${shortPath(cwd)})`);
 		} catch (error) {
@@ -834,12 +837,9 @@ export class App implements Component {
 		const cwd = rowCwd(row);
 		if (!cwd) return this.notify("Unknown project directory", true);
 		const open = new Map<string, SessionRow>();
-		// Live sessions in this project without a bridge do not report which session file they hold.
-		const unknown: SessionRow[] = [];
 		for (const other of this.services.store.rows.values()) {
 			if (other.exitedAt !== undefined) continue;
 			if (other.bridge?.sessionFile) open.set(other.bridge.sessionFile, other);
-			else if (!other.bridge && rowCwd(other) === cwd) unknown.push(other);
 		}
 		const now = Date.now();
 		const sessions = listSessions(this.services.sessionRoot, cwd, this.services.usage);
@@ -865,13 +865,9 @@ export class App implements Component {
 						return;
 					}
 					this.closeOverlay();
-					const resume = () => this.launch(cwd, basename(cwd), item.value, row.exitedAt !== undefined ? row : undefined);
-					if (!unknown.length) return resume();
-					// pi appends to session files without locking: two processes on one file mix their histories.
-					const holders = unknown.map((other) => (other.slot !== undefined ? `slot ${other.slot}` : `pid ${other.pid}`)).join(", ");
-					const one = unknown.length === 1;
-					const message = `${holders} in this project ${one ? "has" : "have"} no bridge, so pi-dash cannot tell which session ${one ? "it has" : "they have"} open. If ${one ? "it is" : "one of them is"} "${item.label}", two pi processes will write to the same session file and mix its history. Resume anyway?`;
-					this.confirm("Resume", message, resume);
+					const blocked = resumeBlocked(this.services.store.ordered(), cwd, item.value);
+					if (blocked) return this.notify(blocked, true);
+					this.launch(cwd, basename(cwd), item.value, row.exitedAt !== undefined ? row : undefined);
 				},
 				onCancel: () => this.closeOverlay(),
 			}),

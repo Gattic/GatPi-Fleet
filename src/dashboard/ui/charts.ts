@@ -1,4 +1,5 @@
 // Small text charts. Every function returns exactly `width` visible columns.
+import { LANE } from "../../manager/model/status.ts";
 import { levelColor, type Paint, theme } from "./theme.ts";
 
 const BLOCKS = " ▁▂▃▄▅▆▇█";
@@ -92,9 +93,6 @@ export function stackedArea(direct: readonly number[], indirect: readonly number
 	}
 	return rows;
 }
-
-export const LANE = { none: 0, idle: 1, waiting: 2, working: 3, error: 4 } as const;
-export type LaneState = (typeof LANE)[keyof typeof LANE];
 
 const LANE_CELLS: Record<number, string> = {
 	[LANE.none]: " ",

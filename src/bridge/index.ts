@@ -2,6 +2,8 @@
 // session state over a unix socket and executes dashboard commands.
 import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
+import { randomUUID } from "node:crypto";
+import { sameSession, type ClientMessage } from "../protocol/index.ts";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model, SimpleStreamOptions, Tool } from "@earendil-works/pi-ai";
 import { buildSessionContext, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
@@ -173,6 +175,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 	const context = ctx.getContextUsage();
 	return {
 		pid: process.pid,
+		instanceId: randomUUID(),
 		sty: process.env.STY,
 		window: process.env.WINDOW,
 		cwd: ctx.cwd,
@@ -392,8 +395,9 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		}
 	}
 
-	async function runCommand(command: Command): Promise<void> {
+	async function runCommand(command: Command, target: ClientMessage["target"]): Promise<void> {
 		if (!ctx || !state) throw new Error("session is not ready");
+		if (!target || !sameSession(state, target)) throw new Error("session changed; refresh before sending");
 		switch (command.kind) {
 			case "prompt": {
 				const text = command.text.trim();
@@ -456,8 +460,12 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 				return;
 			}
 			for (const message of messages) {
-				const { id, command } = message as { id: number; command: Command };
-				runCommand(command).then(
+				if (!message || typeof message !== "object" || !("type" in message) || message.type !== "command" || !("id" in message) || !Number.isSafeInteger(message.id)) {
+					socket.destroy();
+					return;
+				}
+				const { id, command, target } = message as ClientMessage;
+				runCommand(command, target).then(
 					() => socket.write(encodeMessage({ type: "ack", id, ok: true })),
 					(error: unknown) => socket.write(encodeMessage({ type: "ack", id, ok: false, error: error instanceof Error ? error.message : String(error) })),
 				);

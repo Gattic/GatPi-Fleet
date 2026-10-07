@@ -1,5 +1,5 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { rowCwd, rowLabel, rowSty, type SessionRow } from "../../model/store.ts";
+import { rowCwd, rowLabel, rowSty, type SessionRow } from "../../../manager/model/store.ts";
 import { activityLane, downsample, gauge, planBar, sparkline, splitBar } from "../charts.ts";
 import { fit, fitRight, fmtBytes, fmtCores, fmtDuration, oneLine, shortPath } from "../format.ts";
 import { TextPane } from "../text-pane.ts";

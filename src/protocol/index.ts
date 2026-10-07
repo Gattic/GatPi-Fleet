@@ -3,7 +3,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** Directory holding one `<pid>.sock` per bridged pi process (mode 0700). */
 export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -143,13 +143,18 @@ export const MAX_ASKS = 10;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-export interface SessionState {
+export interface SessionIdentity {
 	pid: number;
+	sessionId: string;
+	/** New random identity on every bridge start, including reload and session switch. */
+	instanceId: string;
+}
+
+export interface SessionState extends SessionIdentity {
 	/** GNU screen session (`$STY`) and window hosting this pi, when inside screen. */
 	sty?: string;
 	window?: string;
 	cwd: string;
-	sessionId: string;
 	sessionFile?: string;
 	name?: string;
 	/** "provider/modelId". */
@@ -208,7 +213,11 @@ export type Command =
 	/** Acknowledged once the answer starts; one ask at a time. */
 	| { kind: "ask"; question: string };
 
-export type ClientMessage = { type: "command"; id: number; command: Command };
+export type ClientMessage = { type: "command"; id: number; target: SessionIdentity; command: Command };
+
+export function sameSession(a: SessionIdentity, b: SessionIdentity): boolean {
+	return a.pid === b.pid && a.sessionId === b.sessionId && a.instanceId === b.instanceId;
+}
 
 export function encodeMessage(message: BridgeMessage | ClientMessage): string {
 	return `${JSON.stringify(message)}\n`;

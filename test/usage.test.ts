@@ -3,9 +3,9 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { type FileMeta, scanBuffer, type UsageRecord } from "../src/dashboard/usage/extract.ts";
-import { UsageIndexer } from "../src/dashboard/usage/indexer.ts";
-import { UsageIndex } from "../src/dashboard/usage/usage-index.ts";
+import { type FileMeta, scanBuffer, type UsageRecord } from "../src/manager/usage/extract.ts";
+import { UsageIndexer } from "../src/manager/usage/indexer.ts";
+import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 
 const T0 = Date.parse("2026-10-03T10:00:00.000Z");
 

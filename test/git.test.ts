@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { GitCli, gitDirtySummary, gitHeadLabel, isGitSummaryClean, parseGitStatus } from "../src/dashboard/actions/git.ts";
+import { GitCli, gitDirtySummary, gitHeadLabel, isGitSummaryClean, parseGitStatus } from "../src/manager/actions/git.ts";
 
 test("parseGitStatus reads branch, divergence, and working tree counts", () => {
 	const summary = parseGitStatus(

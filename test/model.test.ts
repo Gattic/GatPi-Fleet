@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseGpuQuery } from "../src/dashboard/collectors/gpu.ts";
-import { parseQuota } from "../src/dashboard/collectors/quota.ts";
-import { Series } from "../src/dashboard/model/series.ts";
-import { deriveStatus, STALL_MS } from "../src/dashboard/model/status.ts";
-import { SAMPLE_MS, Store } from "../src/dashboard/model/store.ts";
-import { LANE } from "../src/dashboard/ui/charts.ts";
+import { parseGpuQuery } from "../src/manager/collectors/gpu.ts";
+import { parseQuota } from "../src/manager/collectors/quota.ts";
+import { Series } from "../src/manager/model/series.ts";
+import { deriveStatus, STALL_MS } from "../src/manager/model/status.ts";
+import { SAMPLE_MS, Store } from "../src/manager/model/store.ts";
+import { LANE } from "../src/manager/model/status.ts";
 import { emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
 const NOW = 1_800_000_000_000;
@@ -15,6 +15,7 @@ function bridge(overrides: Partial<SessionState> = {}): SessionState {
 		pid: 1,
 		cwd: "/p",
 		sessionId: "s",
+		instanceId: "instance",
 		phase: "idle",
 		phaseSince: NOW - 1000,
 		lastEventAt: NOW - 1000,

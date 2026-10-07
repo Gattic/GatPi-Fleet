@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import type { DeliverAs } from "../../protocol/index.ts";
-import { rowCpu, rowCwd, rowLabel, type Store } from "../model/store.ts";
+import { rowCpu, rowCwd, rowLabel, type Store } from "../../manager/model/store.ts";
 
 export type HermesAdviceSeverity = "info" | "suggestion" | "warning" | "critical";
 export type HermesAdviceSource = "local" | "hermes";

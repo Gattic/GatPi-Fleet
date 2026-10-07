@@ -4,15 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { Component, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { sessionDirName } from "../src/dashboard/actions/sessions.ts";
-import type { BridgeHub } from "../src/dashboard/collectors/bridges.ts";
-import type { GitOperationResult, GitService, GitSummary } from "../src/dashboard/actions/git.ts";
-import { GpuMonitor } from "../src/dashboard/collectors/gpu.ts";
+import { sessionDirName } from "../src/manager/actions/sessions.ts";
+import type { BridgeHub } from "../src/manager/collectors/bridges.ts";
+import type { GitOperationResult, GitService, GitSummary } from "../src/manager/actions/git.ts";
+import { GpuMonitor } from "../src/manager/collectors/gpu.ts";
 import { HermesAdvisor, type HermesAdvisorClient, type HermesFeedbackEvent, type HermesSnapshot } from "../src/dashboard/hermes/advisor.ts";
-import { QuotaMonitor } from "../src/dashboard/collectors/quota.ts";
-import { Store } from "../src/dashboard/model/store.ts";
+import { QuotaMonitor } from "../src/manager/collectors/quota.ts";
+import { Store } from "../src/manager/model/store.ts";
 import { App, COMMIT_REVIEW_PROMPT } from "../src/dashboard/ui/app.ts";
-import { UsageIndex } from "../src/dashboard/usage/usage-index.ts";
+import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 import { type Command, emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
 const strip = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -132,7 +132,7 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 test("quit asks first while a close-and-restart is waiting for its session to exit", () => {
 	const ui = harness("/nonexistent");
 	const now = Date.now();
-	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] });
+	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] });
 
 	ui.press("C");
 	assert.match(ui.dialog() ?? "", /Close and start a fresh session/);
@@ -156,7 +156,7 @@ test("quit without pending work does not ask", () => {
 	assert.equal(ui.quits(), 1);
 });
 
-test("resume asks first when a live session in the project has no bridge", (t) => {
+test("resume refuses unknown session-file ownership without an unsafe override", (t) => {
 	const root = mkdtempSync(join(tmpdir(), "pi-dash-app-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	const cwd = join(root, "proj");
@@ -164,7 +164,7 @@ test("resume asks first when a live session in the project has no bridge", (t) =
 	const sessionDir = join(root, "sessions", sessionDirName(cwd));
 	mkdirSync(sessionDir, { recursive: true });
 	writeFileSync(join(sessionDir, "a.jsonl"), `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd })}\n`);
-	// An unconfirmed resume would try to launch screen; keep it off PATH so the test never starts pi.
+	// A regression would try to launch screen; keep it off PATH so the test never starts pi.
 	const path = process.env.PATH;
 	process.env.PATH = "";
 	t.after(() => {
@@ -177,15 +177,14 @@ test("resume asks first when a live session in the project has no bridge", (t) =
 	ui.press("r");
 	assert.match(ui.dialog() ?? "", /Resume in/);
 	ui.press("\r");
-	assert.match(ui.dialog() ?? "", /slot 1 in this project has no bridge.*Resume anyway\?/s);
-	ui.press("n");
 	assert.equal(ui.dialog(), undefined);
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /session file ownership is unknown/);
 	assert.doesNotMatch(strip(ui.app.render(120).at(-1) ?? ""), /started|launch failed/);
 });
 
 function session(overrides: Partial<SessionState>): SessionState {
 	const now = Date.now();
-	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], ...overrides };
+	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], ...overrides };
 }
 
 test("Hermes advisor shows action cards and confirms an ask action", async () => {

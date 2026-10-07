@@ -3,3 +3,11 @@ node_modules/
 # pi harness runtime state for this project (roadmap, traces, caches)
 .pi/
 .codegraph/
+
+# Android generated output and local/private settings
+android/.gradle/
+android/.kotlin/
+android/local.properties
+android/**/build/
+*.jks
+*.keystore

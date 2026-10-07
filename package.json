@@ -9,7 +9,10 @@
     "pi-package"
   ],
   "bin": {
-    "pi-dash": "bin/pi-dash"
+    "pi-dash": "bin/pi-dash",
+    "pi-dash-server": "bin/pi-dash-server",
+    "pi-dash-server-start": "bin/pi-dash-server-start",
+    "pi-dash-server-stop": "bin/pi-dash-server-stop"
   },
   "pi": {
     "extensions": [
@@ -21,12 +24,17 @@
   },
   "scripts": {
     "start": "node src/dashboard/main.ts",
+    "server": "node src/server/main.ts",
+    "check:android": "cd android && ./gradlew --no-daemon --max-workers=2 testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest",
+    "api:generate": "node scripts/export-api.ts",
     "check": "tsc -p tsconfig.json",
     "test": "node --test --test-reporter=spec 'test/*.test.ts'",
     "test:e2e": "node --test --test-reporter=spec 'test/e2e/*.test.ts'"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "^1.0.0"
+    "@earendil-works/pi-tui": "^1.0.0",
+    "typebox": "1.3.27",
+    "ws": "8.22.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
@@ -35,6 +43,7 @@
     "@earendil-works/pi-ai": "^1.0.0",
     "@earendil-works/pi-coding-agent": "^1.0.0",
     "@types/node": "^22.19.0",
+    "@types/ws": "8.18.1",
     "typescript": "^5.9.3"
   }
 }

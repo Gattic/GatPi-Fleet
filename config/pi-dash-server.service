@@ -1,0 +1,20 @@
+[Unit]
+Description=pi-dash intranet session gateway
+After=network.target
+
+[Service]
+Type=simple
+# Replace both paths with the absolute Node binary and checkout on this host.
+ExecStart=/usr/bin/node %h/dev/GatPi-Fleet/src/server/main.ts serve
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# With nvm, override PATH so GNU screen can launch the intended pi and node.
+Environment=PI_CODING_AGENT_DIR=%h/.pi/agent
+Restart=on-failure
+RestartSec=5
+UMask=0077
+# Screen/pi sessions launched through the gateway must survive a gateway stop.
+KillMode=process
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

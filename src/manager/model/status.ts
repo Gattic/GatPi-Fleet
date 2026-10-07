@@ -1,5 +1,6 @@
 import type { Activity, SessionState, TimelineState } from "../../protocol/index.ts";
-import { LANE, type LaneState } from "../ui/charts.ts";
+export const LANE = { none: 0, idle: 1, waiting: 2, working: 3, error: 4 } as const;
+export type LaneState = (typeof LANE)[keyof typeof LANE];
 
 export type StatusKind = "working" | "rate-limited" | "stalled" | "needs-you" | "ready" | "error" | "connecting" | "exited" | "unbridged";
 

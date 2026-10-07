@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { parseStat, ProcSampler } from "../src/dashboard/collectors/procs.ts";
+import { parseStat, ProcSampler } from "../src/manager/collectors/procs.ts";
 
 const children: ChildProcess[] = [];
 after(() => {

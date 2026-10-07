@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { rowLabel } from "../../model/store.ts";
-import type { FileUsage, UsageBucket } from "../../usage/types.ts";
+import { rowLabel } from "../../../manager/model/store.ts";
+import type { FileUsage, UsageBucket } from "../../../manager/usage/types.ts";
 import { gauge, hbar, shareBar, stackedArea, stretch } from "../charts.ts";
 import { fit, fitRight, fmtCost, fmtDuration, fmtTokens } from "../format.ts";
 import { levelColor, type Paint, theme } from "../theme.ts";

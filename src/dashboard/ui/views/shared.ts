@@ -1,9 +1,9 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import type { GpuMonitor } from "../../collectors/gpu.ts";
-import type { QuotaMonitor, QuotaWindow } from "../../collectors/quota.ts";
+import type { GpuMonitor } from "../../../manager/collectors/gpu.ts";
+import type { QuotaMonitor, QuotaWindow } from "../../../manager/collectors/quota.ts";
 import { PROTOCOL_VERSION } from "../../../protocol/index.ts";
-import { rowLabel, type SessionRow, type Store } from "../../model/store.ts";
-import type { UsageIndex } from "../../usage/usage-index.ts";
+import { rowLabel, type SessionRow, type Store } from "../../../manager/model/store.ts";
+import type { UsageIndex } from "../../../manager/usage/usage-index.ts";
 import { gauge, planBar, sparkline } from "../charts.ts";
 import { fit, fitRight, fmtBytes, fmtCost, fmtDuration, fmtTokens, oneLine } from "../format.ts";
 import type { TextPane } from "../text-pane.ts";

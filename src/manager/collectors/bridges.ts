@@ -11,6 +11,8 @@ import {
 	PROTOCOL_VERSION,
 	pidFromSocketName,
 	type SessionState,
+	type SessionIdentity,
+	sameSession,
 } from "../../protocol/index.ts";
 
 export interface BridgeEvents {
@@ -45,6 +47,8 @@ export function pidAlive(pid: number): boolean {
 		return (error as NodeJS.ErrnoException).code === "EPERM";
 	}
 }
+
+export class UncertainCommandError extends Error {}
 
 export class BridgeHub {
 	private readonly connections = new Map<number, Connection>();
@@ -90,17 +94,18 @@ export class BridgeHub {
 		}
 	}
 
-	send(pid: number, command: Command): Promise<void> {
-		const connection = this.connections.get(pid);
+	send(target: SessionIdentity, command: Command): Promise<void> {
+		const connection = this.connections.get(target.pid);
 		if (!connection?.state) return Promise.reject(new Error("session is not connected"));
+		if (!sameSession(connection.state, target)) return Promise.reject(new Error("session changed; refresh before sending"));
 		const id = this.nextId++;
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				connection.pending.delete(id);
-				reject(new Error("no response from session"));
+				reject(new UncertainCommandError("No acknowledgement; execution outcome is unknown"));
 			}, COMMAND_TIMEOUT_MS);
 			connection.pending.set(id, { resolve, reject, timer });
-			connection.socket.write(encodeMessage({ type: "command", id, command }));
+			connection.socket.write(encodeMessage({ type: "command", id, target: { pid: target.pid, sessionId: target.sessionId, instanceId: target.instanceId }, command }));
 		});
 	}
 
@@ -138,7 +143,7 @@ export class BridgeHub {
 			if (this.connections.get(pid) === connection) this.connections.delete(pid);
 			for (const pending of connection.pending.values()) {
 				clearTimeout(pending.timer);
-				pending.reject(new Error("session disconnected"));
+				pending.reject(new UncertainCommandError("Session disconnected before acknowledgement; execution outcome is unknown"));
 			}
 			if (connection.state) this.events.onDisconnect(pid);
 		});

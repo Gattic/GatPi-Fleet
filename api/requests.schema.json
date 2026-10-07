@@ -1,0 +1,266 @@
+{
+  "command": {
+    "type": "object",
+    "required": [
+      "requestId",
+      "epoch",
+      "revision",
+      "command"
+    ],
+    "properties": {
+      "requestId": {
+        "type": "string",
+        "pattern": "^[a-f0-9-]{36}$"
+      },
+      "epoch": {
+        "type": "string",
+        "pattern": "^[a-f0-9-]{36}$"
+      },
+      "revision": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{32}$"
+      },
+      "command": {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "text"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "prompt"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32000,
+                "pattern": "\\S"
+              },
+              "deliverAs": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "steer"
+                  },
+                  {
+                    "type": "string",
+                    "const": "followUp"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "question"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "ask"
+              },
+              "question": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000,
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "name"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "rename"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "provider",
+              "id"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "model"
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "\\S"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "level"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "thinking"
+              },
+              "level": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "off"
+                  },
+                  {
+                    "type": "string",
+                    "const": "minimal"
+                  },
+                  {
+                    "type": "string",
+                    "const": "low"
+                  },
+                  {
+                    "type": "string",
+                    "const": "medium"
+                  },
+                  {
+                    "type": "string",
+                    "const": "high"
+                  },
+                  {
+                    "type": "string",
+                    "const": "xhigh"
+                  },
+                  {
+                    "type": "string",
+                    "const": "max"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "abort"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "shutdown"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "compact"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "launch": {
+    "type": "object",
+    "required": [
+      "requestId",
+      "epoch",
+      "projectId"
+    ],
+    "properties": {
+      "requestId": {
+        "type": "string",
+        "pattern": "^[a-f0-9-]{36}$"
+      },
+      "epoch": {
+        "type": "string",
+        "pattern": "^[a-f0-9-]{36}$"
+      },
+      "projectId": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{32}$"
+      },
+      "sessionRef": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{32}$"
+      }
+    },
+    "additionalProperties": false
+  },
+  "subscribe": {
+    "type": "object",
+    "required": [
+      "type",
+      "sessionId"
+    ],
+    "properties": {
+      "type": {
+        "type": "string",
+        "const": "subscribe"
+      },
+      "sessionId": {
+        "anyOf": [
+          {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  }
+}

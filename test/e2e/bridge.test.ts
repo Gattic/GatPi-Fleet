@@ -4,11 +4,13 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { connect } from "node:net";
+import { LineDecoder, encodeMessage, socketPath, type BridgeMessage } from "../../src/protocol/index.ts";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { readHardcopy, requestHardcopy } from "../../src/dashboard/actions/screen.ts";
-import { BridgeHub } from "../../src/dashboard/collectors/bridges.ts";
+import { BridgeHub } from "../../src/manager/collectors/bridges.ts";
 import { pidFromSocketName, type SessionState } from "../../src/protocol/index.ts";
 
 const repo = fileURLToPath(new URL("../..", import.meta.url));
@@ -100,8 +102,27 @@ test("snapshot identifies the session, its screen and its plan", () => {
 	assert.ok(state.timeline[0].at <= Date.now() - 100, "the timeline starts with the process");
 });
 
+test("the bridge itself rejects a stale incarnation, not only the dashboard hub", async () => {
+	const reply = await new Promise<BridgeMessage>((resolve, reject) => {
+		const socket = connect(socketPath(pid, sockets));
+		const timer = setTimeout(() => { socket.destroy(); reject(new Error("no stale-target ack")); }, 3000);
+		const decoder = new LineDecoder();
+		socket.setEncoding("utf8");
+		socket.on("error", reject);
+		socket.on("data", (data: string) => {
+			for (const message of decoder.push(data) as BridgeMessage[]) if (message.type === "ack") {
+				clearTimeout(timer); socket.destroy(); resolve(message);
+			}
+		});
+		socket.on("connect", () => socket.write(encodeMessage({ type: "command", id: 99, target: { pid, sessionId: current().sessionId, instanceId: "obsolete" }, command: { kind: "rename", name: "WRONG TARGET" } })));
+	});
+	assert.equal(reply.type, "ack");
+	assert.equal(reply.type === "ack" && reply.ok, false);
+	assert.notEqual(current().name, "WRONG TARGET");
+});
+
 test("a prompt from the dashboard runs a turn: working → tool → idle with usage and a suggestion", async () => {
-	await hub.send(pid, { kind: "prompt", text: "sleep 1" });
+	await hub.send(current(), { kind: "prompt", text: "sleep 1" });
 	await waitFor("tool activity", () => current().activity?.kind === "tool" && current().activity?.tool === "bash");
 	assert.equal(current().phase, "working");
 	await waitFor("settled", () => current().phase === "idle" && current().lastSettledAt);
@@ -118,7 +139,7 @@ test("a prompt from the dashboard runs a turn: working → tool → idle with us
 });
 
 test("a multi-line reply arrives whole", async () => {
-	await hub.send(pid, { kind: "prompt", text: "two\nlines" });
+	await hub.send(current(), { kind: "prompt", text: "two\nlines" });
 	await waitFor("settled", () => current().phase === "idle" && current().lastSaid?.startsWith("echo: two"));
 	assert.equal(current().lastSaid, "echo: two\nlines");
 	assert.equal(current().lastPrompt, "two lines");
@@ -127,7 +148,7 @@ test("a multi-line reply arrives whole", async () => {
 test("while the session works, the text beside a tool call does not replace the latest reply", async () => {
 	const reply = current().lastSaid;
 	assert.ok(reply);
-	await hub.send(pid, { kind: "prompt", text: "sleep 1" });
+	await hub.send(current(), { kind: "prompt", text: "sleep 1" });
 	await waitFor("tool activity", () => current().activity?.kind === "tool");
 	assert.equal(current().lastSaid, reply);
 	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "slept 1");
@@ -142,17 +163,17 @@ test("the prompt is visible in pi's own TUI (peek via screen hardcopy)", async (
 
 test("steer while working is delivered in the same run; the suggestion is withdrawn meanwhile", async () => {
 	await waitFor("suggestion", () => current().suggestion === "Run the tests next");
-	await hub.send(pid, { kind: "prompt", text: "sleep 2" });
+	await hub.send(current(), { kind: "prompt", text: "sleep 2" });
 	await waitFor("working", () => current().phase === "working");
 	await waitFor("suggestion withdrawn", () => current().suggestion === undefined);
-	await hub.send(pid, { kind: "prompt", text: "steered", deliverAs: "steer" });
+	await hub.send(current(), { kind: "prompt", text: "steered", deliverAs: "steer" });
 	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "echo: steered");
 });
 
 test("abort stops the run without reporting an error or replacing the latest reply", async () => {
-	await hub.send(pid, { kind: "prompt", text: "sleep 30" });
+	await hub.send(current(), { kind: "prompt", text: "sleep 30" });
 	await waitFor("tool running", () => current().activity?.kind === "tool");
-	await hub.send(pid, { kind: "abort" });
+	await hub.send(current(), { kind: "abort" });
 	await waitFor("idle after abort", () => current().phase === "idle");
 	assert.equal(current().lastError, undefined);
 	assert.equal(current().lastSaid, "echo: steered");
@@ -178,54 +199,54 @@ test("a reload rebuilds the latest reply from history, skipping the aborted run'
 });
 
 test("provider errors surface as lastError", async () => {
-	await hub.send(pid, { kind: "prompt", text: "fail" });
+	await hub.send(current(), { kind: "prompt", text: "fail" });
 	await waitFor("error", () => current().phase === "idle" && current().lastError);
 	assert.equal(current().lastError?.message, "scripted failure");
 });
 
 test("rename updates the session name", async () => {
-	await hub.send(pid, { kind: "rename", name: "e2e session" });
+	await hub.send(current(), { kind: "rename", name: "e2e session" });
 	await waitFor("name", () => current().name === "e2e session");
 });
 
 test("model and thinking level can be switched; pi clamps the level to the model", async () => {
-	await hub.send(pid, { kind: "model", provider: "dash-test", id: "scripted-thinking" });
+	await hub.send(current(), { kind: "model", provider: "dash-test", id: "scripted-thinking" });
 	await waitFor("model", () => current().model === "dash-test/scripted-thinking");
-	await hub.send(pid, { kind: "thinking", level: "high" });
+	await hub.send(current(), { kind: "thinking", level: "high" });
 	await waitFor("thinking", () => current().thinking === "high");
-	await hub.send(pid, { kind: "model", provider: "dash-test", id: "scripted" });
+	await hub.send(current(), { kind: "model", provider: "dash-test", id: "scripted" });
 	await waitFor("model back, thinking clamped", () => current().model === "dash-test/scripted" && current().thinking === "off");
-	await assert.rejects(hub.send(pid, { kind: "model", provider: "dash-test", id: "missing" }), /unknown model dash-test\/missing/);
+	await assert.rejects(hub.send(current(), { kind: "model", provider: "dash-test", id: "missing" }), /unknown model dash-test\/missing/);
 });
 
 test("compact runs only while idle, reports failures, and compacts a long session", async () => {
-	await hub.send(pid, { kind: "prompt", text: "sleep 2" });
+	await hub.send(current(), { kind: "prompt", text: "sleep 2" });
 	await waitFor("working", () => current().phase === "working");
-	await assert.rejects(hub.send(pid, { kind: "compact" }), /session is working/);
+	await assert.rejects(hub.send(current(), { kind: "compact" }), /session is working/);
 	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "slept 2");
 
-	await hub.send(pid, { kind: "compact" });
+	await hub.send(current(), { kind: "compact" });
 	await waitFor("compaction error", () => current().lastError);
 	assert.match(current().lastError?.message ?? "", /^compaction failed: Nothing to compact/);
 
 	// Without spaces the scripted model takes a long prompt in one step.
 	for (const letter of ["a", "b", "c", "d"]) {
 		const settled = current().lastSettledAt ?? 0;
-		await hub.send(pid, { kind: "prompt", text: letter.repeat(60_000) });
+		await hub.send(current(), { kind: "prompt", text: letter.repeat(60_000) });
 		await waitFor("bulk turn", () => current().phase === "idle" && (current().lastSettledAt ?? 0) > settled);
 	}
 	const before = current().usage.direct.tokens;
-	await hub.send(pid, { kind: "compact" });
+	await hub.send(current(), { kind: "compact" });
 	await waitFor("compacted, then idle", () => current().usage.direct.tokens > before && current().phase === "idle", 30_000);
 	assert.equal(current().lastError, undefined, "the finished compaction clears the earlier failure");
 });
 
 test("an ask while idle sees the whole context (summary, tool output, system prompt, tools) and changes nothing", async () => {
-	await hub.send(pid, { kind: "prompt", text: "shell echo marker-42" });
+	await hub.send(current(), { kind: "prompt", text: "shell echo marker-42" });
 	await waitFor("settled", () => current().phase === "idle" && current().lastSaid === "tool finished");
 	const before = { lines: sessionLines(), said: current().lastSaid, tokens: current().usage.direct.tokens };
 
-	await hub.send(pid, { kind: "ask", question: "Where is the marker?" });
+	await hub.send(current(), { kind: "ask", question: "Where is the marker?" });
 	assert.deepEqual([lastAsk()?.status, lastAsk()?.question], ["answering", "Where is the marker?"], "the question arrives before the ack");
 	await waitFor("answered", () => lastAsk()?.status === "answered");
 	const seen = JSON.parse(lastAsk()?.answer ?? "");
@@ -245,10 +266,10 @@ test("an ask while idle sees the whole context (summary, tool output, system pro
 });
 
 test("an ask during a tool run sees the tool still running; one ask at a time", async () => {
-	await hub.send(pid, { kind: "prompt", text: "sleep 4" });
+	await hub.send(current(), { kind: "prompt", text: "sleep 4" });
 	await waitFor("tool running", () => current().activity?.kind === "tool");
-	await hub.send(pid, { kind: "ask", question: "What are you doing?" });
-	await assert.rejects(hub.send(pid, { kind: "ask", question: "And now?" }), /still answering the previous question/);
+	await hub.send(current(), { kind: "ask", question: "What are you doing?" });
+	await assert.rejects(hub.send(current(), { kind: "ask", question: "And now?" }), /still answering the previous question/);
 	await waitFor("answered", () => lastAsk()?.status === "answered");
 	const seen = JSON.parse(lastAsk()?.answer ?? "");
 	assert.match(seen.lastResult, /^Still running \(started \d+s ago\)\. No output yet\.$/, "the unanswered call is answered as running, not failed");
@@ -262,8 +283,8 @@ test("an ask during a tool run sees the tool still running; one ask at a time", 
 });
 
 test("an empty question is rejected, and a provider failure fails only the ask", async () => {
-	await assert.rejects(hub.send(pid, { kind: "ask", question: "  " }), /question is empty/);
-	await hub.send(pid, { kind: "ask", question: "fail" });
+	await assert.rejects(hub.send(current(), { kind: "ask", question: "  " }), /question is empty/);
+	await hub.send(current(), { kind: "ask", question: "fail" });
 	await waitFor("failed", () => lastAsk()?.status === "failed");
 	assert.equal(lastAsk()?.error, "scripted failure");
 	assert.equal(current().lastError, undefined, "a failed ask is not a session error");
@@ -280,7 +301,7 @@ test("/new replaces the session: bye, then a fresh snapshot on the same pid", as
 });
 
 test("shutdown closes pi, removes the socket and ends its screen", async () => {
-	await hub.send(pid, { kind: "shutdown" });
+	await hub.send(current(), { kind: "shutdown" });
 	await waitFor("bye quit", () => byes.includes("quit"));
 	await waitFor("socket removed", () => !existsSync(join(sockets, `${pid}.sock`)));
 	await waitFor("screen gone", () => {
