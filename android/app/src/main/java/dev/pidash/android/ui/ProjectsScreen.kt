@@ -43,11 +43,11 @@ internal fun ProjectsScreen(vm: DashViewModel, enabled: Boolean) {
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Approved projects", style = MaterialTheme.typography.headlineSmall)
+                Text("Projects", style = MaterialTheme.typography.headlineSmall)
                 Text("Start a new pi session or resume a previous one on the host.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (projects.isEmpty() && !busy) item { Hint("No approved projects. Add projectRoots to the gateway configuration on the host.") }
+        if (projects.isEmpty() && !busy) item { Hint("No projects yet. Projects appear once pi has run in them on the host.") }
         items(projects, key = { it.id }) { project ->
             val open = expanded == project
             ProjectCard(

@@ -13,7 +13,7 @@ import type { GpuMonitor } from "../../manager/collectors/gpu.ts";
 import { buildHermesSnapshot, feedbackFor, type HermesAdviceCard, type HermesAdvisorClient, type HermesCardAction } from "../hermes/advisor.ts";
 import type { QuotaMonitor } from "../../manager/collectors/quota.ts";
 import { isAlert } from "../../manager/model/status.ts";
-import { rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../../manager/model/store.ts";
+import { openCwds, rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../../manager/model/store.ts";
 import type { UsageIndex } from "../../manager/usage/usage-index.ts";
 import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
 import { AskView, Composer, Confirm, Help, HermesAdviceView, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
@@ -801,10 +801,7 @@ export class App implements Component {
 	}
 
 	private pickProject(title: string, onPick: (cwd: string) => void): void {
-		const live = this.services.store.ordered().flatMap((row) => {
-			const cwd = rowCwd(row);
-			return cwd && row.exitedAt === undefined ? [cwd] : [];
-		});
+		const live = openCwds(this.services.store.ordered());
 		const now = Date.now();
 		const items: SelectItem[] = listProjects(this.services.sessionRoot, live).map((project) => ({
 			value: project.cwd,

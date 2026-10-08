@@ -21,7 +21,7 @@ Errors use HTTP status plus `{ "error": "description" }`.
 | `GET /api/v1/info` | `version`, `epoch`, host `label` |
 | `GET /api/v1/sessions` | `sessions` overview array (epoch is supplied by info/the stream) |
 | `GET /api/v1/sessions/:id` | Selected detail object |
-| `GET /api/v1/projects` | `projects`: opaque `id`, `label`, canonical approved `path` |
+| `GET /api/v1/projects` | `projects`: opaque `id`, `label`, `path`; open projects first, then most recently active |
 | `GET /api/v1/projects/:id/sessions` | `sessions`: opaque `id`, title, lastActive, blocked reason or null |
 | `GET /api/v1/commands/:requestId` | Receipt, or unknown if absent |
 
@@ -86,10 +86,12 @@ still grant the session its normal tool authority, so a paired phone is privileg
 Compact requires idle state. Ask is refused while another side question is active.
 The bridge independently checks the exact target immediately before dispatch.
 
-`POST /api/v1/sessions` launches a new session in an approved project:
+`POST /api/v1/sessions` launches a new session in a listed project:
 `{requestId, epoch, projectId}`. Include `sessionRef` from that project's history
-to resume. Canonical root checks, current ownership checks and shared exclusive
-resume reservations apply; arbitrary paths/launch arguments are not accepted.
+to resume. Projects are the same choices as the dashboard's `n` picker: every
+directory with pi session history plus the directories of open sessions. Current
+ownership checks and shared exclusive resume reservations apply; arbitrary
+paths/launch arguments are not accepted.
 
 A mutation returns a receipt:
 `{requestId, state, at, error?}`. States are `received`, `accepted`, `failed`,

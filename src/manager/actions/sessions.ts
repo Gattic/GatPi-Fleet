@@ -28,6 +28,7 @@ function readHead(path: string): FileMeta {
 
 export interface Project {
 	cwd: string;
+	/** Newest session file's mtime; 0 if pi has not written a session here yet. */
 	lastActive: number;
 	sessions: number;
 }
@@ -54,11 +55,11 @@ export function listProjects(sessionRoot: string, liveCwds: readonly string[]): 
 		if (!cwd || !existsSync(cwd)) continue;
 		projects.set(cwd, { cwd, lastActive: files[0].mtimeMs, sessions: files.length });
 	}
-	for (const cwd of liveCwds) {
-		const existing = projects.get(cwd);
-		projects.set(cwd, { cwd, lastActive: Date.now(), sessions: existing?.sessions ?? 0 });
-	}
-	return [...projects.values()].sort((a, b) => b.lastActive - a.lastActive);
+	for (const cwd of liveCwds) if (!projects.has(cwd)) projects.set(cwd, { cwd, lastActive: 0, sessions: 0 });
+	const open = new Set(liveCwds);
+	// Open projects first, then most recently active. The path breaks ties so the dashboard
+	// and the gateway list identical inputs in the same order.
+	return [...projects.values()].sort((a, b) => Number(open.has(b.cwd)) - Number(open.has(a.cwd)) || b.lastActive - a.lastActive || (a.cwd < b.cwd ? -1 : a.cwd > b.cwd ? 1 : 0));
 }
 
 export interface SessionSummary {

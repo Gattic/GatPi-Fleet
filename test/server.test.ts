@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, mkdirSync, symlinkSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { request } from "node:https";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -16,7 +16,7 @@ import { DeviceStore } from "../src/server/auth.ts";
 import { CommandRequestSchema, LaunchRequestSchema, SubscriptionSchema } from "../src/server/contract.ts";
 import { Gateway } from "../src/server/gateway.ts";
 import { Receipts } from "../src/server/receipts.ts";
-import { clean, sessionRef, summary } from "../src/server/sessions.ts";
+import { clean, ref, sessionRef, summary } from "../src/server/sessions.ts";
 
 async function until<T>(check: () => T | false | undefined, timeout = 6000): Promise<T> {
 	const end = Date.now() + timeout;
@@ -56,7 +56,7 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	await until(() => runtime.store.rows.get(process.pid)?.connected);
 	const devices = new DeviceStore(join(dir, "devices.json"));
 	const paired = devices.pair("test phone");
-	const gateway = new Gateway({ listen: "127.0.0.1", port: 7443, url: "https://127.0.0.1:7443", label: "test host", cert, key, devices: devices.path, projectRoots: [project], auditDir: join(dir, "audit") }, runtime);
+	const gateway = new Gateway({ listen: "127.0.0.1", port: 7443, url: "https://127.0.0.1:7443", label: "test host", cert, key, devices: devices.path, auditDir: join(dir, "audit") }, runtime);
 	await gateway.listen(0);
 	t.after(() => gateway.close());
 	const port = (gateway.server.address() as { port: number }).port;
@@ -72,6 +72,22 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	await assert.rejects(new Promise((resolve, reject) => { const req = request({ hostname: "127.0.0.1", port, path: "/api/v1/info" }, resolve); req.on("error", reject); req.end(); }), /self-signed/);
 	const info = (await get("/api/v1/info")).data;
 	assert.equal(info.version, 1);
+	// Without an allowlist, project listing, history and launch keep the same device and native-client checks.
+	// The launch body names an unlisted project, so even a regression here could not start pi.
+	const unlisted = { requestId: randomUUID(), epoch: info.epoch, projectId: ref(tmpdir()) };
+	for (const [path, data] of [["/api/v1/projects", undefined], [`/api/v1/projects/${ref(project)}/sessions`, undefined], ["/api/v1/sessions", unlisted]] as const) {
+		assert.equal((await get(path, data, "")).status, 401, path);
+		assert.equal((await get(path, data, `Bearer ${"A".repeat(43)}`)).status, 401, path);
+		assert.equal((await get(path, data, auth, "https://evil.invalid")).status, 403, path);
+	}
+	assert.deepEqual((await get("/api/v1/projects")).data.projects.map((p: { path: string }) => p.path), [project]);
+	const stream = (headers: Record<string, string>) => new Promise((resolve, reject) => {
+		const socket = new WebSocket(`wss://127.0.0.1:${port}/api/v1/events`, { ca, headers });
+		socket.on("open", () => { socket.terminate(); resolve("open"); }); socket.on("error", reject);
+	});
+	await assert.rejects(stream({}), /Unexpected server response: 401/);
+	await assert.rejects(stream({ Authorization: `Bearer ${"A".repeat(43)}` }), /Unexpected server response: 401/);
+	await assert.rejects(stream({ Authorization: auth, Origin: "https://evil.invalid" }), /Unexpected server response: 403/);
 	const overview = (await get("/api/v1/sessions")).data.sessions;
 	assert.equal(overview.length, 1);
 	assert.ok(!JSON.stringify(overview).includes("private"));
@@ -108,14 +124,27 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	await get(`/api/v1/sessions/${newId}/commands`, stale);
 	await until(() => frames.find((f) => f.receipt?.requestId === stale.requestId && f.receipt.state === "failed"));
 	assert.equal(commands, 1);
-	const outside = join(dir, "outside"); mkdirSync(outside); symlinkSync(outside, join(project, "escape"));
-	runtime.store.setState(12345, { ...state, pid: 12345, cwd: join(project, "escape") });
+	// Launch takes only a listed project's opaque ID and a session from that project's history.
+	assert.equal((await get("/api/v1/sessions", { ...unlisted, cwd: "/" })).status, 400);
+	assert.equal((await get("/api/v1/sessions", { ...unlisted, projectId: tmpdir() })).status, 400);
+	const rejected = [{ ...unlisted, error: "Project no longer exists; refresh" }, { ...unlisted, requestId: randomUUID(), projectId: ref(project), sessionRef: ref("/etc/passwd"), error: "Historical session no longer exists" }];
+	for (const { error, ...launch } of rejected) {
+		assert.equal((await get("/api/v1/sessions", launch)).status, 202);
+		assert.equal((await until(() => frames.find((f) => f.receipt?.requestId === launch.requestId && f.receipt.state === "failed"))).receipt.error, error);
+	}
+	// Like the dashboard's new-session picker: any open session's project, with no allowlist.
+	const elsewhere = join(dir, "elsewhere"); mkdirSync(elsewhere);
+	runtime.store.setState(12345, { ...state, pid: 12345, cwd: elsewhere });
+	assert.deepEqual(gateway.sessions.projects().map((p) => p.path).sort(), [elsewhere, project].sort());
+	runtime.store.bye(12345, "quit");
 	assert.deepEqual(gateway.sessions.projects().map((p) => p.path), [project]);
 	const row = runtime.store.rows.get(process.pid)!;
 	assert.ok(resumeBlocked([{ ...row, bridge: undefined, proc: { pid: row.pid, cwd: project, startedAt: 1 } }], project, "/file"));
 	let closed = false; ws.on("close", () => { closed = true; });
 	devices.revoke(paired.device.id);
 	assert.equal((await get("/api/v1/info")).status, 401);
+	assert.equal((await get("/api/v1/projects")).status, 401);
+	await assert.rejects(stream({ Authorization: auth }), /Unexpected server response: 401/);
 	await until(() => closed);
 	assert.ok(!readFileSync(devices.path, "utf8").includes(paired.token));
 });
@@ -124,7 +153,14 @@ test("local CLI provisions a private certificate/device and revokes without expo
 	const dir = mkdtempSync(join(tmpdir(), "pi-dash-provision-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	const cli = (...args: string[]) => execFileSync(process.execPath, ["src/server/main.ts", ...args, "--dir", dir], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-	cli("init", "--url", "https://127.0.0.1:7443", "--project", dir);
+	cli("init", "--url", "https://127.0.0.1:7443");
+	// A leftover allowlist must fail loudly, not be silently ignored as if it still restricted the phone.
+	const configPath = join(dir, "config.json");
+	const config = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal("projectRoots" in config, false);
+	writeFileSync(configPath, JSON.stringify({ ...config, projectRoots: [dir] }));
+	assert.throws(() => cli("list"), /Invalid gateway configuration/);
+	writeFileSync(configPath, JSON.stringify(config));
 	const pairing = JSON.parse(cli("pair", "--name", "phone"));
 	assert.equal(pairing.version, 1);
 	assert.equal(pairing.token.length, 43);

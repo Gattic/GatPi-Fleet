@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -11,6 +11,8 @@ import { GpuMonitor } from "../src/manager/collectors/gpu.ts";
 import { HermesAdvisor, type HermesAdvisorClient, type HermesFeedbackEvent, type HermesSnapshot } from "../src/dashboard/hermes/advisor.ts";
 import { QuotaMonitor } from "../src/manager/collectors/quota.ts";
 import { Store } from "../src/manager/model/store.ts";
+import { ManagerRuntime } from "../src/manager/runtime.ts";
+import { Sessions } from "../src/server/sessions.ts";
 import { App, COMMIT_REVIEW_PROMPT } from "../src/dashboard/ui/app.ts";
 import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 import { type Command, emptyUsage, type SessionState } from "../src/protocol/index.ts";
@@ -180,6 +182,49 @@ test("resume refuses unknown session-file ownership without an unsafe override",
 	assert.equal(ui.dialog(), undefined);
 	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /session file ownership is unknown/);
 	assert.doesNotMatch(strip(ui.app.render(120).at(-1) ?? ""), /started|launch failed/);
+});
+
+test("the phone's project list is the n picker's: open projects first, then most recently active", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-projects-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const agent = join(root, "agent");
+	const path = (name: string) => join(root, name);
+	const history = (name: string, minutesAgo: number) => {
+		const dir = join(agent, "sessions", sessionDirName(path(name)));
+		const file = join(dir, "a.jsonl");
+		mkdirSync(path(name), { recursive: true });
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(file, `${JSON.stringify({ type: "session", version: 3, id: name, timestamp: new Date().toISOString(), cwd: path(name) })}\n`);
+		const at = (Date.now() - minutesAgo * 60_000) / 1000;
+		utimesSync(file, at, at);
+	};
+	history("open-1", 60);
+	history("open-2", 180);
+	history("closed-1", 30);
+	history("exited", 240);
+	history("closed-2", 300);
+	mkdirSync(path("open-new"));
+	// The dashboard and the gateway are separate processes whose stores see sessions in different orders.
+	const live = [[201, "open-2"], [202, "open-new"], [203, "open-1"], [204, "exited"]] as const;
+	const ui = harness(join(agent, "sessions"));
+	const runtime = new ManagerRuntime({ agent, runtimeDir: join(root, "run"), cacheDir: join(root, "cache") });
+	t.after(() => runtime.close());
+	for (const [store, order] of [[ui.store, live], [runtime.store, [...live].reverse()]] as const) {
+		for (const [pid, name] of order) store.setState(pid, session({ pid, cwd: path(name), instanceId: `i${pid}` }));
+		store.bye(204, "quit");
+	}
+
+	const lists = (expected: string[]) => {
+		ui.press("n");
+		const picker = (ui.dialog() ?? "").split("\n").flatMap((line) => expected.filter((p) => line.includes(p)));
+		ui.press("\x1b");
+		assert.deepEqual(picker, expected, "dashboard n picker");
+		assert.deepEqual(new Sessions(runtime).projects().map((p) => p.path), expected, "gateway /api/v1/projects");
+	};
+
+	lists(["open-1", "open-2", "open-new", "closed-1", "exited", "closed-2"].map(path));
+	history("open-2", 10); // new activity in the other open project moves it ahead
+	lists(["open-2", "open-1", "open-new", "closed-1", "exited", "closed-2"].map(path));
 });
 
 function session(overrides: Partial<SessionState>): SessionState {

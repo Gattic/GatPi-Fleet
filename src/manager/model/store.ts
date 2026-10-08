@@ -49,6 +49,14 @@ export function rowCwd(row: SessionRow): string | undefined {
 	return row.bridge?.cwd ?? row.proc?.cwd;
 }
 
+/** Project directories of sessions that are still running. */
+export function openCwds(rows: readonly SessionRow[]): string[] {
+	return rows.flatMap((row) => {
+		const cwd = rowCwd(row);
+		return cwd && row.exitedAt === undefined ? [cwd] : [];
+	});
+}
+
 export function rowSty(row: SessionRow): string | undefined {
 	return row.bridge?.sty ?? row.proc?.sty;
 }

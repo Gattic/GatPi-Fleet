@@ -3,7 +3,7 @@ import { basename, isAbsolute, relative, sep } from "node:path";
 import { realpathSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import type { Command } from "../protocol/index.ts";
-import { rowCwd, rowLabel, type SessionRow } from "../manager/model/store.ts";
+import { openCwds, rowCwd, rowLabel, type SessionRow } from "../manager/model/store.ts";
 import { isAlert } from "../manager/model/status.ts";
 import { launchSession, resumeBlocked } from "../manager/actions/launch.ts";
 import { listProjects, listSessions } from "../manager/actions/sessions.ts";
@@ -46,8 +46,7 @@ export function summary(row: SessionRow, gpuAvailable = false) {
 
 export class Sessions {
 	readonly runtime: ManagerRuntime;
-	readonly roots: string[];
-	constructor(runtime: ManagerRuntime, roots: string[]) { this.runtime = runtime; this.roots = roots.map((root) => realpathSync(root)); }
+	constructor(runtime: ManagerRuntime) { this.runtime = runtime; }
 	overview() { return this.runtime.store.ordered().map((r) => summary(r, Boolean(this.runtime.gpu.latest))); }
 	find(id: string): SessionRow {
 		const row = this.runtime.store.ordered().find((row) => sessionRef(row) === id);
@@ -74,21 +73,13 @@ export class Sessions {
 		if (input.command.kind === "prompt" && row.bridge!.phase === "working" && !input.command.deliverAs) throw new ApiError(400, "Choose steer or follow-up for a working session");
 		await this.runtime.hub.send(row.bridge!, input.command);
 	}
-	private approved(cwd: string): boolean {
-		return this.roots.some((root) => { const rel = relative(root, cwd); return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`); });
-	}
+	/** The dashboard's new-session picker choices, in its order. */
 	projects() {
-		const cwdList = [...this.roots, ...listProjects(this.runtime.sessionRoot, this.runtime.store.ordered().flatMap((r) => rowCwd(r) ?? [])).map((p) => p.cwd)];
-		const canonical = new Set<string>();
-		for (const cwd of cwdList) {
-			try { const real = realpathSync(cwd); if (this.approved(real)) canonical.add(real); }
-			catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-		}
-		return [...canonical].sort().slice(0, 200).map((cwd) => ({ id: ref(cwd), label: basename(cwd), path: cwd }));
+		return listProjects(this.runtime.sessionRoot, openCwds(this.runtime.store.ordered())).slice(0, 200).map(({ cwd }) => ({ id: ref(cwd), label: basename(cwd), path: cwd }));
 	}
 	private project(id: string) {
 		const project = this.projects().find((p) => p.id === id);
-		if (!project) throw new ApiError(404, "Project is not approved or no longer exists");
+		if (!project) throw new ApiError(404, "Project no longer exists; refresh");
 		return project;
 	}
 	history(id: string) {

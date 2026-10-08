@@ -27,18 +27,17 @@ Choose a stable LAN IP/DNS name which the phone can reach. Configure the certifi
 for **that exact name**, not `localhost`. For example (replace both addresses):
 
 ```sh
-pi-dash-server init --url https://192.168.1.20:7443 --listen 192.168.1.20 \
-  --project /home/you/dev/project-a --project /home/you/dev/project-b
+pi-dash-server init --url https://192.168.1.20:7443 --listen 192.168.1.20
 pi-dash-server pair --name my-phone
 pi-dash-server serve
 ```
 
 `init` creates `~/.config/pi-dash-server/config.json`, a private TLS key and a
 one-year self-signed CA/server certificate. The default bind is loopback if
-`--listen` is omitted. `projectRoots` permits those canonical directories and
-known projects beneath them; use narrowly scoped roots, not `/` or your whole
-home. Project paths/session references supplied by a client are never executed
-as arbitrary filesystem or shell paths.
+`--listen` is omitted. New/Resume offer the same projects as the dashboard's `n`
+picker: every directory with pi session history plus those of open sessions.
+Project paths/session references supplied by a client are never executed as
+arbitrary filesystem or shell paths.
 
 Restrict TCP 7443 to your trusted LAN/phone using your host firewall. Do not
 port-forward this service, expose it on public Wi-Fi, or proxy it to the public
@@ -101,10 +100,8 @@ private directory to `~/.config/pi-dash-server`, and update the absolute `cert`,
 `key`, `devices` and `auditDir` paths in `config.json`. Keep the identity files and
 paired HTTPS URL unchanged; do not retain a second active configuration.
 
-Replace test `projectRoots` with narrowly scoped canonical real project paths.
-These roots authorize New/Resume; they do not restrict monitoring of existing pi
-sessions. An empty list disables project launch/resume choices. Preserve private
-permissions (directory `0700`, configuration/identity files `0600`).
+Preserve private permissions (directory `0700`, configuration/identity files
+`0600`).
 
 ### Pairing and revocation
 
@@ -166,7 +163,7 @@ pairing/drafts; revoke the old device token and re-pair afterward.
 
 ## 3. Session management
 
-The app has four tabs: **Sessions**, **Projects** (new/resume in approved projects),
+The app has four tabs: **Sessions**, **Projects** (new/resume in any known project),
 **Glasses** and **Pairing**. Tapping a session opens its detail, grouped into status,
 latest exchange, prompt, glasses, side question, recent tools and session management.
 
@@ -178,7 +175,7 @@ pi's API-equivalent usage, not a provider subscription invoice.
 
 Phone actions: prompt, explicit steer/follow-up when working, abort, compact,
 rename, model/thinking changes, graceful close, side question, new session and
-resume in approved projects. Abort/compact/close/new/resume require confirmation.
+resume in any known project. Abort/compact/close/new/resume require confirmation.
 Side questions use the session's provider context and are billed separately.
 Slash commands, interactive extension dialogs and terminal attachment remain
 in desktop pi. Phone text is rendered as text, not executable terminal escapes,

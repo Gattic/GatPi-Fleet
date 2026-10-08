@@ -55,7 +55,7 @@ export class Gateway {
 
 	constructor(config: ServerConfig, runtime: ManagerRuntime) {
 		this.config = config;
-		this.sessions = new Sessions(runtime, config.projectRoots);
+		this.sessions = new Sessions(runtime);
 		this.devices = new DeviceStore(config.devices);
 		this.audit = new Audit(config.auditDir);
 		this.receipts = new Receipts((device, receipt) => this.receiptChanged(device, receipt));

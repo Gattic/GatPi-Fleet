@@ -14,7 +14,7 @@ async function main(): Promise<void> {
 	process.umask(0o077);
 	const { values, positionals } = parseArgs({ allowPositionals: true, options: {
 		config: { type: "string" }, dir: { type: "string" }, url: { type: "string" }, listen: { type: "string" },
-		project: { type: "string", multiple: true }, name: { type: "string" }, id: { type: "string" }, help: { type: "boolean" },
+		name: { type: "string" }, id: { type: "string" }, help: { type: "boolean" },
 	} });
 	const dir = resolve(values.dir ?? join(homedir(), ".config", "pi-dash-server"));
 	const configPath = resolve(values.config ?? join(dir, "config.json"));
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
 	if (values.help) {
 		console.log(`pi-dash-server — authenticated intranet session gateway
 
-init --url https://HOST:7443 --listen LAN_IP --project /approved/project [--project ...]
+init --url https://HOST:7443 --listen LAN_IP
 pair --name PHONE          Prints sensitive pairing JSON; copy into Android locally
 list                       List paired device IDs (no tokens)
 revoke --id DEVICE_ID       Existing streams close within five seconds
@@ -44,7 +44,7 @@ certificate; verify its fingerprint on the phone. No host/provider secrets enter
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 		chmodSync(dir, 0o700);
 		const config: ServerConfig = { listen: values.listen ?? "127.0.0.1", port: Number(url.port || 443), url: url.origin, label: host,
-			cert: join(dir, "server.crt"), key: join(dir, "server.key"), devices: join(dir, "devices.json"), auditDir: join(dir, "audit"), projectRoots: (values.project ?? []).map((p) => resolve(p)) };
+			cert: join(dir, "server.crt"), key: join(dir, "server.key"), devices: join(dir, "devices.json"), auditDir: join(dir, "audit") };
 		execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:3072", "-sha256", "-nodes", "-days", "365", "-keyout", config.key, "-out", config.cert, "-subj", "/CN=pi-dash", "-addext", `subjectAltName=${isIP(host) ? "IP" : "DNS"}:${host}`, "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign", "-addext", "extendedKeyUsage=serverAuth"], { stdio: "ignore" });
 		writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", { mode: 0o600, flag: "wx" });
 		console.log(`Created ${configPath}\nCertificate SHA-256: ${new X509Certificate(readFileSync(config.cert)).fingerprint256}\nRun pair --name PHONE, then serve. Restrict the listener with your firewall.`);
