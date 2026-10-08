@@ -36,7 +36,7 @@ import dev.pidash.android.Project
 
 @Composable
 internal fun ProjectsScreen(vm: DashViewModel, enabled: Boolean) {
-    val projects by vm.projects.collectAsStateWithLifecycle()
+    val projects = vm.projects.collectAsStateWithLifecycle().value
     val expanded by vm.project.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
@@ -47,8 +47,11 @@ internal fun ProjectsScreen(vm: DashViewModel, enabled: Boolean) {
                 Text("Start a new pi session or resume a previous one on the host.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (projects.isEmpty() && !busy) item { Hint("No projects yet. Projects appear once pi has run in them on the host.") }
-        items(projects, key = { it.id }) { project ->
+        when {
+            projects == null -> if (!busy) item { Hint("Projects were not loaded. Tap Projects to try again.") }
+            projects.isEmpty() -> item { Hint("No projects yet. Projects appear once pi has run in them on the host.") }
+        }
+        items(projects.orEmpty(), key = { it.id }) { project ->
             val open = expanded == project
             ProjectCard(
                 project, open, history.takeIf { open }, loading = open && busy, enabled = enabled,

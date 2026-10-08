@@ -22,7 +22,8 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
     val ask = MutableStateFlow("")
     val delivery = MutableStateFlow("followUp")
     val confirmation = MutableStateFlow<Confirmation?>(null)
-    val projects = MutableStateFlow<List<Project>>(emptyList())
+    /** The project choices fetched for this visit to Projects; null until they arrive. */
+    val projects = MutableStateFlow<List<Project>?>(null)
     val history = MutableStateFlow<List<History>>(emptyList())
     val project = MutableStateFlow<Project?>(null)
     val busy = MutableStateFlow(false)
@@ -80,7 +81,15 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun openProjects() { screen.value = Screen.Projects; run { projects.value = repository.projects() } }
+    fun openProjects() {
+        screen.value = Screen.Projects
+        // An earlier visit's list may be in an outdated order, and replacing it when the fetch answers
+        // would move rows under the user's finger. Show nothing until this visit's list arrives.
+        projects.value = null
+        project.value = null
+        history.value = emptyList()
+        run { projects.value = repository.projects() }
+    }
     /** Expands one project's resumable history in place; selecting it again collapses it. */
     fun history(p: Project) {
         if (project.value == p) { project.value = null; return }
