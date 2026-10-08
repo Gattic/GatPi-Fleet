@@ -4,8 +4,10 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import okhttp3.ConnectionPool
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import org.json.JSONObject
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -48,6 +50,9 @@ class Pairing(val url: String, val token: String, val ca: String, val fingerprin
         return OkHttpClient.Builder().sslSocketFactory(tls.socketFactory, trust)
             // OkHttp's normal hostname verifier remains enabled. No trust-all, redirects or side-effect retries.
             .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
+            // The gateway speaks HTTP/1.1 and closes idle connections after 5 s without the client noticing.
+            // Reusing one fails a request that is never retried, so each request opens its own connection.
+            .protocols(listOf(Protocol.HTTP_1_1)).connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
             .connectTimeout(10, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build()
     }
 }
