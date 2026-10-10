@@ -35,7 +35,7 @@ One terminal tab to watch and drive every running [pi](https://pi.dev) session.
 ## Requirements
 
 - Linux (`/proc`, cgroup v2), Node ≥ 22.19 (runs the TypeScript sources directly), GNU screen.
-- pi ≥ 0.84 with the bridge extension installed (below).
+- pi ≥ 1.0 with the bridge extension installed (below).
 - Optional: `nvidia-smi` for GPU stats, GatPi-Harness for roadmap progress and next-prompt
   suggestions, the `pi-multi-account` failover state for quota gauges, `hermes` on PATH for the
   advisor's model-refined cards (local rule cards still work without it).
@@ -98,6 +98,11 @@ running pi-dash starts the replacement.
 Sessions started from the dashboard run pi in a detached screen named `pi-<project>` using
 [`config/screenrc`](config/screenrc) (your usual settings, but only one window). When pi exits,
 its screen ends. Existing screens you started yourself are picked up as they are.
+
+`Stalled` is a tentative tool-only warning after three minutes without Pi events and with little
+local CPU activity. A quiet tool waiting on a network or user dialog can trigger it; it is not proof
+that the session is stuck. Remote model work (including thinking and compaction) stays working
+through silent periods, since local CPU does not measure provider progress.
 
 Slash commands only work inside pi: attach (`a`) to use them.
 

@@ -35,8 +35,8 @@ test("deriveStatus distinguishes the states the board shows", () => {
 	assert.equal(status({}), "ready", "fresh session that never ran");
 	assert.equal(status({ lastSettledAt: NOW - 5000 }), "needs-you");
 	assert.equal(status({ phase: "working", activity: { kind: "tool", tool: "bash", since: NOW } }), "working");
-	assert.equal(status({ phase: "working", lastEventAt: NOW - STALL_MS - 1 }), "stalled", "no events and no CPU");
-	assert.equal(status({ phase: "working", lastEventAt: NOW - STALL_MS - 1 }, { cpu: 2 }), "working", "long tool runs that use CPU are not stalls");
+	assert.equal(status({ phase: "working", lastEventAt: NOW - STALL_MS - 1, activity: { kind: "tool", tool: "bash", since: NOW - STALL_MS - 1 } }), "stalled", "a quiet tool with no CPU may need attention");
+	assert.equal(status({ phase: "working", lastEventAt: NOW - STALL_MS - 1, activity: { kind: "tool", tool: "bash", since: NOW - STALL_MS - 1 } }, { cpu: 2 }), "working", "long tool runs that use CPU are not stalls");
 	assert.equal(status({ phase: "working", rateLimited: { at: NOW - 1000 } }), "rate-limited");
 	assert.equal(status({ lastSettledAt: NOW, lastError: { message: "overloaded", at: NOW } }), "error");
 	assert.equal(status({}, { connected: false }), "connecting");
@@ -44,6 +44,14 @@ test("deriveStatus distinguishes the states the board shows", () => {
 	assert.equal(deriveStatus({ connected: false, cpu: 0 }, NOW).kind, "unbridged");
 	const working = deriveStatus({ bridge: bridge({ phase: "working", activity: { kind: "tool", tool: "build_project", since: NOW - 4000 } }), connected: true, cpu: 1 }, NOW);
 	assert.deepEqual(working, { kind: "working", label: "build_project", since: NOW - 4000 });
+});
+
+test("remote model work is not stalled merely because events and local CPU are quiet", () => {
+	for (const kind of [undefined, "model", "thinking", "writing", "compacting", "continuing"] as const) {
+		const since = NOW - STALL_MS * 10;
+		const state = bridge({ phase: "working", phaseSince: since, lastEventAt: since, activity: kind ? { kind, since } : undefined });
+		assert.equal(deriveStatus({ bridge: state, connected: true, cpu: 0 }, NOW).kind, "working", `${kind ?? "unknown"} can wait on remote work`);
+	}
 });
 
 test("Series keeps the most recent samples in order", () => {

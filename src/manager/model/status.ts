@@ -20,7 +20,7 @@ export interface StatusInput {
 	cpu: number;
 }
 
-/** Working with no pi event for this long and no CPU activity is reported as stalled (often a blocking dialog). */
+/** A tool with no pi event for this long and no CPU activity may be stalled (often a blocking dialog). */
 export const STALL_MS = 180_000;
 const STALL_CPU = 0.05;
 const RATE_LIMIT_MS = 120_000;
@@ -49,7 +49,9 @@ export function deriveStatus(input: StatusInput, now: number): Status {
 	if (!input.connected) return { kind: "connecting", label: "reconnecting" };
 	if (bridge.phase === "working") {
 		if (bridge.rateLimited && now - bridge.rateLimited.at < RATE_LIMIT_MS) return { kind: "rate-limited", label: "429 rate limited", since: bridge.rateLimited.at };
-		if (now - bridge.lastEventAt > STALL_MS && input.cpu < STALL_CPU) return { kind: "stalled", label: "stalled?", since: bridge.lastEventAt };
+		// Remote inference, compaction and continuation can be silent with no local CPU.
+		// Their inactivity is not evidence of a stall; retain the heuristic only for tools.
+		if (bridge.activity?.kind === "tool" && now - bridge.lastEventAt > STALL_MS && input.cpu < STALL_CPU) return { kind: "stalled", label: "stalled?", since: bridge.lastEventAt };
 		return { kind: "working", label: activityLabel(bridge.activity), since: bridge.activity?.since ?? bridge.phaseSince };
 	}
 	if (bridge.lastError) return { kind: "error", label: bridge.lastError.message, since: bridge.lastError.at };

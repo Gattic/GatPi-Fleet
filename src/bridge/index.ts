@@ -568,7 +568,11 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		setActivity(currentToolActivity());
 	});
 
+	// Providers can report progress without emitting normalized text/thinking deltas.
+	pi.on("provider_stream_event", () => touch());
+
 	pi.on("tool_execution_update", (event) => {
+		touch();
 		const content: unknown = event.partialResult?.content;
 		if (runningTools.has(event.toolCallId) && Array.isArray(content)) toolOutput.set(event.toolCallId, textOf(content));
 	});
