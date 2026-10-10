@@ -106,7 +106,7 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 		store,
 		hub,
 		usage: new UsageIndex({ sessionRoot, cachePath: "", retentionMs: 0, onUpdate: () => {} }),
-		quota: new QuotaMonitor("/nonexistent"),
+		quota: new QuotaMonitor("/nonexistent", "/nonexistent"),
 		gpu: new GpuMonitor(),
 		advisor: advisorService,
 		git,

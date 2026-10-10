@@ -40,7 +40,7 @@ export class ManagerRuntime {
 			onDisconnect: (pid) => this.store.disconnect(pid),
 			onIncompatible: (pid, version) => this.store.incompatible(pid, version),
 		});
-		this.quota = new QuotaMonitor(join(agent, "provider-failover-state.json"));
+		this.quota = new QuotaMonitor(join(agent, "provider-failover-state.json"), join(agent, "auth.json"));
 		this.usage = new UsageIndex({ sessionRoot: this.sessionRoot, cachePath: join(this.cacheDir, options.cacheName ?? "usage-index.json"), retentionMs: 30 * 86_400_000, onUpdate: () => this.changed() });
 	}
 

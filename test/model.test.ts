@@ -116,14 +116,15 @@ test("Store fills a new row's activity lane from the bridge's timeline", () => {
 	assert.equal(store.rows.get(10)?.lane.length, before, "later states do not rebuild the lane");
 });
 
-test("parseQuota reads provider-failover windows", () => {
+test("parseQuota reads provider-failover windows for logged-in providers only", () => {
 	const windows = parseQuota({
 		usageByProvider: {
 			anthropic: { fetchedAt: 5, primary: { usedPercent: 24, resetAt: 100, windowSeconds: 18000 }, secondary: { usedPercent: 26, resetAt: 200, windowSeconds: 604800 } },
 			"openai-codex-account-2": { fetchedAt: 6, primary: { usedPercent: 0, resetAt: 300, windowSeconds: 604800 }, credits: {} },
+			"openai-codex-account-3": { fetchedAt: 7, primary: { usedPercent: 50, resetAt: 400, windowSeconds: 604800 } },
 		},
 		exhaustedUntilByProvider: { anthropic: 999 },
-	});
+	}, new Set(["anthropic", "openai-codex-account-2"]));
 	assert.deepEqual(
 		windows.map((window) => [window.providerLabel, window.label, window.usedPercent, window.exhaustedUntil]),
 		[

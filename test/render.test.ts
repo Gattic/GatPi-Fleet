@@ -61,7 +61,7 @@ function context(): ViewContext {
 	store.setState(103, state(103, { lastSettledAt: Date.now(), lastError: { message: "529 overloaded", at: Date.now() } }));
 	store.setState(104, state(104, { name: "a very long session name that needs truncation" }));
 	const usage = new UsageIndex({ sessionRoot: "", cachePath: "", retentionMs: 0, onUpdate: () => {} });
-	const quota = new QuotaMonitor("/nonexistent");
+	const quota = new QuotaMonitor("/nonexistent", "/nonexistent");
 	quota.windows = [{ provider: "anthropic", providerLabel: "anthropic", label: "5h", usedPercent: 24, resetAt: Date.now() + 3_600_000, windowSeconds: 18000, fetchedAt: Date.now() }];
 	return { store, usage, quota, gpu: new GpuMonitor(), now: Date.now(), spinner: "⠹", selected: store.ordered()[0] };
 }
