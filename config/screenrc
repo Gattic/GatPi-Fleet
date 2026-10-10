@@ -17,6 +17,7 @@ activity "Activity in %t(%n)"
 activity_timeout 2
 
 term screen-256color
+truecolor on
 defbce on
 attrcolor b ".I"
 msgwait 1
