@@ -150,9 +150,9 @@ links to the hosts, so the phone shows and drives their sessions too and offers 
 new sessions. Its service therefore needs the same non-interactive ssh as pi-dash (keys, or an ssh
 agent its environment can reach); restart it after changing the host list.
 
-What stays local: the usage view and `today $` count this machine's session files (each remote
-session's own $ comes from its bridge, without its subagents), and quota gauges are this machine's
-logins.
+What stays local: the usage view (also the phone's Usage tab, for the gateway's machine) and
+`today $` count this machine's session files (each remote session's own $ comes from its bridge,
+without its subagents), and quota gauges are this machine's logins.
 
 ## How it works
 

@@ -3,10 +3,10 @@
 Source of truth: [`src/server/contract.ts`](../src/server/contract.ts) defines strict
 TypeBox request schemas, exported by `npm run api:generate` to
 [`api/requests.schema.json`](../api/requests.schema.json). Host tests compare the
-checked-in schemas and snapshot fixture with current projections; Android JVM
-tests decode that same fixture. Responses are projected in `sessions.ts`, not
-raw bridge objects. Any incompatible wire change must change the API version
-and both clients. The local bridge protocol is separately versioned (currently 4).
+checked-in schemas and snapshot and usage fixtures with current projections; Android
+JVM tests decode those same fixtures. Responses are projected in `sessions.ts` and
+`usage.ts`, not raw bridge objects. Any incompatible wire change must change the API
+version and both clients. The local bridge protocol is separately versioned (currently 4).
 
 Every route, including WebSocket upgrade and info, requires
 `Authorization: Bearer DEVICE_TOKEN` over TLS. Tokens never appear in URLs.
@@ -18,11 +18,12 @@ Errors use HTTP status plus `{ "error": "description" }`.
 
 | Method/path | Response |
 |---|---|
-| `GET /api/v1/info` | `version`, `epoch`, host `label` |
+| `GET /api/v1/info` | `version`, `epoch`, host `label`, `capabilities` (`sessions`, `commands`, `launch`, `usage`, `g1-display`) |
 | `GET /api/v1/sessions` | `sessions` overview array (epoch is supplied by info/the stream) |
 | `GET /api/v1/sessions/:id` | Selected detail object |
 | `GET /api/v1/projects` | `projects`: opaque `id`, `host` (remote host name, or null for the gateway's machine), `label`, `path`; per host (the gateway's machine, then `hosts.json` order) open projects first, then most recently active. `unreachable`: `host`, `error` for each remote host that did not answer |
 | `GET /api/v1/projects/:id/sessions` | `sessions`: opaque `id`, title, lastActive, blocked reason or null |
+| `GET /api/v1/usage` | The dashboard's usage view as data (below) |
 | `GET /api/v1/commands/:requestId` | Receipt, or unknown if absent |
 
 Sessions include those of the remote hosts in pi-dash's `hosts.json` (labelled `name@host`),
@@ -35,6 +36,21 @@ contextPercent, plan, resource/usage aggregates, and per-command disabled reason
 Unknown values are null, not invented zero measurements. Status `stalled` remains
 a CPU/inactivity heuristic. Overview deliberately omits prompts, replies, asks,
 raw errors, transcripts and tools.
+
+Usage is computed like the dashboard's usage view (`u`), from the gateway machine's own
+session files and logins (not its remote hosts'). It is fetched, not streamed. `at` is the
+host time it was made, and `indexing` is true until the first scan of the session files
+ends. `quota` lists each subscription window: `provider`, `window` (`5h`, `wk`, …),
+`usedPercent`, `resetAt` and `exhaustedUntil` (host epoch ms, or null when past), and
+`shares`: up to four largest sessions (`label`, `open`) with their estimated `share` (0–1)
+of the usage counted in the window, weighted by cost, or by tokens when none has a price.
+`ranges` has `today` (from the host's local midnight), `7d` and `30d` (the last 168 and 720
+whole hours, ending with the current one) in that order, each with `range`, `bucketHours`,
+`total` (`cost`, `tokens`, `cacheHit` 0–1), and per measure (`cost`, `tokens`): `series` per
+bucket from the range's start to now, the 50 largest `sessions` (`label`, `open`, `value`)
+and the 5 largest `models` (`name`, `value`; one model through several provider accounts
+counts once). An open session's label is its overview label; any other is
+`project › name`, `project › first prompt` or just `project` (at most 200 characters).
 
 Selected detail adds a 200-character last-prompt preview, up to 32,000 characters
 of latest reply, suggested prompt, error, model choices, 20 recent tool summaries

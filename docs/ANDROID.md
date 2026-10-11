@@ -169,15 +169,23 @@ pairing/drafts; revoke the old device token and re-pair afterward.
 
 ## 3. Session management
 
-The app has four tabs: **Sessions**, **Projects** (new/resume in any known project),
-**Glasses** and **Pairing**. Tapping a session opens its detail, grouped into status,
-latest exchange, prompt, glasses, side question, recent tools and session management.
+The app has five tabs: **Sessions**, **Projects** (new/resume in any known project),
+**Usage**, **Glasses** and **Pairing**. Tapping a session opens its detail, grouped into
+status, latest exchange, prompt, glasses, side question, recent tools and session
+management.
 
 The overview shows status, project, model, context and roadmap progress. Filter
 by text or attention. Detail contains bounded latest prompt/reply, recent tools,
 resources, usage and side-question answers; it is not a full transcript browser.
 Missing resource/context fields display as unknown rather than zero. Cost is
 pi's API-equivalent usage, not a provider subscription invoice.
+
+**Usage** is pi-dash's usage view: subscription quota windows with each session's
+estimated share, then cost or tokens for today, 7 days or 30 days, per hour/6 hours/day,
+by session and by model. Like that view, it counts only the gateway machine's own session
+files and logins, not its remote hosts'. It is fetched when you open the tab and with the
+refresh icon, both only while the connection is live; it does not update by itself, and
+shows when it was made.
 
 Sessions of remote hosts are labelled `name@host`, and Projects groups each host's
 projects under its name (the gateway's own machine first; a host that did not answer
@@ -292,11 +300,11 @@ a partial failure is not treated as both arms healthy.
   Emulator fixtures must be stopped and removed after successful smoke tests.
 
 Host gates: `npm run check`, `npm test`, `npm run test:e2e`.
-`npm run api:generate` regenerates the request schema and shared snapshot fixture;
-Kotlin tests consume that actual fixture. See [API](API.md) and
+`npm run api:generate` regenerates the request schema and shared snapshot and usage
+fixtures; Kotlin tests consume those actual fixtures. See [API](API.md) and
 [acceptance procedure](ANDROID-ACCEPTANCE.md) for the remaining gates.
 
-Git/Hermes/aggregate usage-quota parity, phone close-and-restart, background-only
+Git/Hermes parity, phone close-and-restart, background-only
 phone notifications, SSH/tunnels, speech and camera/QR pairing are not added as
 speculative features. PLAN-5 identifies the first group as follow-on parity;
 this release uses explicit copy/import pairing and LAN TLS.
