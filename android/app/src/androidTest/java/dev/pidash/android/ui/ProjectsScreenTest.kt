@@ -52,7 +52,8 @@ class ProjectsScreenTest {
         val remote = Project("c", "box00", "remote", "/home/me/remote")
         vm.projects.value = Projects(listOf(first, remote), listOf(Unreachable("box01", "box01 is offline")))
         compose.setContent { MaterialTheme { ProjectsScreen(vm, enabled = true) } }
-        val header = compose.onNodeWithText("box00").assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top
+        // Section labels are drawn in capitals.
+        val header = compose.onNodeWithText("BOX00").assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top
         assertTrue(compose.onNodeWithText(first.path).fetchSemanticsNode().boundsInRoot.top < header)
         assertTrue(header < compose.onNodeWithText(remote.path).fetchSemanticsNode().boundsInRoot.top)
         compose.onNodeWithText("box01: box01 is offline").assertIsDisplayed()
