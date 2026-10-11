@@ -86,7 +86,7 @@ internal fun PairingScreen(vm: DashViewModel, host: String?) {
             preview?.let { p ->
                 Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerLowest) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(p.url, style = MaterialTheme.typography.titleSmall)
+                        Text(p.urls.joinToString("\n"), style = MaterialTheme.typography.titleSmall)
                         SelectionContainer { Text("SHA-256\n${p.fingerprint}", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
                     }
                 }

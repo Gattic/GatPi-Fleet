@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { randomUUID, X509Certificate } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { request } from "node:https";
-import { createServer, type Socket } from "node:net";
+import { connect, createServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -15,6 +15,7 @@ import { resumeBlocked } from "../src/manager/actions/launch.ts";
 import { sessionDirName } from "../src/manager/actions/sessions.ts";
 import { emptyUsage, encodeMessage, LineDecoder, PROTOCOL_VERSION, socketPath, type ClientMessage, type SessionState } from "../src/protocol/index.ts";
 import { DeviceStore } from "../src/server/auth.ts";
+import { loadConfig } from "../src/server/config.ts";
 import { CommandRequestSchema, LaunchRequestSchema, SubscriptionSchema } from "../src/server/contract.ts";
 import { Gateway } from "../src/server/gateway.ts";
 import { Receipts } from "../src/server/receipts.ts";
@@ -22,6 +23,8 @@ import { clean, ref, sessionRef, Sessions, summary } from "../src/server/session
 import { usageFixture } from "../scripts/usage-fixture.ts";
 
 const RELAY = fileURLToPath(new URL("../src/relay/main.ts", import.meta.url));
+const LATE_ADDRESS = fileURLToPath(new URL("fixtures/late-address.ts", import.meta.url));
+const DELAY_LISTEN = new URL("fixtures/delay-listen.ts", import.meta.url).href;
 
 async function until<T>(check: () => T | false | undefined, timeout = 6000): Promise<T> {
 	const end = Date.now() + timeout;
@@ -61,10 +64,10 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	await until(() => runtime.store.rows.get(String(process.pid))?.connected);
 	const devices = new DeviceStore(join(dir, "devices.json"));
 	const paired = devices.pair("test phone");
-	const gateway = new Gateway({ listen: "127.0.0.1", port: 7443, url: "https://127.0.0.1:7443", label: "test host", cert, key, devices: devices.path, auditDir: join(dir, "audit") }, runtime);
+	const gateway = new Gateway({ listen: ["127.0.0.1"], port: 7443, urls: ["https://127.0.0.1:7443"], label: "test host", cert, key, devices: devices.path, auditDir: join(dir, "audit") }, runtime);
 	await gateway.listen(0);
 	t.after(() => gateway.close());
-	const port = (gateway.server.address() as { port: number }).port;
+	const port = gateway.port;
 	const ca = readFileSync(cert);
 	const auth = `Bearer ${paired.token}`;
 	const get = (path: string, data?: unknown, authorization: string | undefined = auth, origin?: string) => new Promise<{ status: number; data: any }>((resolve, reject) => {
@@ -235,11 +238,141 @@ test("the gateway lists, drives and dismisses the sessions of remote hosts", asy
 	assert.equal(received.length, 1);
 });
 
+test("the gateway listens only on its configured addresses, and waits for one not on any interface yet", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-dash-server-addresses-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const cert = join(dir, "cert.pem"); const key = join(dir, "key.pem");
+	execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-keyout", key, "-out", cert, "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1,IP:127.0.0.2,IP:127.0.0.3"], { stdio: "ignore" });
+	const runtime = new ManagerRuntime({ runtimeDir: join(dir, "run"), agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
+	t.after(() => runtime.close());
+	const devices = new DeviceStore(join(dir, "devices.json"));
+	const { token } = devices.pair("test phone");
+	// Like the LAN and VPN addresses of the same machine, and a VPN that is not connected yet (192.0.2.1 is on no interface).
+	const gateway = new Gateway({ listen: ["127.0.0.1", "127.0.0.2", "192.0.2.1"], port: 7443, urls: ["https://127.0.0.1:7443", "https://127.0.0.2:7443"], label: "test host", cert, key, devices: devices.path, auditDir: join(dir, "audit") }, runtime);
+	await gateway.listen(0);
+	t.after(() => gateway.close());
+	const info = (hostname: string) => new Promise<number>((resolve, reject) => {
+		const req = request({ hostname, port: gateway.port, path: "/api/v1/info", ca: readFileSync(cert), headers: { Authorization: `Bearer ${token}` } }, (res) => { res.resume(); resolve(res.statusCode!); });
+		req.on("error", reject); req.end();
+	});
+	assert.equal(await info("127.0.0.1"), 200);
+	assert.equal(await info("127.0.0.2"), 200);
+	assert.deepEqual(gateway.waitingFor(), ["192.0.2.1"]);
+	// Any other address of the machine refuses the connection itself: nothing listens there to accept it.
+	await assert.rejects(info("127.0.0.3"), { code: "ECONNREFUSED" });
+});
+
+test("a gateway whose port is taken fails to start, and one stopped while it starts listens nowhere", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-dash-server-start-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const cert = join(dir, "cert.pem"); const key = join(dir, "key.pem");
+	execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-keyout", key, "-out", cert, "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1"], { stdio: "ignore" });
+	const runtime = new ManagerRuntime({ runtimeDir: join(dir, "run"), agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
+	t.after(() => runtime.close());
+	const gateway = () => new Gateway({ listen: ["127.0.0.1"], port: 7443, urls: ["https://127.0.0.1:7443"], label: "test host", cert, key, devices: join(dir, "devices.json"), auditDir: join(dir, "audit") }, runtime);
+	// Another program has the port.
+	const other = createServer();
+	await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", resolve));
+	t.after(() => other.close());
+	const taken = gateway();
+	await assert.rejects(taken.listen((other.address() as AddressInfo).port), { code: "EADDRINUSE" });
+	await taken.close();
+	// Stopped (SIGTERM) during start-up: the address it was listening on as it stopped is closed too.
+	const stopped = gateway();
+	const starting = stopped.listen(0);
+	await stopped.close();
+	await starting;
+	assert.notEqual(stopped.port, 0, "it was listening when it stopped");
+	await assert.rejects(new Promise<void>((resolve, reject) => {
+		const socket = connect(stopped.port, "127.0.0.1");
+		socket.once("connect", () => { socket.destroy(); resolve(); }).once("error", reject);
+	}), { code: "ECONNREFUSED" });
+});
+
+const networkNamespaces = spawnSync("unshare", ["-rn", "ip", "link", "set", "lo", "up"]).status === 0;
+test("addresses that appear after the gateway starts are served without a restart, unless it was stopped or the port is taken there", { skip: !networkNamespaces && "needs unprivileged network namespaces (unshare -rn) and ip" }, () => {
+	const run = spawnSync("unshare", ["-rn", process.execPath, LATE_ADDRESS], { encoding: "utf8", timeout: 30_000 });
+	assert.equal(run.status, 0, `fixture failed or did not exit: ${run.stderr}`);
+	const output = run.stdout.trim().split("\n");
+	const result = JSON.parse(output.at(-1)!);
+	assert.deepEqual(result.waitingAtStart, ["10.8.0.2"]);
+	assert.equal(result.lan, 200);
+	assert.ok(result.listenedAfterMs < 4000, `listened on after ${result.listenedAfterMs} ms`);
+	assert.equal(result.vpn, 200);
+	assert.equal(result.vpnBack, 200);
+	assert.ok(output.includes("pi-dash gateway listening on 10.8.0.2 port 7443"), "the journal says when it starts listening there");
+	// Stopped while it started: neither its first address nor the one that appeared later is served.
+	assert.equal(result.closedLan, "ECONNREFUSED");
+	assert.equal(result.closedAddress, "ECONNREFUSED");
+	assert.ok(!output.some((line) => line.includes("10.8.0.3")), "a stopped gateway does not start listening later");
+	// Another program has the port at the address that appeared: reported once, then not tried again.
+	assert.deepEqual(result.takenWaitingFor, []);
+	assert.equal(run.stderr.split("\n").filter((line) => line.includes("pi-dash gateway cannot listen on 10.8.0.4 port 7445: listen EADDRINUSE")).length, 1, run.stderr);
+	// Closed while its retry was under way, just after the first of two addresses: it does not go on to the second.
+	assert.equal(result.stoppedDuringRetry, true);
+	assert.ok(!output.some((line) => line.includes("10.8.0.6")), "a gateway closed during a retry does not listen on further addresses");
+	assert.equal(result.stoppedFirst, "ECONNREFUSED");
+	assert.equal(result.stoppedSecond, "ECONNREFUSED");
+});
+
+test("serve stopped while its gateway starts neither starts the manager nor reports listening", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-dash-stop-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	// Its own home, agent, runtime and cache directories, and no remote hosts.
+	const env = { ...process.env, HOME: dir, XDG_CONFIG_HOME: join(dir, "config"), XDG_RUNTIME_DIR: join(dir, "run"), XDG_CACHE_HOME: join(dir, "cache"), PI_CODING_AGENT_DIR: join(dir, "agent") };
+	mkdirSync(join(dir, "run"), { mode: 0o700 });
+	const probe = createServer();
+	await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+	const port = (probe.address() as AddressInfo).port;
+	await new Promise((resolve) => probe.close(resolve));
+	execFileSync(process.execPath, ["src/server/main.ts", "init", "--dir", join(dir, "gateway"), "--url", `https://127.0.0.1:${port}`], { env, stdio: "ignore" });
+	const serve = spawn(process.execPath, ["--import", DELAY_LISTEN, "src/server/main.ts", "serve", "--dir", join(dir, "gateway")], { env });
+	let stdout = "", stderr = "";
+	serve.stdout.setEncoding("utf8").on("data", (data: string) => { stdout += data; });
+	const exited = new Promise<number | null>((resolve) => serve.once("exit", resolve));
+	// The fixture holds every listen for 1.5 s: SIGTERM arrives while the gateway is still starting.
+	await new Promise<void>((resolve, reject) => {
+		serve.stderr.setEncoding("utf8").on("data", (data: string) => { stderr += data; if (stderr.includes("DELAYING listen")) resolve(); });
+		void exited.then(() => reject(new Error(`serve exited before listening: ${stderr}`)));
+	});
+	serve.kill("SIGTERM");
+	assert.equal(await exited, 0, stderr);
+	assert.equal(stdout, "", "no listening report");
+	assert.equal(existsSync(join(dir, "run", "pi-dash")), false, "the manager runtime was not started");
+});
+
+test("a configuration listens on specific addresses and lists each origin once", (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-dash-config-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const path = join(dir, "config.json");
+	const config = { listen: ["192.168.1.20", "10.8.0.2"], port: 17443, urls: ["https://192.168.1.20:17443", "https://10.8.0.2:17443"], label: "host",
+		cert: join(dir, "server.crt"), key: join(dir, "server.key"), devices: join(dir, "devices.json"), auditDir: join(dir, "audit") };
+	const load = (change: object) => { writeFileSync(path, JSON.stringify({ ...config, ...change })); return loadConfig(path); };
+	assert.deepEqual(load({}), config);
+	// Each of these would listen on every interface.
+	for (const address of ["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0"]) assert.throws(() => load({ listen: [address] }), /specific IP addresses/, address);
+	// The same address twice, however written: it would fail to start with EADDRINUSE.
+	for (const pair of [["10.8.0.2", "10.8.0.2"], ["::1", "0:0:0:0:0:0:0:1"], ["fe80::1%lo", "FE80::1%lo"], ["127.0.0.1", "::ffff:127.0.0.1"]]) assert.throws(() => load({ listen: pair }), /different/, pair.join(" "));
+	assert.deepEqual(load({ listen: ["::1", "127.0.0.1", "fe80::1%lo", "fe80::1%wlo1"] }).listen, ["::1", "127.0.0.1", "fe80::1%lo", "fe80::1%wlo1"], "different addresses stay as written");
+	// The phone refuses a pairing that lists one origin twice, however it is written.
+	assert.throws(() => load({ urls: ["https://192.168.1.20", "https://192.168.1.20:443/"] }), /different origin/);
+	// The phone reads an IPv4-mapped IPv6 host as its IPv4 address (OkHttp), so these are one origin too.
+	assert.throws(() => load({ urls: ["https://127.0.0.1:7443", "https://[::ffff:127.0.0.1]:7443"] }), /different origin/);
+	assert.throws(() => load({ urls: ["https://[0:0:0:0:0:FFFF:7F00:1]:7443", "https://127.0.0.1:7443"] }), /different origin/);
+	// A configuration from before several addresses fails loudly (docs/ANDROID.md describes the upgrade).
+	assert.throws(() => load({ listen: "192.168.1.20", urls: undefined, url: "https://192.168.1.20:17443" }), /Invalid gateway configuration/);
+});
+
 test("local CLI provisions a private certificate/device and revokes without exposing tokens in list", (t) => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-dash-provision-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	const cli = (...args: string[]) => execFileSync(process.execPath, ["src/server/main.ts", ...args, "--dir", dir], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-	cli("init", "--url", "https://127.0.0.1:7443");
+	assert.throws(() => cli("init", "--url", "https://127.0.0.1:7443", "--url", "https://10.8.0.2:7444"), /same port/);
+	// init checks the configuration it would write with the same rules, before writing anything.
+	assert.throws(() => cli("init", "--url", "https://127.0.0.1:7443", "--listen", "0.0.0.0"), /specific IP addresses/);
+	assert.throws(() => cli("init", "--url", "https://127.0.0.1:7443", "--url", "https://127.0.0.1:7443"), /different origin/);
+	assert.equal(existsSync(join(dir, "config.json")) || existsSync(join(dir, "server.key")), false);
+	cli("init", "--url", "https://127.0.0.1:7443", "--url", "https://10.8.0.2:7443", "--listen", "127.0.0.1", "--listen", "10.8.0.2");
 	// A leftover allowlist must fail loudly, not be silently ignored as if it still restricted the phone.
 	const configPath = join(dir, "config.json");
 	const config = JSON.parse(readFileSync(configPath, "utf8"));
@@ -248,9 +381,12 @@ test("local CLI provisions a private certificate/device and revokes without expo
 	assert.throws(() => cli("list"), /Invalid gateway configuration/);
 	writeFileSync(configPath, JSON.stringify(config));
 	const pairing = JSON.parse(cli("pair", "--name", "phone"));
-	assert.equal(pairing.version, 1);
+	assert.equal(pairing.version, 2);
+	// The phone gets every address, in order, and the certificate is valid for each.
+	assert.deepEqual(pairing.urls, ["https://127.0.0.1:7443", "https://10.8.0.2:7443"]);
+	assert.deepEqual(config.listen, ["127.0.0.1", "10.8.0.2"]);
+	assert.equal(new X509Certificate(pairing.caCertificate).subjectAltName, "IP Address:127.0.0.1, IP Address:10.8.0.2");
 	assert.equal(pairing.token.length, 43);
-	assert.match(pairing.caCertificate, /BEGIN CERTIFICATE/);
 	assert.equal(statSync(join(dir, "server.key")).mode & 0o777, 0o600);
 	assert.equal(statSync(join(dir, "devices.json")).mode & 0o777, 0o600);
 	assert.ok(!cli("list").includes(pairing.token));

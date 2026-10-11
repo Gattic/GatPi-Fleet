@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { createServer, type Server } from "node:https";
+import { createServer, type Server, type ServerOptions } from "node:https";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
+import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import type { ManagerRuntime } from "../manager/runtime.ts";
 import { DeviceStore } from "./auth.ts";
@@ -39,9 +41,20 @@ async function body(req: IncomingMessage): Promise<unknown> {
 	return parseJson(Buffer.concat(chunks).toString("utf8"));
 }
 
+/** How often an address not on any interface yet is tried again: a VPN not connected yet, a laptop away from its LAN. */
+const RETRY_MS = 2000;
+
 export class Gateway {
 	readonly epoch = randomUUID();
-	readonly server: Server;
+	/** One server per configured address, so the system refuses connections to any other address. */
+	private readonly servers: Map<string, Server>;
+	/** Configured addresses not on any interface yet, so not listened on. */
+	private readonly absent = new Set<string>();
+	private listenPort = 0;
+	private retry?: NodeJS.Timeout;
+	private retrying?: Promise<void>;
+	private starting?: Promise<void>;
+	private closed = false;
 	readonly sessions: Sessions;
 	readonly devices: DeviceStore;
 	private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: 4096, perMessageDeflate: false });
@@ -60,29 +73,8 @@ export class Gateway {
 		this.devices = new DeviceStore(config.devices);
 		this.audit = new Audit(config.auditDir);
 		this.receipts = new Receipts((device, receipt) => this.receiptChanged(device, receipt));
-		this.server = createServer({ cert: readFileSync(config.cert), key: readFileSync(config.key), minVersion: "TLSv1.2", handshakeTimeout: 10_000 }, (req, res) => {
-			void this.request(req, res).catch((error: unknown) => {
-				if (res.destroyed) return;
-				this.json(res, error instanceof ApiError ? error.status : 500, { error: error instanceof ApiError ? error.message : "Gateway error; check host configuration" });
-			});
-		});
-		this.server.requestTimeout = 10_000;
-		this.server.headersTimeout = 10_000;
-		this.server.keepAliveTimeout = 5000;
-		this.server.maxConnections = 32;
-		this.server.on("upgrade", (req, socket, head) => {
-			socket.on("error", () => socket.destroy());
-			try {
-				if (req.url !== "/api/v1/events" || req.headers.origin) throw new ApiError(403, "Native clients only");
-				this.limit(req);
-				const device = this.devices.authenticate(req.headers.authorization);
-				if (this.peers.size >= 16 || [...this.peers].filter((p) => p.device === device.id).length >= 4) throw new ApiError(429, "Too many connections");
-				this.sockets.handleUpgrade(req, socket, head, (ws) => this.connect(ws, device.id, req.headers.authorization!));
-			} catch (error) {
-				const status = error instanceof ApiError ? error.status : 503;
-				socket.end(`HTTP/1.1 ${status} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-			}
-		});
+		const tls: ServerOptions = { cert: readFileSync(config.cert), key: readFileSync(config.key), minVersion: "TLSv1.2", handshakeTimeout: 10_000 };
+		this.servers = new Map(config.listen.map((address) => [address, this.serve(tls)]));
 		this.unsubscribe = runtime.subscribe(() => {
 			if (!this.flushTimer) this.flushTimer = setTimeout(() => { this.flushTimer = undefined; for (const p of this.peers) this.update(p); }, 250);
 		});
@@ -98,6 +90,34 @@ export class Gateway {
 		}, 5000);
 	}
 
+	/** The server for one address. At most 32 connections each. */
+	private serve(tls: ServerOptions): Server {
+		const server = createServer(tls, (req, res) => {
+			void this.request(req, res).catch((error: unknown) => {
+				if (res.destroyed) return;
+				this.json(res, error instanceof ApiError ? error.status : 500, { error: error instanceof ApiError ? error.message : "Gateway error; check host configuration" });
+			});
+		});
+		server.requestTimeout = 10_000;
+		server.headersTimeout = 10_000;
+		server.keepAliveTimeout = 5000;
+		server.maxConnections = 32;
+		server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => this.upgrade(req, socket, head));
+		return server;
+	}
+	private upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+		socket.on("error", () => socket.destroy());
+		try {
+			if (req.url !== "/api/v1/events" || req.headers.origin) throw new ApiError(403, "Native clients only");
+			this.limit(req);
+			const device = this.devices.authenticate(req.headers.authorization);
+			if (this.peers.size >= 16 || [...this.peers].filter((p) => p.device === device.id).length >= 4) throw new ApiError(429, "Too many connections");
+			this.sockets.handleUpgrade(req, socket, head, (ws) => this.connect(ws, device.id, req.headers.authorization!));
+		} catch (error) {
+			const status = error instanceof ApiError ? error.status : 503;
+			socket.end(`HTTP/1.1 ${status} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+		}
+	}
 	private limit(req: IncomingMessage): void {
 		if (!this.rate.allow(`ip:${req.socket.remoteAddress}`, 240)) throw new ApiError(429, "Request rate exceeded");
 	}
@@ -187,13 +207,70 @@ export class Gateway {
 		this.audit.write(device, receipt.requestId, "result", receipt.state);
 		for (const p of this.peers) if (p.device === device && this.authorized(p)) this.send(p, { type: "receipt", receipt });
 	}
+	/**
+	 * Listens on every configured address, with one port. An address not on any interface yet is tried again every
+	 * RETRY_MS until it is; any other failure rejects. With port 0, the first address listened on chooses the port.
+	 */
 	listen(port = this.config.port): Promise<void> {
-		return new Promise((resolve, reject) => { this.server.once("error", reject); this.server.listen(port, this.config.listen, () => { this.server.off("error", reject); resolve(); }); });
+		this.starting = this.start(port);
+		return this.starting;
+	}
+	private async start(port: number): Promise<void> {
+		this.listenPort = port;
+		for (const address of this.servers.keys()) {
+			// Closed while starting (stopped during start-up): listen nowhere else, and retry nothing.
+			if (this.closed) return;
+			if (!await this.bind(address)) this.absent.add(address);
+		}
+		if (this.absent.size && !this.closed) this.retry = setInterval(() => { this.retrying ??= this.bindAbsent().finally(() => { this.retrying = undefined; }); }, RETRY_MS);
+	}
+	/** The port listened on. */
+	get port(): number { return this.listenPort; }
+	/** Configured addresses not on any interface yet, so not listened on. */
+	waitingFor(): string[] { return [...this.absent]; }
+	/** Listens on [address]; false if it is not on any interface. Rejects on any other failure. */
+	private bind(address: string): Promise<boolean> {
+		const server = this.servers.get(address)!;
+		return new Promise((resolve, reject) => {
+			const failed = (error: NodeJS.ErrnoException) => {
+				server.off("listening", listening);
+				if (error.code === "EADDRNOTAVAIL") resolve(false);
+				else reject(error);
+			};
+			const listening = () => {
+				server.off("error", failed);
+				if (!this.listenPort) this.listenPort = (server.address() as AddressInfo).port;
+				resolve(true);
+			};
+			server.once("error", failed).once("listening", listening).listen(this.listenPort, address);
+		});
+	}
+	private async bindAbsent(): Promise<void> {
+		for (const address of [...this.absent]) {
+			// Closed during this retry: listen on no further address. close() waits for this retry, then closes the rest.
+			if (this.closed) return;
+			try {
+				if (!await this.bind(address)) continue;
+				console.log(`pi-dash gateway listening on ${address} port ${this.listenPort}`);
+			} catch (error) {
+				// Any other failure (another program has the port there, say) is reported once, and the address stays unused
+				// until the gateway restarts, rather than logged every RETRY_MS.
+				console.error(`pi-dash gateway cannot listen on ${address} port ${this.listenPort}: ${error instanceof Error ? error.message : "unknown error"}`);
+			}
+			this.absent.delete(address);
+		}
+		if (!this.absent.size) clearInterval(this.retry);
 	}
 	async close(): Promise<void> {
-		this.unsubscribe(); clearInterval(this.heartbeat); clearTimeout(this.flushTimer);
+		this.closed = true;
+		this.unsubscribe(); clearInterval(this.heartbeat); clearTimeout(this.flushTimer); clearInterval(this.retry);
+		// A start or retry under way may still start listening: wait for it, so its server is closed too. A failed
+		// start was already reported to the caller of listen().
+		await this.starting?.catch(() => {});
+		await this.retrying;
 		for (const p of this.peers) p.ws.terminate();
 		this.sockets.close();
-		await new Promise<void>((resolve, reject) => this.server.close((error) => error ? reject(error) : resolve()));
+		await Promise.all([...this.servers.values()].filter((server) => server.listening)
+			.map((server) => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))));
 	}
 }

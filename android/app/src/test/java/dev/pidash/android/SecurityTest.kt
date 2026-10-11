@@ -5,6 +5,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -14,15 +15,18 @@ import java.security.MessageDigest
 import java.util.Collections
 import kotlin.concurrent.thread
 
+/** A pairing document as `pi-dash-server pair` prints it, for a gateway with [cert] at [urls]. */
+internal fun pairingDocument(cert: HeldCertificate, vararg urls: String) = JSONObject().put("version", 2).put("urls", JSONArray(urls.map { it.trimEnd('/') }))
+    .put("token", "a".repeat(43)).put("caCertificate", cert.certificatePem())
+    .put("fingerprint", MessageDigest.getInstance("SHA-256").digest(cert.certificate.encoded).joinToString(":") { "%02X".format(it) }).toString()
+
 class SecurityTest {
-    private fun document(cert: HeldCertificate, url: String) = JSONObject().put("version", 1).put("url", url.trimEnd('/'))
-        .put("token", "a".repeat(43)).put("caCertificate", cert.certificatePem())
-        .put("fingerprint", MessageDigest.getInstance("SHA-256").digest(cert.certificate.encoded).joinToString(":") { "%02X".format(it) }).toString()
     @Test fun rejectsCleartextCredentialsInUrlsAndMismatchedFingerprint() {
         val cert = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
-        assertThrows(IllegalArgumentException::class.java) { Pairing.parse(document(cert, "http://localhost:1234")) }
-        assertThrows(IllegalArgumentException::class.java) { Pairing.parse(document(cert, "https://user:secret@localhost:1234")) }
-        val wrong = JSONObject(document(cert, "https://localhost:1234")).put("fingerprint", "wrong").toString()
+        assertThrows(IllegalArgumentException::class.java) { Pairing.parse(pairingDocument(cert, "http://localhost:1234")) }
+        assertThrows(IllegalArgumentException::class.java) { Pairing.parse(pairingDocument(cert, "https://user:secret@localhost:1234")) }
+        assertThrows(IllegalArgumentException::class.java) { Pairing.parse(pairingDocument(cert, "https://localhost:1234", "http://localhost:1235")) }
+        val wrong = JSONObject(pairingDocument(cert, "https://localhost:1234")).put("fingerprint", "wrong").toString()
         assertThrows(IllegalArgumentException::class.java) { Pairing.parse(wrong) }
     }
     @Test fun trustsOnlyTheProvisionedCertificateAndKeepsHostnameVerification() {
@@ -30,19 +34,40 @@ class SecurityTest {
         MockWebServer().use { server ->
             server.useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory(), false)
             server.start()
-            val pair = Pairing.parse(document(cert, server.url("/").toString()))
+            val pair = Pairing.parse(pairingDocument(cert, server.url("/").toString()))
             val client = pair.client()
             server.enqueue(MockResponse().setBody("{\"version\":1}"))
-            assertEquals(1, runBlocking { gatewayJson(client, pair, "/api/v1/info") }.getInt("version"))
+            assertEquals(1, runBlocking { gatewayJson(client, pair.urls.single(), pair.token, "/api/v1/info") }.getInt("version"))
             assertEquals("Bearer " + "a".repeat(43), server.takeRequest().getHeader("Authorization"))
             val other = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
-            val wrongTrust = Pairing.parse(document(other, server.url("/").toString()))
+            val wrongTrust = Pairing.parse(pairingDocument(other, server.url("/").toString()))
             val untrusted = wrongTrust.client()
-            assertThrows(javax.net.ssl.SSLHandshakeException::class.java) { runBlocking { gatewayJson(untrusted, wrongTrust, "/api/v1/info") } }
+            assertThrows(javax.net.ssl.SSLHandshakeException::class.java) { runBlocking { gatewayJson(untrusted, wrongTrust.urls.single(), wrongTrust.token, "/api/v1/info") } }
             untrusted.connectionPool.evictAll(); untrusted.dispatcher.executorService.shutdown()
-            val wrongHost = Pairing.parse(document(cert, "https://127.0.0.1:${server.port}"))
-            assertThrows(javax.net.ssl.SSLPeerUnverifiedException::class.java) { runBlocking { gatewayJson(client, wrongHost, "/api/v1/info") } }
+            val wrongHost = Pairing.parse(pairingDocument(cert, "https://127.0.0.1:${server.port}"))
+            assertThrows(javax.net.ssl.SSLPeerUnverifiedException::class.java) { runBlocking { gatewayJson(client, wrongHost.urls.single(), wrongHost.token, "/api/v1/info") } }
             client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown()
+        }
+    }
+    @Test fun pairingUsesTheFirstOriginThatAnswersButNotPastARefusal() {
+        val cert = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+        val tls = HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory()
+        // Like the LAN address while the phone is on the VPN: nothing answers there.
+        val unreachable = "https://localhost:" + java.net.ServerSocket(0).use { it.localPort }
+        MockWebServer().use { first ->
+            MockWebServer().use { second ->
+                first.useHttps(tls, false); second.useHttps(tls, false)
+                first.start(); second.start()
+                val reachable = Pairing.parse(pairingDocument(cert, unreachable, second.url("/").toString()))
+                val client = reachable.client()
+                second.enqueue(MockResponse().setBody("{\"version\":1}"))
+                assertEquals(reachable.urls[1], runBlocking { firstReachable(client, reachable) })
+                first.enqueue(MockResponse().setResponseCode(401).setBody("{\"error\":\"Unauthorized\"}"))
+                val refused = Pairing.parse(pairingDocument(cert, first.url("/").toString(), second.url("/").toString()))
+                assertThrows(GatewayFailure::class.java) { runBlocking { firstReachable(client, refused) } }
+                assertEquals(1, second.requestCount)
+                client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown()
+            }
         }
     }
     @Test fun requestsAfterTheGatewayClosedAnIdleConnectionReachItExactlyOnce() {
@@ -72,14 +97,14 @@ class SecurityTest {
                     }
                 }
             }
-            val pair = Pairing.parse(document(cert, "https://localhost:${listener.localPort}"))
+            val pair = Pairing.parse(pairingDocument(cert, "https://localhost:${listener.localPort}"))
             val client = pair.client()
-            assertEquals(1, runBlocking { gatewayJson(client, pair, "/api/v1/projects") }.getInt("n"))
+            assertEquals(1, runBlocking { gatewayJson(client, pair.urls.single(), pair.token, "/api/v1/projects") }.getInt("n"))
             Thread.sleep(600)
-            assertEquals(2, runBlocking { gatewayJson(client, pair, "/api/v1/projects") }.getInt("n"))
+            assertEquals(2, runBlocking { gatewayJson(client, pair.urls.single(), pair.token, "/api/v1/projects") }.getInt("n"))
             Thread.sleep(600)
             // A command is never retried, so it must not be written to a connection the gateway has closed.
-            assertEquals(3, runBlocking { gatewayJson(client, pair, "/api/v1/sessions", JSONObject().put("projectId", "p")) }.getInt("n"))
+            assertEquals(3, runBlocking { gatewayJson(client, pair.urls.single(), pair.token, "/api/v1/sessions", JSONObject().put("projectId", "p")) }.getInt("n"))
             assertEquals(listOf("GET /api/v1/projects", "GET /api/v1/projects", "POST /api/v1/sessions"), received.toList())
             client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown()
         }
@@ -89,10 +114,10 @@ class SecurityTest {
         MockWebServer().use { server ->
             server.useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory(), false)
             server.start()
-            val pair = Pairing.parse(document(cert, server.url("/").toString()))
+            val pair = Pairing.parse(pairingDocument(cert, server.url("/").toString()))
             val client = pair.client()
             server.enqueue(MockResponse().setResponseCode(307).addHeader("Location", server.url("/other")).setBody("{\"error\":\"redirect rejected\"}"))
-            assertThrows(GatewayFailure::class.java) { runBlocking { gatewayJson(client, pair, "/command", JSONObject().put("kind", "abort")) } }
+            assertThrows(GatewayFailure::class.java) { runBlocking { gatewayJson(client, pair.urls.single(), pair.token, "/command", JSONObject().put("kind", "abort")) } }
             assertEquals(1, server.requestCount)
             client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown()
         }

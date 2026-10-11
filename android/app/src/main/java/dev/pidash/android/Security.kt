@@ -23,14 +23,21 @@ import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 
 // Never a data class: generated toString() must not print credentials.
-class Pairing(val url: String, val token: String, val ca: String, val fingerprint: String) {
+/** [urls]: the host's origins in order of preference, e.g. its LAN then its VPN address; the phone can reach only some of them at a time. */
+class Pairing(val urls: List<String>, val token: String, val ca: String, val fingerprint: String) {
     companion object {
         fun parse(text: String): Pairing {
             require(text.length <= 16_000) { "Pairing document too large" }
             val j = JSONObject(text)
-            require(j.getInt("version") == 1) { "Unsupported pairing version" }
-            val url = j.getString("url").toHttpUrl()
-            require(url.isHttps && url.username.isEmpty() && url.password.isEmpty() && url.encodedPath == "/" && url.query == null && url.fragment == null) { "Pairing URL must be an HTTPS origin" }
+            require(j.getInt("version") == 2) { "Unsupported pairing version; pair again with the updated host" }
+            val array = j.getJSONArray("urls")
+            require(array.length() in 1..8) { "Pairing needs one to eight URLs" }
+            val urls = (0 until array.length()).map { i ->
+                val url = array.getString(i).toHttpUrl()
+                require(url.isHttps && url.username.isEmpty() && url.password.isEmpty() && url.encodedPath == "/" && url.query == null && url.fragment == null) { "Pairing URL must be an HTTPS origin" }
+                url.toString().trimEnd('/')
+            }
+            require(urls.distinct().size == urls.size) { "Duplicate pairing URL" }
             val token = j.getString("token")
             require(Regex("[A-Za-z0-9_-]{43}").matches(token)) { "Invalid device token" }
             val ca = j.getString("caCertificate")
@@ -38,7 +45,7 @@ class Pairing(val url: String, val token: String, val ca: String, val fingerprin
             cert.checkValidity()
             val fingerprint = MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString(":") { "%02X".format(it) }
             require(fingerprint.equals(j.getString("fingerprint"), ignoreCase = true)) { "Certificate fingerprint mismatch" }
-            return Pairing(url.toString().trimEnd('/'), token, ca, fingerprint)
+            return Pairing(urls, token, ca, fingerprint)
         }
         fun certificate(pem: String): X509Certificate = CertificateFactory.getInstance("X.509").generateCertificate(pem.byteInputStream()) as X509Certificate
     }
@@ -57,8 +64,16 @@ class Pairing(val url: String, val token: String, val ca: String, val fingerprin
     }
 }
 
+/** Named values kept between runs of the app: the pairing, drafts and an unconfirmed action. */
+interface SecretStorage {
+    fun read(name: String): String?
+    /** A null [value] erases [name]. */
+    fun save(name: String, value: String?)
+    fun clear()
+}
+
 /** Private, backup-excluded storage. Credentials and drafts use an Android Keystore AES key. */
-class Vault(context: Context) {
+class Vault(context: Context) : SecretStorage {
     private val prefs = context.getSharedPreferences("vault", Context.MODE_PRIVATE)
     private val alias = "pi-dash-storage"
     private fun key(): SecretKey {
@@ -69,7 +84,7 @@ class Vault(context: Context) {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
-    @Synchronized fun read(name: String): String? {
+    @Synchronized override fun read(name: String): String? {
         val encoded = prefs.getString(name, null) ?: return null
         val bytes = Base64.decode(encoded, Base64.NO_WRAP)
         require(bytes.size > 12) { "Encrypted preferences are damaged; re-pair this device" }
@@ -78,7 +93,7 @@ class Vault(context: Context) {
         cipher.updateAAD(name.toByteArray())
         return cipher.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8)
     }
-    @Synchronized fun save(name: String, value: String?) {
+    @Synchronized override fun save(name: String, value: String?) {
         if (value == null) { check(prefs.edit().remove(name).commit()) { "Unable to erase local state" }; return }
         // Three 32k drafts may expand sixfold when JSON-escaped.
         require(value.length <= 600_000) { "Local storage item too large" }
@@ -88,5 +103,5 @@ class Vault(context: Context) {
         val encoded = Base64.encodeToString(cipher.iv + cipher.doFinal(value.toByteArray()), Base64.NO_WRAP)
         check(prefs.edit().putString(name, encoded).commit()) { "Unable to save local settings" }
     }
-    @Synchronized fun clear() { check(prefs.edit().clear().commit()) }
+    @Synchronized override fun clear() { check(prefs.edit().clear().commit()) }
 }

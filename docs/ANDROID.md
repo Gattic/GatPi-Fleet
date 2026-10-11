@@ -32,9 +32,37 @@ pi-dash-server pair --name my-phone
 pi-dash-server serve
 ```
 
+If the phone also reaches the host at another address, such as its VPN address when
+the phone is away from the LAN, repeat `--url` and `--listen` for each one (one port):
+
+```sh
+pi-dash-server init --url https://192.168.1.20:7443 --url https://10.8.0.2:7443 \
+  --listen 192.168.1.20 --listen 10.8.0.2
+```
+
+The certificate is valid for every URL, and the pairing gives the phone all of them in
+this order, which is the order of preference: list the LAN address first. Pairing and each
+connection start with the first URL and move on to the next when one cannot be reached
+(within 3 s for all but the last), so away from the LAN the phone uses the VPN, and back on
+it the LAN. Requests go to the URL of the live connection. An address added later needs a
+new configuration and re-pairing (below).
+A VPN address works only if the VPN delivers traffic between its clients (for an OpenVPN
+server, `client-to-client` or forwarding between clients); reaching the VPN server and
+its LAN is not enough.
+
 `init` creates `~/.config/pi-dash-server/config.json`, a private TLS key and a
-one-year self-signed CA/server certificate. The default bind is loopback if
-`--listen` is omitted. The gateway also shows and drives the sessions of the remote
+one-year self-signed CA/server certificate. The `listen` addresses default to loopback
+if `--listen` is omitted. Each must be one IP address of this host: `0.0.0.0` and `::`
+(every interface) are refused, as is the same address twice, however written (`::1` and
+`0:0:0:0:0:0:0:1`, or `127.0.0.1` and `::ffff:127.0.0.1`), or the same URL twice, also
+written that way (the phone reads `https://[::ffff:127.0.0.1]` as `https://127.0.0.1`). The
+gateway listens on the configured addresses only, so the system refuses connections to
+any other. One that is absent at start (a VPN not yet connected, a laptop away from its
+LAN) is tried again every 2 s and served once it appears, without a restart; the journal
+then says `pi-dash gateway listening on ADDRESS`. It keeps being served when the address
+goes away and comes back. If another program has the port there, the journal says
+`cannot listen on ADDRESS` once and that address stays unused until the gateway
+restarts; a port in use at start stops the gateway. The gateway also shows and drives the sessions of the remote
 hosts listed in pi-dash's `~/.config/pi-dash/hosts.json` (README, "Remote hosts"),
 over its own ssh links. New/Resume offer the same projects as the dashboard's `n`
 picker on each host: every directory with pi session history plus those of open
@@ -42,7 +70,12 @@ sessions.
 Project paths/session references supplied by a client are never executed as
 arbitrary filesystem or shell paths.
 
-Restrict TCP 7443 to your trusted LAN/phone using your host firewall. Do not
+The listen addresses choose which of this host's addresses answer, not which networks may
+connect. Linux accepts a connection to any of its addresses arriving on any interface, so
+a device on the LAN that routes `10.8.0.2` to this host reaches the VPN address too, and
+every client of the VPN can reach the LAN address the same way. Every connection still
+needs the pinned certificate and a device token. Restrict TCP 7443 by source network or
+interface with your host firewall to your trusted LAN, VPN and phone. Do not
 port-forward this service, expose it on public Wi-Fi, or proxy it to the public
 Internet. There is deliberately no plaintext HTTP mode or cloud relay.
 
@@ -108,6 +141,25 @@ paired HTTPS URL unchanged; do not retain a second active configuration.
 
 Preserve private permissions (directory `0700`, configuration/identity files
 `0600`).
+
+#### Upgrading from a single-address gateway
+
+Gateways from before several addresses fail to start with `Invalid gateway
+configuration` (`listen` and `url` were single values), and the app no longer accepts
+their pairing documents (version 1); it asks to re-pair. Create a new configuration
+in a new directory with every address, switch to it, and pair again:
+
+```sh
+systemctl --user stop pi-dash-server
+mv ~/.config/pi-dash-server ~/.config/pi-dash-server.old
+pi-dash-server init --url https://192.168.1.20:7443 --url https://10.8.0.2:7443 \
+  --listen 192.168.1.20 --listen 10.8.0.2
+systemctl --user start pi-dash-server
+pi-dash-server pair --name my-phone   # then pair the phone as below
+```
+
+The certificate is new, so compare the fingerprint on the phone again. Delete the old
+directory once the phone works; its tokens and key are no longer used.
 
 ### Pairing and revocation
 
@@ -312,4 +364,4 @@ fixtures; Kotlin tests consume those actual fixtures. See [API](API.md) and
 Git/Hermes parity, phone close-and-restart, background-only
 phone notifications, SSH/tunnels, speech and camera/QR pairing are not added as
 speculative features. PLAN-5 identifies the first group as follow-on parity;
-this release uses explicit copy/import pairing and LAN TLS.
+this release uses explicit copy/import pairing and TLS over the LAN or the owner's VPN.

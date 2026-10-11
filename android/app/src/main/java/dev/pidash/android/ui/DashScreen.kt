@@ -60,7 +60,7 @@ fun DashScreen(vm: DashViewModel = viewModel()) {
     val busy by vm.busy.collectAsStateWithLifecycle()
     val confirmation by vm.confirmation.collectAsStateWithLifecycle()
     val actionsEnabled = state.fresh && pending == null && !busy
-    // Not observable itself; pairing and erasing replace the state above, so re-read it here.
+    // Not observable itself; pairing, erasing and each connection attempt change the state above, so re-read it here.
     val host = vm.repository.host()
     BackHandler(screen != Screen.Sessions, vm::back)
     Scaffold(

@@ -22,11 +22,12 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 class GatewayFailure(val status: Int, message: String) : IOException(message)
 
-suspend fun gatewayJson(client: OkHttpClient, pair: Pairing, path: String, body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
-    val request = Request.Builder().url(pair.url + path).header("Authorization", "Bearer ${pair.token}")
+suspend fun gatewayJson(client: OkHttpClient, origin: String, token: String, path: String, body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
+    val request = Request.Builder().url(origin + path).header("Authorization", "Bearer $token")
     if (body != null) request.post(body.toString().toRequestBody("application/json".toMediaType()))
     client.newCall(request.build()).execute().use { response ->
         val source = response.body?.source() ?: throw IOException("Empty gateway response")
@@ -38,13 +39,35 @@ suspend fun gatewayJson(client: OkHttpClient, pair: Pairing, path: String, body:
     }
 }
 
-class GatewayRepository(private val scope: CoroutineScope, private val vault: Vault) {
+/**
+ * The client for one attempt to reach [origin]. Every origin but the last has another to fall back on: one that
+ * does not answer (the LAN address, away from it) must not hold up the next for long.
+ */
+private fun attemptClient(client: OkHttpClient, pair: Pairing, origin: String): OkHttpClient =
+    if (origin == pair.urls.last()) client else client.newBuilder().connectTimeout(3, TimeUnit.SECONDS).build()
+
+/** The pairing's first origin which answers. Only one that cannot be reached is skipped: a refusal comes from the paired gateway. */
+suspend fun firstReachable(client: OkHttpClient, pair: Pairing): String {
+    var unreachable: IOException? = null
+    for (origin in pair.urls) {
+        val info = try { gatewayJson(attemptClient(client, pair, origin), origin, pair.token, "/api/v1/info") }
+            catch (error: GatewayFailure) { throw error }
+            catch (error: IOException) { unreachable = error; continue }
+        require(info.getInt("version") == 1) { "Unsupported gateway version" }
+        return origin
+    }
+    throw unreachable!!
+}
+
+class GatewayRepository(private val scope: CoroutineScope, private val vault: SecretStorage) {
     private val mutable = MutableStateFlow(Dashboard())
     val state: StateFlow<Dashboard> = mutable
     private val mutablePending = MutableStateFlow<Pending?>(null)
     val pending: StateFlow<Pending?> = mutablePending
     private var pair: Pairing? = null
     private var client: OkHttpClient? = null
+    /** The pairing's origin in use. Each connection starts at the first and moves on only when one cannot be reached. */
+    private var origin: String? = null
     private var foreground = false
     private var monitoring = false
     private var runner: Job? = null
@@ -54,7 +77,10 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Va
 
     init {
         try {
-            vault.read("pairing")?.let { pair = Pairing.parse(it); client = pair!!.client() }
+            vault.read("pairing")?.let { document ->
+                val stored = Pairing.parse(document)
+                pair = stored; client = stored.client(); origin = stored.urls.first()
+            }
             vault.read("pending")?.let { val j = JSONObject(it); mutablePending.value = Pending(j.getString("id"), j.getString("epoch"), j.getString("description")) }
         } catch (_: Exception) { mutable.update { it.copy(message = "Stored credentials could not be read. Re-pair this device; any interrupted action has unknown outcome.") } }
         scope.launch {
@@ -67,7 +93,7 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Va
             }
         }
     }
-    fun host(): String? = pair?.url
+    fun host(): String? = origin
     fun foreground(value: Boolean) { foreground = value; lifecycle() }
     fun monitoring(value: Boolean) { monitoring = value; lifecycle() }
     private fun lifecycle() {
@@ -80,14 +106,12 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Va
     suspend fun pair(document: String) {
         val candidate = Pairing.parse(document)
         val next = candidate.client()
-        try {
-            val info = gatewayJson(next, candidate, "/api/v1/info")
-            require(info.getInt("version") == 1) { "Unsupported gateway version" }
-        } catch (error: Exception) { next.connectionPool.evictAll(); next.dispatcher.executorService.shutdown(); throw error }
+        val reached = try { firstReachable(next, candidate) }
+            catch (error: Exception) { next.connectionPool.evictAll(); next.dispatcher.executorService.shutdown(); throw error }
         generation++; runner?.cancel(); runner = null; socket?.cancel(); socket = null
         client?.connectionPool?.evictAll(); client?.dispatcher?.executorService?.shutdown()
         vault.save("pairing", document)
-        pair = candidate; client = next
+        pair = candidate; client = next; origin = reached
         // Pairing a different host must not carry a draft or receipt to it.
         vault.save("drafts", null); vault.save("pending", null); mutablePending.value = null
         mutable.value = Dashboard(message = "Paired securely")
@@ -96,7 +120,7 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Va
     fun logout() {
         generation++; runner?.cancel(); runner = null; socket?.cancel(); socket = null
         client?.connectionPool?.evictAll(); client?.dispatcher?.executorService?.shutdown()
-        pair = null; client = null; vault.clear(); mutablePending.value = null; mutable.value = Dashboard()
+        pair = null; client = null; origin = null; vault.clear(); mutablePending.value = null; mutable.value = Dashboard()
     }
     fun select(id: String?) {
         mutable.update { it.copy(selected = id, detail = null) }
@@ -106,11 +130,15 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Va
 
     private suspend fun connectLoop() {
         var backoff = 1000L
+        var unreached = 0 // Consecutive attempts that got no snapshot.
+        origin = pair?.urls?.first()
         while (scope.isActive && (foreground || monitoring)) {
             val pair = pair ?: return
             val client = client ?: return
+            val origin = origin ?: return
             val current = ++generation
-            mutable.update { it.copy(connected = false, fresh = false, message = "Connecting to gateway…") }
+            var reached = false
+            mutable.update { it.copy(connected = false, fresh = false, message = "Connecting to ${origin.removePrefix("https://")}…") }
             val ended = CompletableDeferred<Pair<Boolean, String>>()
             val listener = object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -128,7 +156,7 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Va
                             val frame = JSONObject(text)
                             mutable.value = reduceFrame(mutable.value, frame, clock)
                             if (frame.getString("type") == "snapshot") {
-                                backoff = 1000
+                                backoff = 1000; unreached = 0; reached = true
                                 message("Connected · commands run on the host")
                                 if (mutablePending.value != null) scope.launch { reconcile() }
                             }
@@ -144,19 +172,27 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Va
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { ended.complete((code != 4001) to if (code == 4001) "Device revoked; re-pair" else "Disconnected; reconnecting") }
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
             }
-            val ws = client.newWebSocket(Request.Builder().url(pair.url + "/api/v1/events").header("Authorization", "Bearer ${pair.token}").build(), listener)
+            val ws = attemptClient(client, pair, origin).newWebSocket(Request.Builder().url(origin + "/api/v1/events").header("Authorization", "Bearer ${pair.token}").build(), listener)
             val result = try { ended.await() } finally { ws.cancel() }
             if (current != generation) return
             generation++ // Invalidate already queued callbacks from the closed stream.
             socket = null
             mutable.update { it.copy(connected = false, fresh = false, message = result.second) }
             if (!result.first) return
+            if (reached) {
+                // The phone's network may have changed (back on the LAN): start again from the preferred origin.
+                this.origin = pair.urls.first()
+            } else {
+                // Which origin answers depends on the phone's network (LAN or VPN): try the next one before waiting.
+                this.origin = pair.urls[(pair.urls.indexOf(origin) + 1) % pair.urls.size]
+                if (++unreached % pair.urls.size != 0) continue
+            }
             delay(backoff); backoff = (backoff * 2).coerceAtMost(30_000)
         }
     }
     private suspend fun read(path: String): JSONObject {
         val pair = pair ?: error("Pair with the host first")
-        return gatewayJson(client ?: error("No gateway client"), pair, path)
+        return gatewayJson(client ?: error("No gateway client"), origin ?: error("No gateway origin"), pair.token, path)
     }
     suspend fun projects(): Projects = Projects.parse(read("/api/v1/projects"))
     suspend fun usage(): UsageReport = UsageReport.parse(read("/api/v1/usage"))
@@ -181,7 +217,7 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Va
         input.put("requestId", pending.id).put("epoch", pending.epoch)
         message("Sending $description")
         try {
-            val result = gatewayJson(client!!, pair!!, path, input)
+            val result = gatewayJson(client!!, origin!!, pair!!.token, path, input)
             acceptReceipt(result)
             if (mutablePending.value != null) reconcile()
         } catch (error: Exception) {
