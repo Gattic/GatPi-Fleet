@@ -180,6 +180,8 @@ test("abort stops the run without reporting an error or replacing the latest rep
 });
 
 test("a reload rebuilds the latest reply from history, skipping the aborted run's tool-call text", async () => {
+	const prompts = ["two\nlines", "sleep 1", "sleep 2", "steered", "sleep 30"];
+	assert.deepEqual(current().prompts, prompts, "each prompt once, where it was last sent, the steer included");
 	execFileSync("screen", ["-S", screenName, "-p", "0", "-X", "stuff", "/reload\r"]);
 	await waitFor("bye reload", () => byes.includes("reload"));
 	states.delete(pid);
@@ -188,6 +190,7 @@ test("a reload rebuilds the latest reply from history, skipping the aborted run'
 	assert.equal(state.phase, "idle");
 	assert.equal(state.lastSaid, "echo: steered");
 	assert.ok(state.lastSettledAt, "a session with history is waiting on the user, not fresh");
+	assert.deepEqual(state.prompts, prompts, "the prompts are rebuilt from the transcript");
 	const bash = state.tools.filter((run) => run.name === "bash");
 	assert.deepEqual(bash.map((run) => run.detail), ["sleep 1", "sleep 1", "sleep 2", "sleep 30"], "tool runs are rebuilt from the transcript");
 	assert.ok(bash.every((run) => run.endedAt !== undefined));

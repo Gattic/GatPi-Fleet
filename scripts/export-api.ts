@@ -8,6 +8,6 @@ process.env.TZ = "UTC";
 mkdirSync("api/fixtures", { recursive: true });
 writeFileSync("api/requests.schema.json", JSON.stringify({ command: CommandRequestSchema, launch: LaunchRequestSchema, subscribe: SubscriptionSchema }, null, 2) + "\n");
 const runtime = new ManagerRuntime();
-runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] });
+runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
 writeFileSync("api/fixtures/snapshot.json", JSON.stringify({ version: 1, epoch: "00000000-0000-4000-8000-000000000000", seq: 1, at: 1000, type: "snapshot", sessions: [summary(runtime.store.rows.get("11")!)] }, null, 2) + "\n");
 writeFileSync("api/fixtures/usage.json", JSON.stringify(usageFixture(), null, 2) + "\n");

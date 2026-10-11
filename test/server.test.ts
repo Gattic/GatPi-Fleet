@@ -38,7 +38,7 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	mkdirSync(run); mkdirSync(project);
 	const runtime = new ManagerRuntime({ runtimeDir: run, agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
 	t.after(() => runtime.close());
-	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], lastSaid: "private reply", lastPrompt: "private prompt" };
+	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], lastSaid: "private reply", lastPrompt: "private prompt" };
 	let commands = 0;
 	let bridgeSocket: Socket;
 	const bridge = createServer((s) => {
@@ -185,7 +185,7 @@ test("the gateway lists, drives and dismisses the sessions of remote hosts", asy
 	mkdirSync(sessionDir, { recursive: true });
 	const file = join(sessionDir, "a.jsonl");
 	writeFileSync(file, `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: project })}\n`);
-	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "a", sessionFile: file, cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] };
+	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "a", sessionFile: file, cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
 	const received: ClientMessage[] = [];
 	let bridgeSocket: Socket;
 	const bridge = createServer((s) => {
@@ -272,7 +272,7 @@ test("receipts preserve uncertainty, reject reused content IDs, and do not rerun
 test("mobile contract fixtures and projections keep missing metrics missing and strip terminal controls", () => {
 	assert.equal(clean("\x1b[31mred\x1b[0m\u0000"), "red");
 	const runtime = new ManagerRuntime();
-	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] });
+	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
 	const row = runtime.store.rows.get("11")!;
 	assert.equal(summary(row).resources, null);
 	assert.notEqual(sessionRef(row), sessionRef({ ...row, bridge: { ...row.bridge!, instanceId: "new" } }));

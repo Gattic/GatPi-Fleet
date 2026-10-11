@@ -6,7 +6,7 @@ TypeBox request schemas, exported by `npm run api:generate` to
 checked-in schemas and snapshot and usage fixtures with current projections; Android
 JVM tests decode those same fixtures. Responses are projected in `sessions.ts` and
 `usage.ts`, not raw bridge objects. Any incompatible wire change must change the API
-version and both clients. The local bridge protocol is separately versioned (currently 4).
+version and both clients. The local bridge protocol is separately versioned (currently 5).
 
 Every route, including WebSocket upgrade and info, requires
 `Authorization: Bearer DEVICE_TOKEN` over TLS. Tokens never appear in URLs.

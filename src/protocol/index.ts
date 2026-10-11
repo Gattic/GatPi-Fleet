@@ -3,7 +3,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /** Directory holding one `<pid>.sock` per bridged pi process (mode 0700). */
 export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -140,6 +140,9 @@ export interface AskRun {
 /** How many asks a session keeps. */
 export const MAX_ASKS = 10;
 
+/** How many earlier prompts a session offers to recall, as many as pi's editor history. */
+export const MAX_PROMPTS = 100;
+
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
@@ -168,6 +171,11 @@ export interface SessionState extends SessionIdentity {
 	/** Coarse heartbeat (≤ every 10 s) of the latest pi event, used to detect stalls. */
 	lastEventAt: number;
 	lastPrompt?: string;
+	/**
+	 * The session's prompts to recall, oldest first. Like pi's editor history, each appears once, where it
+	 * was last sent: the newest MAX_PROMPTS that fit in a size budget, whole.
+	 */
+	prompts: string[];
 	/** Full text (Markdown, bounded) of the latest assistant reply: a message with text and no tool calls. */
 	lastSaid?: string;
 	/** Suggested next prompt; absent while the agent works or without the prompt-suggestions extension. */

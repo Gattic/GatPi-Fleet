@@ -50,6 +50,7 @@ function state(pid: number, overrides: Partial<SessionState>): SessionState {
 		timeline: [],
 		models: [],
 		asks: [],
+		prompts: [],
 		...overrides,
 	};
 }

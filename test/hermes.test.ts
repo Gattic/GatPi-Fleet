@@ -23,6 +23,7 @@ function session(overrides: Partial<SessionState> = {}): SessionState {
 		timeline: [],
 		models: [],
 		asks: [],
+		prompts: [],
 		...overrides,
 	};
 }

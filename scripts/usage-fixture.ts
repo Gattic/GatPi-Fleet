@@ -9,7 +9,7 @@ const HOUR = 3_600_000;
 /** "Today" starts at local midnight, so call with TZ=UTC for the same report everywhere. */
 export function usageFixture() {
 	const runtime = new ManagerRuntime();
-	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "open-session", cwd: "/home/user/dev/pi-dash", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] });
+	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "open-session", cwd: "/home/user/dev/pi-dash", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
 	const hour = (ms: number) => String(Math.floor(ms / HOUR));
 	runtime.usage.apply({
 		type: "update",

@@ -137,7 +137,7 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 test("quit asks first while a close-and-restart is waiting for its session to exit", () => {
 	const ui = harness("/nonexistent");
 	const now = Date.now();
-	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] });
+	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
 
 	ui.press("C");
 	assert.match(ui.dialog() ?? "", /Close and start a fresh session/);
@@ -232,7 +232,7 @@ test("the phone's project list is the n picker's: open projects first, then most
 
 function session(overrides: Partial<SessionState>): SessionState {
 	const now = Date.now();
-	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], ...overrides };
+	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], ...overrides };
 }
 
 test("Hermes advisor shows action cards and confirms an ask action", async () => {

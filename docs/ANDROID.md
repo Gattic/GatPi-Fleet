@@ -295,7 +295,7 @@ a partial failure is not treated as both arms healthy.
   Receipts live only in memory. Android keeps at most three encrypted drafts.
 - TLS failures: check hostname/IP, certificate expiry, phone clock and fingerprint;
   re-provision when appropriate. Never add `trustAll`/hostname bypasses.
-- Missing sessions: same Linux user/agent directory/runtime directory, bridge v4,
+- Missing sessions: same Linux user/agent directory/runtime directory, bridge v5,
   and `/reload`. Interactive pi only: RPC/print-mode subagents do not have bridges.
 - Lost Wi-Fi/host restart: stale state is expected; inspect uncertain receipts.
 - One-arm recovery: use metadata diagnostics; stop/start monitoring explicitly if

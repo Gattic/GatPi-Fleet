@@ -16,6 +16,7 @@ import {
 	encodeMessage,
 	LineDecoder,
 	MAX_ASKS,
+	MAX_PROMPTS,
 	type PiUsage,
 	type PlanSnapshot,
 	PROMPT_SUGGESTION_CHANGED_EVENT,
@@ -43,6 +44,8 @@ const TEXT_LIMIT = 200;
 const DETAIL_LIMIT = 80;
 const SAID_LIMIT = 32_000;
 const SUGGESTION_LIMIT = 2000;
+/** Characters of prompt history: a few pasted logs must not make every session update large. */
+const PROMPTS_LIMIT = 100_000;
 
 function clip(text: string, limit: number): string {
 	const line = text.replace(/\s+/g, " ").trim();
@@ -59,6 +62,23 @@ function bound(text: string, limit: number): string {
 function replyOf(content: unknown): string {
 	if (Array.isArray(content) && content.some((block) => block?.type === "toolCall")) return "";
 	return bound(textOf(content), SAID_LIMIT);
+}
+
+/**
+ * `prompts` after `text` is sent: it becomes the newest, and an earlier copy is dropped. Then the newest
+ * prompts that fit in MAX_PROMPTS and PROMPTS_LIMIT are kept whole, skipping any too long to fit.
+ */
+function remember(prompts: readonly string[], text: string): string[] {
+	const prompt = text.trim();
+	const all = [...prompts.filter((earlier) => earlier !== prompt), prompt];
+	const kept: string[] = [];
+	let chars = 0;
+	for (let index = all.length - 1; index >= 0 && kept.length < MAX_PROMPTS; index--) {
+		if (chars + all[index].length > PROMPTS_LIMIT) continue;
+		chars += all[index].length;
+		kept.unshift(all[index]);
+	}
+	return kept;
 }
 
 function toolDetail(args: unknown): string {
@@ -124,6 +144,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 	const indirect = emptyUsage();
 	const usageMinutes: UsageMinute[] = [];
 	let lastPrompt: string | undefined;
+	let prompts: string[] = [];
 	let lastSaid: string | undefined;
 	const tools = new Map<string, ToolRun>();
 	// Runs in the transcript: working from each user message to the last message before the next one.
@@ -156,7 +177,10 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 			if (run) Object.assign(run, { endedAt: timestamp, isError: message.isError });
 		} else if (message.role === "user") {
 			const prompt = textOf(message.content);
-			if (prompt.trim()) lastPrompt = clip(prompt, TEXT_LIMIT);
+			if (prompt.trim()) {
+				lastPrompt = clip(prompt, TEXT_LIMIT);
+				prompts = remember(prompts, prompt);
+			}
 			if (lastMessageAt !== undefined && runs.at(-1)?.state === "working") runs.push({ at: lastMessageAt, state: "waiting" });
 			runs.push({ at: timestamp, state: "working" });
 		}
@@ -189,6 +213,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 		lastSettledAt,
 		lastEventAt: now,
 		lastPrompt,
+		prompts,
 		lastSaid,
 		context: context ? { tokens: context.tokens, window: context.contextWindow, percent: context.percent } : undefined,
 		usage: { direct, indirect },
@@ -604,6 +629,10 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 			}
 		} else if (message.role === "toolResult" && message.usage) {
 			recordUsage(message.usage, "indirect", message.timestamp);
+		} else if (message.role === "user" && state) {
+			// Prompts typed in pi, sent from the dashboard or the phone, steers and follow-ups alike.
+			const prompt = textOf(message.content);
+			if (prompt.trim()) set({ prompts: remember(state.prompts, prompt) });
 		}
 	});
 
