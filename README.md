@@ -84,7 +84,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `r` | resume a session of the selected project (also how you restart an exited row) |
 | `c` / `C` | close / close and start a fresh session in the same project and slot |
 | `R` | rename the session |
-| `d` | dismiss an exited row |
+| `d` | dismiss an exited row (here, in the gateway and on the phone; dismissing it on the phone removes it here too) |
 | `u` | usage view (`t` / `w` / `m`: today, 7 days, 30 days; `$`: cost or tokens) |
 | `?` | help and legend |
 | `q` | quit (sessions keep running) |
@@ -195,6 +195,9 @@ Files written: the usage index cache at `~/.cache/pi-dash/usage-index.json` (der
 30 days, about 200 KB), Hermes advisor feedback at
 `~/.cache/pi-dash/hermes-advisor-events.jsonl`, and short-lived peek captures and sockets in
 `$XDG_RUNTIME_DIR/pi-dash/` (on remote hosts too; the relay removes its captures when it ends).
+Dismissed exited sessions are empty files in `$XDG_RUNTIME_DIR/pi-dash/dismissed/`, which is how
+pi-dash and the gateway (separate processes) drop the same rows; entries older than a week are
+removed.
 `pi-dash-host` writes `~/.config/pi-dash/hosts.json` here, and on each host it adds installs
 `~/.local/share/pi-dash` (about 500 KB) and its entry in pi's `settings.json`.
 The first start indexes recent session files in a background thread; on this machine that took

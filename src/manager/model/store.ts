@@ -50,6 +50,15 @@ export function rowKey(pid: number, host?: string): string {
 	return host === undefined ? String(pid) : `${host}:${pid}`;
 }
 
+/**
+ * One run of a session, the same in every pi-dash process that sees it: the bridge's random
+ * incarnation, or for a pi without one, its process start time.
+ */
+export function rowIncarnation(row: SessionRow): string {
+	const id = row.bridge ? `${row.pid}:${row.bridge.sessionId}:${row.bridge.instanceId}` : `${row.pid}:proc:${row.proc?.startedAt ?? 0}`;
+	return row.host === undefined ? id : `${row.host}:${id}`;
+}
+
 /** A screen the dashboard launched on `host`: only a session on that host can claim it. */
 function launchKey(name: string, host: string | undefined): string {
 	return host === undefined ? name : `${host}:${name}`;

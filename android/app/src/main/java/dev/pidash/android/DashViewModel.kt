@@ -60,6 +60,8 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
         run { repository.command(session, command) }
     }
     fun ask(session: Session) { run { repository.command(session, JSONObject().put("kind", "ask").put("question", ask.value)) } }
+    /** Removes an exited session from the list, here and in pi-dash, then returns to the list. */
+    fun dismiss(session: Session) { run { repository.command(session, JSONObject().put("kind", "dismiss")); back() } }
     fun confirm(session: Session, kind: String) {
         val (title, text) = when (kind) {
             "abort" -> "Abort run?" to "Abort the current run? This does not close pi."

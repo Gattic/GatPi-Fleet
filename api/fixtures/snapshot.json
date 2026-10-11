@@ -34,7 +34,8 @@
         "compact": null,
         "rename": null,
         "model": null,
-        "thinking": null
+        "thinking": null,
+        "dismiss": "Only exited sessions can be dismissed"
       }
     }
   ]

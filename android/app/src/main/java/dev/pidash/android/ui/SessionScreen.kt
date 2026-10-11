@@ -74,7 +74,7 @@ internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean
     // A command is available when the host lists it with no reason it is blocked.
     val can = { kind: String -> enabled && session.commands.containsKey(kind) && session.commands[kind] == null }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        OverviewCard(session)
+        OverviewCard(session, can("dismiss")) { vm.dismiss(session) }
         detail.error?.let { Notice(it, Pi.Error) }
         ExchangeCard(detail)
         PromptCard(vm, session, detail.suggestion, can("prompt"))
@@ -86,7 +86,7 @@ internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean
 }
 
 @Composable
-private fun OverviewCard(session: Session) {
+private fun OverviewCard(session: Session, canDismiss: Boolean, onDismiss: () -> Unit) {
     SectionCard(null) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatusPill(session.status, session.statusLabel)
@@ -94,6 +94,13 @@ private fun OverviewCard(session: Session) {
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         session.commands["prompt"]?.let { Notice(it, Pi.Error) }
+        // Offered once the session has exited; dismissing it in pi-dash removes it here too.
+        if ("dismiss" in session.commands && session.commands["dismiss"] == null) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Hint("Dismiss removes it from the session list, here and in pi-dash.", Modifier.weight(1f))
+                FilledTonalButton(onClick = onDismiss, enabled = canDismiss) { Text("Dismiss") }
+            }
+        }
         session.plan?.let { plan ->
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(plan.title, style = MaterialTheme.typography.titleSmall)

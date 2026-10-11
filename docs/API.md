@@ -80,7 +80,10 @@ and bounded socket/device counts. There is no credential-independent health data
 
 Typed commands: prompt (32k characters; `steer`/`followUp` required while working),
 ask (4k), rename (120), model (`provider`, `id`), thinking (`level`), abort,
-shutdown, compact. No unknown properties/commands are accepted. Prompts beginning
+shutdown, compact, dismiss. No unknown properties/commands are accepted. Dismiss is
+the only command for an exited session and does not reach a bridge: it removes the
+session from the overview and from the dashboard (`d` there does the same for the
+gateway; both record dismissals in `$XDG_RUNTIME_DIR/pi-dash/dismissed/`). Prompts beginning
 with `/` are rejected: extension dialogs/slash commands require local pi. Prompts
 still grant the session its normal tool authority, so a paired phone is privileged.
 Compact requires idle state. Ask is refused while another side question is active.

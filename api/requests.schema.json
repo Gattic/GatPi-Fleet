@@ -205,6 +205,19 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "dismiss"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       }

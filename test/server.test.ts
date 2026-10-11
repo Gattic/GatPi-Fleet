@@ -138,6 +138,26 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	assert.deepEqual(gateway.sessions.projects().map((p) => p.path).sort(), [elsewhere, project].sort());
 	runtime.store.bye(12345, "quit");
 	assert.deepEqual(gateway.sessions.projects().map((p) => p.path), [project]);
+	// The phone dismisses an exited session; the dashboard, another process with its own store, lets it go too.
+	const dashboard = new ManagerRuntime({ runtimeDir: run, agent: join(dir, "agent"), cacheDir: join(dir, "dashboard-cache") });
+	t.after(() => dashboard.close());
+	dashboard.store.setState(12345, { ...state, pid: 12345, cwd: elsewhere });
+	dashboard.store.bye(12345, "quit");
+	const listed = (await get("/api/v1/sessions")).data.sessions;
+	const exited = listed.find((s: { project: string }) => s.project === elsewhere);
+	assert.equal(exited.commands.prompt, "Session exited");
+	assert.equal(exited.commands.dismiss, null);
+	assert.equal(listed.find((s: { project: string }) => s.project === project).commands.dismiss, "Only exited sessions can be dismissed");
+	const dismiss = { requestId: randomUUID(), epoch: info.epoch, revision: exited.revision, command: { kind: "dismiss" } };
+	assert.equal((await get(`/api/v1/sessions/${exited.id}/commands`, dismiss)).status, 202);
+	await until(() => frames.find((f) => f.receipt?.requestId === dismiss.requestId && f.receipt.state === "accepted"));
+	await until(() => frames.findLast((f) => f.type === "snapshot").sessions.length === 1);
+	assert.equal(commands, 1, "dismissing does not reach any bridge");
+	dashboard.releaseDismissed();
+	assert.equal(dashboard.store.rows.has("12345"), false);
+	const live = { ...dismiss, requestId: randomUUID(), revision: gateway.sessions.overview()[0].revision };
+	await get(`/api/v1/sessions/${newId}/commands`, live);
+	assert.equal((await until(() => frames.find((f) => f.receipt?.requestId === live.requestId && f.receipt.state === "failed"))).receipt.error, "Only exited sessions can be dismissed");
 	const row = runtime.store.rows.get(String(process.pid))!;
 	assert.ok(resumeBlocked([{ ...row, bridge: undefined, proc: { pid: row.pid, cwd: project, startedAt: 1 } }], project, "/file"));
 	let closed = false; ws.on("close", () => { closed = true; });

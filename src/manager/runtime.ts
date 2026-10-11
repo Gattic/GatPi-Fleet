@@ -7,7 +7,8 @@ import { BridgeHub, pidAlive } from "./collectors/bridges.ts";
 import { GpuMonitor } from "./collectors/gpu.ts";
 import { ProcSampler } from "./collectors/procs.ts";
 import { QuotaMonitor } from "./collectors/quota.ts";
-import { hostRows, rowCwd, SAMPLE_MS, Store } from "./model/store.ts";
+import { Dismissals } from "./dismissals.ts";
+import { hostRows, rowCwd, rowIncarnation, rowLabel, SAMPLE_MS, type SessionRow, Store } from "./model/store.ts";
 import { Network } from "./network.ts";
 import { RemoteHost } from "./remote/host.ts";
 import { UsageIndex } from "./usage/usage-index.ts";
@@ -27,6 +28,7 @@ export class ManagerRuntime {
 	readonly gpu = new GpuMonitor();
 	readonly quota: QuotaMonitor;
 	readonly usage: UsageIndex;
+	private readonly dismissals: Dismissals;
 	private readonly sampler = new ProcSampler();
 	private readonly listeners = new Set<() => void>();
 	/** Remote hosts with a sample request in flight. */
@@ -40,6 +42,7 @@ export class ManagerRuntime {
 		this.runtimeDir = options.runtimeDir ?? socketDir();
 		this.cacheDir = options.cacheDir ?? join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "pi-dash");
 		this.store = new Store(() => this.changed());
+		this.dismissals = new Dismissals(join(this.runtimeDir, "dismissed"));
 		this.hub = new BridgeHub(this.runtimeDir, {
 			onState: (pid, state) => this.store.setState(pid, state),
 			onBye: (pid, reason) => this.store.bye(pid, reason),
@@ -70,6 +73,21 @@ export class ManagerRuntime {
 
 	private changed(): void { for (const listener of this.listeners) listener(); }
 
+	/** Removes an exited session's row here and in this user's other pi-dash processes (dashboard, gateway). */
+	dismiss(row: SessionRow): void {
+		if (row.exitedAt === undefined) throw new Error(`${rowLabel(row)} is still running`);
+		this.dismissals.add(rowIncarnation(row));
+		this.store.dismiss(row.key);
+	}
+
+	/** Removes the exited rows that another pi-dash process dismissed. */
+	releaseDismissed(): void {
+		const exited = [...this.store.rows.values()].filter((row) => row.exitedAt !== undefined);
+		if (!exited.length) return;
+		const dismissed = this.dismissals.dismissed(exited.map(rowIncarnation));
+		for (const row of exited) if (dismissed.has(rowIncarnation(row))) this.store.dismiss(row.key);
+	}
+
 	start(): void {
 		if (this.timers.length) throw new Error("manager already started");
 		mkdirSync(this.runtimeDir, { recursive: true, mode: 0o700 });
@@ -87,7 +105,7 @@ export class ManagerRuntime {
 		this.usage.start();
 		usage();
 		this.timers = [
-			setInterval(() => { this.hub.scan(); this.store.tick(Date.now()); this.changed(); }, 1000),
+			setInterval(() => { this.hub.scan(); this.releaseDismissed(); this.store.tick(Date.now()); this.changed(); }, 1000),
 			setInterval(sample, SAMPLE_MS), setInterval(slow, 5000), setInterval(usage, 15_000),
 		];
 	}

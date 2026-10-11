@@ -175,7 +175,9 @@ pi's API-equivalent usage, not a provider subscription invoice.
 
 Phone actions: prompt, explicit steer/follow-up when working, abort, compact,
 rename, model/thinking changes, graceful close, side question, new session and
-resume in any known project. Abort/compact/close/new/resume require confirmation.
+resume in any known project, and dismissing an exited session. Dismissing
+removes it from the list on the phone and in pi-dash; `d` in pi-dash removes it from
+the phone too. Abort/compact/close/new/resume require confirmation.
 Side questions use the session's provider context and are billed separately.
 Slash commands, interactive extension dialogs and terminal attachment remain
 in desktop pi. Phone text is rendered as text, not executable terminal escapes,

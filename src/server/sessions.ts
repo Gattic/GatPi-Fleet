@@ -2,23 +2,26 @@ import { createHash } from "node:crypto";
 import { basename, isAbsolute, relative, sep } from "node:path";
 import { realpathSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
-import type { Command } from "../protocol/index.ts";
-import { openCwds, rowCwd, rowLabel, type SessionRow } from "../manager/model/store.ts";
+import { openCwds, rowCwd, rowIncarnation, rowLabel, type SessionRow } from "../manager/model/store.ts";
 import { isAlert } from "../manager/model/status.ts";
 import { launchSession, resumeBlocked } from "../manager/actions/launch.ts";
 import { listProjects, listSessions } from "../manager/actions/sessions.ts";
 import type { ManagerRuntime } from "../manager/runtime.ts";
 import { ApiError, type CommandRequest, type LaunchRequest } from "./contract.ts";
 
+type CommandKind = CommandRequest["command"]["kind"];
+const COMMANDS = ["prompt", "ask", "abort", "shutdown", "compact", "rename", "model", "thinking", "dismiss"] as const satisfies readonly CommandKind[];
+
 export const ref = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 32);
 export const clean = (text: string | undefined, max = 500): string | null => text === undefined ? null : stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").slice(0, max);
 export function sessionRef(row: SessionRow): string {
-	return ref(row.bridge ? `${row.pid}:${row.bridge.sessionId}:${row.bridge.instanceId}` : `${row.pid}:proc:${row.proc?.startedAt ?? 0}`);
+	return ref(rowIncarnation(row));
 }
 export function revision(row: SessionRow): string {
 	return ref(JSON.stringify([sessionRef(row), row.bridge?.phase, row.bridge?.phaseSince, row.bridge?.lastSettledAt, row.bridge?.model, row.bridge?.thinking, row.exitedAt]));
 }
-export function disabled(row: SessionRow, kind: Command["kind"]): string | null {
+export function disabled(row: SessionRow, kind: CommandKind): string | null {
+	if (kind === "dismiss") return row.exitedAt === undefined ? "Only exited sessions can be dismissed" : null;
 	if (row.exitedAt !== undefined) return "Session exited";
 	if (row.incompatibleVersion !== undefined) return "Reload the bridge locally (/reload)";
 	if (!row.bridge) return "No bridge; reload this session locally";
@@ -40,7 +43,7 @@ export function summary(row: SessionRow, gpuAvailable = false) {
 		plan: b?.plan ? { title: clean(b.plan.title), complete: b.plan.complete, total: b.plan.total, blocked: b.plan.blocked, active: clean(b.plan.activePath.map((s) => s.title).join(" / ")) } : null,
 		resources: r ? { cpu: r.directCpu + r.indirectCpu, memory: r.directMem + r.indirectMem, gpuMemory: gpuAvailable ? r.directGpuMem + r.indirectGpuMem : null } : null,
 		usage: b ? { tokens: b.usage.direct.tokens + b.usage.indirect.tokens, cost: b.usage.direct.cost + b.usage.indirect.cost } : null,
-		commands: Object.fromEntries((["prompt", "ask", "abort", "shutdown", "compact", "rename", "model", "thinking"] as const).map((kind) => [kind, disabled(row, kind)])),
+		commands: Object.fromEntries(COMMANDS.map((kind) => [kind, disabled(row, kind)])),
 	};
 }
 
@@ -67,11 +70,13 @@ export class Sessions {
 	async command(id: string, input: CommandRequest): Promise<void> {
 		const row = this.find(id);
 		if (revision(row) !== input.revision) throw new ApiError(409, "Session state changed; review the action again");
-		const reason = disabled(row, input.command.kind);
+		const command = input.command;
+		const reason = disabled(row, command.kind);
 		if (reason) throw new ApiError(409, reason);
-		if (input.command.kind === "prompt" && input.command.text.trimStart().startsWith("/")) throw new ApiError(400, "Slash commands require desktop pi; use the typed mobile actions");
-		if (input.command.kind === "prompt" && row.bridge!.phase === "working" && !input.command.deliverAs) throw new ApiError(400, "Choose steer or follow-up for a working session");
-		await this.runtime.hub.send(row.bridge!, input.command);
+		if (command.kind === "dismiss") return this.runtime.dismiss(row);
+		if (command.kind === "prompt" && command.text.trimStart().startsWith("/")) throw new ApiError(400, "Slash commands require desktop pi; use the typed mobile actions");
+		if (command.kind === "prompt" && row.bridge!.phase === "working" && !command.deliverAs) throw new ApiError(400, "Choose steer or follow-up for a working session");
+		await this.runtime.hub.send(row.bridge!, command);
 	}
 	/** The dashboard's new-session picker choices, in its order. */
 	projects() {

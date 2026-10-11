@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { parseGpuQuery } from "../src/manager/collectors/gpu.ts";
 import { parseQuota } from "../src/manager/collectors/quota.ts";
@@ -7,6 +10,7 @@ import { deriveStatus, STALL_MS } from "../src/manager/model/status.ts";
 import type { ResourceSample } from "../src/manager/collectors/procs.ts";
 import { rowLabel, SAMPLE_MS, Store } from "../src/manager/model/store.ts";
 import { LANE } from "../src/manager/model/status.ts";
+import { ManagerRuntime } from "../src/manager/runtime.ts";
 import { emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
 const NOW = 1_800_000_000_000;
@@ -149,6 +153,38 @@ test("a launch is claimed only by a session on the host it was launched on", () 
 	store.setState(30, bridge({ pid: 30, sty: "3.pi-proj-1234abcd" }), "box03");
 	assert.equal(store.rows.has("box03:10"), false);
 	assert.equal(store.rows.get("box03:30")?.slot, 1);
+});
+
+test("an exited session dismissed in the dashboard or the gateway leaves both, and nothing else does", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-dismiss-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	// Separate processes with their own stores, sharing this user's runtime directory.
+	const [dashboard, gateway] = ["dashboard", "gateway"].map((name) => new ManagerRuntime({ agent: join(root, "agent"), runtimeDir: join(root, "run"), cacheDir: join(root, name) }));
+	t.after(() => Promise.all([dashboard.close(), gateway.close()]));
+	for (const { store } of [dashboard, gateway]) {
+		store.setState(10, bridge({ pid: 10, instanceId: "a" }));
+		store.setState(20, bridge({ pid: 20, instanceId: "b" }));
+		store.setState(10, bridge({ pid: 10, instanceId: "a" }), "box03");
+		store.bye(10, "quit");
+		store.bye(10, "quit", "box03");
+	}
+	const keys = (runtime: ManagerRuntime) => [...runtime.store.rows.keys()].sort();
+
+	assert.throws(() => dashboard.dismiss(dashboard.store.rows.get("20")!), /still running/);
+	dashboard.dismiss(dashboard.store.rows.get("10")!);
+	assert.deepEqual(keys(dashboard), ["20", "box03:10"]);
+	gateway.releaseDismissed();
+	assert.deepEqual(keys(gateway), ["20", "box03:10"], "the same pid on another host is another session");
+
+	gateway.dismiss(gateway.store.rows.get("box03:10")!);
+	dashboard.releaseDismissed();
+	assert.deepEqual(keys(dashboard), ["20"]);
+
+	// A later pi with the same pid is a new incarnation: the old dismissal does not hide it.
+	dashboard.store.setState(10, bridge({ pid: 10, instanceId: "c" }));
+	dashboard.store.bye(10, "quit");
+	dashboard.releaseDismissed();
+	assert.deepEqual(keys(dashboard), ["10", "20"]);
 });
 
 test("Store fills a new row's activity lane from the bridge's timeline", () => {

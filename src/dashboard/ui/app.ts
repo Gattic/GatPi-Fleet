@@ -38,6 +38,8 @@ export interface Services {
 	gpu: GpuMonitor;
 	advisor: HermesAdvisorClient;
 	git: GitService;
+	/** Removes an exited session's row, also from the gateway (and so the phone). */
+	dismiss: (row: SessionRow) => void;
 	sessionRoot: string;
 	/** Private runtime directory for transient files (peek captures). */
 	runtimeDir: string;
@@ -280,7 +282,7 @@ export class App implements Component {
 				return this.pickSession(row);
 			case "d":
 				if (row.exitedAt === undefined) return this.notify("Only exited sessions can be dismissed", true);
-				this.services.store.dismiss(row.key);
+				this.services.dismiss(row);
 				return;
 			case "M":
 				return this.pickModel(row);

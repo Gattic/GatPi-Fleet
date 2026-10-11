@@ -112,6 +112,7 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 		gpu: new GpuMonitor(),
 		advisor: advisorService,
 		git,
+		dismiss: (row) => store.dismiss(row.key),
 		sessionRoot,
 		runtimeDir: "/nonexistent",
 		quit: () => quits++,
