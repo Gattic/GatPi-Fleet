@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,6 +34,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -41,13 +44,16 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -77,7 +83,7 @@ internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean
         OverviewCard(session, can("dismiss")) { vm.dismiss(session) }
         detail.error?.let { Notice(it, Pi.Error) }
         ExchangeCard(detail)
-        PromptCard(vm, session, detail.suggestion, can("prompt"))
+        PromptCard(vm, session, detail.suggestion, detail.prompts, can("prompt"))
         SessionGlassesCard(vm, detail)
         SideQuestionCard(vm, session, detail.asks, can("ask"))
         ToolsCard(detail.tools)
@@ -145,16 +151,30 @@ private fun ExchangeCard(detail: Detail) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?, enabled: Boolean) {
-    val draft by vm.draft.collectAsStateWithLifecycle()
+private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?, prompts: List<String>, enabled: Boolean) {
+    val drafts = vm.drafts
+    val draft by drafts.text.collectAsStateWithLifecycle()
+    val recall by drafts.recall.collectAsStateWithLifecycle()
     val delivery by vm.delivery.collectAsStateWithLifecycle()
+    // The field keeps its own value, so the cursor follows typing. Text the app puts in it (a recalled prompt,
+    // the suggestion, the session's saved draft) replaces that value with the cursor at its end.
+    var field by remember { mutableStateOf(TextFieldValue(drafts.text.value, TextRange(drafts.text.value.length))) }
+    LaunchedEffect(drafts) { drafts.text.collect { text -> if (text != field.text) field = TextFieldValue(text, TextRange(text.length)) } }
     SectionCard("Prompt") {
         suggestion?.let {
-            OutlinedButton(onClick = { vm.draft(it) }) {
+            OutlinedButton(onClick = { drafts.edit(it) }) {
                 Icon(Icons.Filled.Edit, null, Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.width(ButtonDefaults.IconSpacing)); Text("Edit suggested prompt")
             }
         }
-        OutlinedTextField(draft, vm::draft, Modifier.fillMaxWidth(), label = { Text("Prompt / unsent draft") }, minLines = 3, maxLines = 8)
+        // The arrows step through the session's earlier prompts, as ↑ and ↓ do in pi's editor.
+        OutlinedTextField(field, { next -> field = next; if (next.text != drafts.text.value) drafts.edit(next.text) }, Modifier.fillMaxWidth(), label = { Text("Prompt / unsent draft") }, minLines = 3, maxLines = 8,
+            trailingIcon = {
+                Column {
+                    IconButton(onClick = { drafts.older(prompts) }, enabled = recall.canOlder(prompts)) { Icon(Icons.Filled.KeyboardArrowUp, "Older prompt") }
+                    IconButton(onClick = { drafts.newer(prompts) }, enabled = recall.canNewer) { Icon(Icons.Filled.KeyboardArrowDown, "Newer prompt") }
+                }
+            },
+            supportingText = recall.position?.let { { Text("Earlier prompt ${it + 1} of ${prompts.size}") } })
         if (session.running) {
             val options = listOf("steer" to "Steer", "followUp" to "Follow-up")
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {

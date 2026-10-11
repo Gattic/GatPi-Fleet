@@ -37,9 +37,11 @@ data class Session(
 }
 data class Ask(val id: Int, val question: String, val answer: String, val status: String, val error: String?, val cost: Double?)
 data class Tool(val name: String, val detail: String, val running: Boolean, val failed: Boolean)
-data class Detail(val session: Session, val prompt: String?, val reply: String?, val suggestion: String?, val error: String?, val models: List<String>, val asks: List<Ask>, val tools: List<Tool>) {
+/** [prompts] are the session's earlier prompts to recall, oldest first. */
+data class Detail(val session: Session, val prompt: String?, val prompts: List<String>, val reply: String?, val suggestion: String?, val error: String?, val models: List<String>, val asks: List<Ask>, val tools: List<Tool>) {
     companion object {
-        fun parse(j: JSONObject) = Detail(Session.parse(j), j.text("lastPrompt"), j.text("lastSaid"), j.text("suggestion"), j.text("error"),
+        fun parse(j: JSONObject) = Detail(Session.parse(j), j.text("lastPrompt"), j.getJSONArray("prompts").let { a -> (0 until a.length()).map(a::getString) },
+            j.text("lastSaid"), j.text("suggestion"), j.text("error"),
             j.getJSONArray("models").let { a -> (0 until a.length()).map(a::getString) },
             j.getJSONArray("asks").objects().map { Ask(it.getInt("id"), it.getString("question"), it.getString("answer"), it.getString("status"), it.text("error"), it.number("cost")) },
             j.getJSONArray("tools").objects().map { Tool(it.getString("name"), it.getString("detail"), it.isNull("endedAt"), it.getBoolean("isError")) })

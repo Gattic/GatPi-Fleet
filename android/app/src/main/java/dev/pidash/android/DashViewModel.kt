@@ -12,13 +12,16 @@ enum class Screen { Sessions, Session, Projects, Usage, Glasses, Pairing }
 
 data class Confirmation(val title: String, val description: String, val target: Session? = null, val command: JSONObject? = null, val project: Project? = null, val history: History? = null, val dismissReceipt: Boolean = false)
 
-class DashViewModel(application: Application) : AndroidViewModel(application) {
+/** [drafts] are kept in the app's encrypted vault for the selected session; tests pass their own. */
+class DashViewModel @JvmOverloads constructor(
+    application: Application,
+    val drafts: Drafts = (application as DashApp).let { app -> Drafts(VaultDraftStorage(app.vault)) { app.repository.state.value.selected } },
+) : AndroidViewModel(application) {
     val app = application as DashApp
     val repository = app.repository
     val screen = MutableStateFlow(Screen.Sessions)
     val filter = MutableStateFlow("")
     val attentionOnly = MutableStateFlow(false)
-    val draft = MutableStateFlow("")
     val ask = MutableStateFlow("")
     val delivery = MutableStateFlow("followUp")
     val confirmation = MutableStateFlow<Confirmation?>(null)
@@ -31,23 +34,13 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
     val usageRange = MutableStateFlow(UsageReport.RANGES.first())
     val usageMetric = MutableStateFlow(Metric.Cost)
     val busy = MutableStateFlow(false)
-    private val drafts = linkedMapOf<String, String>()
     init {
-        try {
-            app.vault.read("drafts")?.let { text -> val json = JSONObject(text); json.keys().forEach { drafts[it] = json.getString(it).take(32_000) } }
-        } catch (_: Exception) { repository.message("Saved drafts unavailable; credentials may need re-pairing") }
+        try { drafts.restore() } catch (_: Exception) { repository.message("Saved drafts unavailable; credentials may need re-pairing") }
     }
-    fun select(session: Session) { repository.select(session.id); draft.value = drafts[session.id].orEmpty(); ask.value = ""; screen.value = Screen.Session }
+    fun select(session: Session) { repository.select(session.id); drafts.open(); ask.value = ""; screen.value = Screen.Session }
     /** Leaves session detail (or any other screen) for the overview, ending the detail subscription. */
     fun back() { screen.value = Screen.Sessions; repository.select(null) }
-    fun draft(value: String) {
-        draft.value = value.take(32_000)
-        val id = repository.state.value.selected ?: return
-        drafts.remove(id); drafts[id] = draft.value
-        while (drafts.size > 3) drafts.remove(drafts.keys.first())
-        app.vault.save("drafts", JSONObject(drafts.toMap()).toString())
-    }
-    fun resetDrafts() { drafts.clear(); draft.value = ""; ask.value = "" }
+    fun resetDrafts() { drafts.clear(); ask.value = "" }
     fun run(action: suspend () -> Unit) {
         if (busy.value) return
         viewModelScope.launch {
@@ -59,8 +52,9 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun prompt(session: Session) {
-        val command = JSONObject().put("kind", "prompt").put("text", draft.value)
+        val command = JSONObject().put("kind", "prompt").put("text", drafts.text.value)
         if (session.running) command.put("deliverAs", delivery.value)
+        drafts.sent()
         run { repository.command(session, command) }
     }
     fun ask(session: Session) { run { repository.command(session, JSONObject().put("kind", "ask").put("question", ask.value)) } }

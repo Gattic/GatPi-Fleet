@@ -177,6 +177,11 @@ management.
 The overview shows status, project, model, context and roadmap progress. Filter
 by text or attention. Detail contains bounded latest prompt/reply, recent tools,
 resources, usage and side-question answers; it is not a full transcript browser.
+The arrows beside the prompt step through the session's earlier prompts, as ↑ and ↓
+do in pi's editor: each is shown in place of the draft, and stepping down past the
+newest brings the draft back. Editing or sending a recalled prompt makes it the
+draft; until then the saved draft stays the one you typed, also if you leave the
+session.
 Missing resource/context fields display as unknown rather than zero. Cost is
 pi's API-equivalent usage, not a provider subscription invoice.
 
