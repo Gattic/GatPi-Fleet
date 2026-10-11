@@ -7,7 +7,8 @@ import { isAlert } from "../manager/model/status.ts";
 import { launchSession, resumeBlocked } from "../manager/actions/launch.ts";
 import { listProjects, listSessions, type Project, type SessionSummary } from "../manager/actions/sessions.ts";
 import type { ManagerRuntime } from "../manager/runtime.ts";
-import { ApiError, type CommandRequest, type LaunchRequest } from "./contract.ts";
+import { MAX_PROMPTS } from "../protocol/index.ts";
+import { ApiError, type CommandRequest, type LaunchRequest, MAX_PROMPT } from "./contract.ts";
 
 type CommandKind = CommandRequest["command"]["kind"];
 const COMMANDS = ["prompt", "ask", "abort", "shutdown", "compact", "rename", "model", "thinking", "dismiss"] as const satisfies readonly CommandKind[];
@@ -73,7 +74,10 @@ export class Sessions {
 		const b = row.bridge;
 		return {
 			...summary(row, Boolean(this.runtime.gpu.latest)),
-			lastPrompt: clean(b?.lastPrompt, 200), lastSaid: clean(b?.lastSaid, 32_000), suggestion: clean(b?.suggestion, 2000),
+			lastPrompt: clean(b?.lastPrompt, 200),
+			// Only prompts short enough for the phone to send again.
+			prompts: b?.prompts.slice(-MAX_PROMPTS).filter((p) => p.length <= MAX_PROMPT).map((p) => clean(p, MAX_PROMPT)) ?? [],
+			lastSaid: clean(b?.lastSaid, 32_000), suggestion: clean(b?.suggestion, 2000),
 			error: clean(b?.lastError?.message), models: b?.models.slice(0, 1000) ?? [],
 			tools: b?.tools.slice(-20).map((t) => ({ name: clean(t.name, 100), detail: clean(t.detail, 100), startedAt: t.startedAt, endedAt: t.endedAt ?? null, isError: t.isError ?? false })) ?? [],
 			asks: b?.asks.slice(-10).map((a) => ({ id: a.id, askedAt: a.askedAt, status: a.status, question: clean(a.question, 4000), answer: clean(a.answer, 32_000), error: clean(a.error), cost: a.usage?.cost ?? null })) ?? [],

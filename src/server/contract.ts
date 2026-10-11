@@ -6,12 +6,14 @@ import { THINKING_LEVELS } from "../protocol/index.ts";
 export const API_VERSION = 1;
 export const MAX_BODY = 128 * 1024;
 export const MAX_FRAME = 1024 * 1024;
+/** Characters in a prompt command. */
+export const MAX_PROMPT = 32_000;
 const text = (max: number) => Type.String({ minLength: 1, maxLength: max, pattern: "\\S" });
 const object = <P extends Type.TProperties>(properties: P) => Type.Object(properties, { additionalProperties: false });
 export const Reference = Type.String({ pattern: "^[a-f0-9]{32}$" });
 export const RequestId = Type.String({ pattern: "^[a-f0-9-]{36}$" });
 export const CommandSchema = Type.Union([
-	object({ kind: Type.Literal("prompt"), text: text(32_000), deliverAs: Type.Optional(Type.Union([Type.Literal("steer"), Type.Literal("followUp")])) }),
+	object({ kind: Type.Literal("prompt"), text: text(MAX_PROMPT), deliverAs: Type.Optional(Type.Union([Type.Literal("steer"), Type.Literal("followUp")])) }),
 	object({ kind: Type.Literal("ask"), question: text(4000) }),
 	object({ kind: Type.Literal("rename"), name: text(120) }),
 	object({ kind: Type.Literal("model"), provider: text(200), id: text(300) }),

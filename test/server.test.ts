@@ -38,7 +38,7 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	mkdirSync(run); mkdirSync(project);
 	const runtime = new ManagerRuntime({ runtimeDir: run, agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
 	t.after(() => runtime.close());
-	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], lastSaid: "private reply", lastPrompt: "private prompt" };
+	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: ["private earlier\nprompt", "x".repeat(32_001), "private prompt"], lastSaid: "private reply", lastPrompt: "private prompt" };
 	let commands = 0;
 	let bridgeSocket: Socket;
 	const bridge = createServer((s) => {
@@ -98,7 +98,9 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	assert.equal(overview.length, 1);
 	assert.ok(!JSON.stringify(overview).includes("private"));
 	const id = overview[0].id;
-	assert.equal((await get(`/api/v1/sessions/${id}`)).data.lastSaid, "private reply");
+	const detail = (await get(`/api/v1/sessions/${id}`)).data;
+	assert.equal(detail.lastSaid, "private reply");
+	assert.deepEqual(detail.prompts, ["private earlier\nprompt", "private prompt"], "only prompts short enough to send again");
 	const frames: any[] = [];
 	const ws = new WebSocket(`wss://127.0.0.1:${port}/api/v1/events`, { ca, headers: { Authorization: auth } });
 	ws.on("message", (m) => frames.push(JSON.parse(m.toString())));

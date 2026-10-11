@@ -52,11 +52,14 @@ and the 5 largest `models` (`name`, `value`; one model through several provider 
 counts once). An open session's label is its overview label; any other is
 `project › name`, `project › first prompt` or just `project` (at most 200 characters).
 
-Selected detail adds a 200-character last-prompt preview, up to 32,000 characters
-of latest reply, suggested prompt, error, model choices, 20 recent tool summaries
-and 10 bounded side-question records. It is not terminal mirroring or arbitrary
-history access. Terminal control sequences are stripped. Raw provider credentials,
-full process environment and tool output are never projected.
+Selected detail adds a 200-character last-prompt preview, `prompts` (the session's
+earlier prompts to recall, oldest first), up to 32,000 characters of latest reply,
+suggested prompt, error, model choices, 20 recent tool summaries and 10 bounded
+side-question records. Like pi's editor history, `prompts` has each prompt once, where
+it was last sent: the session's newest 100 that fit in 100,000 characters, whole, and
+only those short enough for a prompt command (32,000 characters). It is not terminal
+mirroring or arbitrary history access. Terminal control sequences are stripped. Raw
+provider credentials, full process environment and tool output are never projected.
 
 ## Stream
 
