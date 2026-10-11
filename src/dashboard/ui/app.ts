@@ -1,20 +1,23 @@
 // Root component: owns the current view, selection, overlays and user actions.
 import { existsSync, statSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import { type Component, Key, matchesKey, type OverlayHandle, type OverlayOptions, type SelectItem, stripTerminalSequences, type TUI, type TuiMouseEvent, type TuiMouseEventResult, visibleWidth } from "@earendil-works/pi-tui";
 import { type Command, THINKING_LEVELS, type DeliverAs } from "../../protocol/index.ts";
 import { gitDirtySummary, gitHeadLabel, type GitBranch, type GitOperationResult, type GitService, type GitSummary, isGitSummaryClean } from "../../manager/actions/git.ts";
-import { attachSession, readHardcopy, requestHardcopy } from "../actions/screen.ts";
+import { attachSession } from "../actions/screen.ts";
 import { launchSession, resumeBlocked } from "../../manager/actions/launch.ts";
-import { listProjects, listSessions } from "../../manager/actions/sessions.ts";
-import type { BridgeHub } from "../../manager/collectors/bridges.ts";
+import { readHardcopy, requestHardcopy } from "../../manager/actions/peek.ts";
+import { listProjects, listSessions, type Project, type SessionSummary } from "../../manager/actions/sessions.ts";
 import type { GpuMonitor } from "../../manager/collectors/gpu.ts";
 import { buildHermesSnapshot, feedbackFor, type HermesAdviceCard, type HermesAdvisorClient, type HermesCardAction } from "../hermes/advisor.ts";
 import type { QuotaMonitor } from "../../manager/collectors/quota.ts";
 import { isAlert } from "../../manager/model/status.ts";
-import { openCwds, rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../../manager/model/store.ts";
+import { hostRows, openCwds, rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../../manager/model/store.ts";
+import type { Network } from "../../manager/network.ts";
+import { RemoteGit } from "../../manager/remote/git.ts";
 import type { UsageIndex } from "../../manager/usage/usage-index.ts";
+import type { RelayOp, RelayOps } from "../../relay/protocol.ts";
 import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
 import { AskView, Composer, Confirm, Help, HermesAdviceView, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
 import { TextPane } from "./text-pane.ts";
@@ -22,13 +25,14 @@ import { keyHints, theme } from "./theme.ts";
 import { GitView } from "./git-view.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
 import { renderOverview } from "./views/overview.ts";
-import { background, SPINNER, type ViewContext, type ViewName } from "./views/shared.ts";
+import { background, hostStatusText, SPINNER, type ViewContext, type ViewName } from "./views/shared.ts";
 import { renderUsage, USAGE_RANGES, type UsageMetric, type UsageRange } from "./views/usage.ts";
 
 export interface Services {
 	tui: TUI;
 	store: Store;
-	hub: BridgeHub;
+	/** Sends commands to sessions on this machine and on the remote hosts. */
+	network: Network;
 	usage: UsageIndex;
 	quota: QuotaMonitor;
 	gpu: GpuMonitor;
@@ -54,7 +58,7 @@ const KEYS: Record<ViewName, [string, string][]> = {
 
 export class App implements Component {
 	private view: ViewName = "overview";
-	private selectedPid?: number;
+	private selectedKey?: string;
 	// A recycled or resumed session replaces its row in the same slot; selection follows it.
 	private selectedSlot?: number;
 	private range: UsageRange = "today";
@@ -64,10 +68,10 @@ export class App implements Component {
 	private overlay?: OverlayHandle;
 	private peekTimer?: NodeJS.Timeout;
 	private peekFile?: string;
-	private readonly recycles = new Map<number, { cwd: string; label: string }>();
-	// Asks sent from here that are still answering (pid → ask id), and the session whose ask view is open.
-	private readonly awaitingAnswer = new Map<number, number>();
-	private askViewPid?: number;
+	private readonly recycles = new Map<string, { host?: string; cwd: string; label: string }>();
+	// Asks sent from here that are still answering (row key → ask id), and the session whose ask view is open.
+	private readonly awaitingAnswer = new Map<string, number>();
+	private askViewKey?: string;
 	// The detail view's SAID pane: scroll position, and where it was last drawn (for the mouse).
 	private readonly said = new TextPane();
 	private saidArea: DetailView["said"];
@@ -92,18 +96,18 @@ export class App implements Component {
 
 	/** Periodic housekeeping: launch replacement sessions for closed recycles; report answers that arrive unseen. */
 	onTick(): void {
-		for (const [pid, recycle] of this.recycles) {
-			const row = this.services.store.rows.get(pid);
+		for (const [key, recycle] of this.recycles) {
+			const row = this.services.store.rows.get(key);
 			if (row && row.exitedAt === undefined) continue;
-			this.recycles.delete(pid);
-			this.launch(recycle.cwd, recycle.label, undefined, row);
+			this.recycles.delete(key);
+			this.launch(recycle.host, recycle.cwd, recycle.label, undefined, row);
 		}
-		for (const [pid, id] of this.awaitingAnswer) {
-			const row = this.services.store.rows.get(pid);
+		for (const [key, id] of this.awaitingAnswer) {
+			const row = this.services.store.rows.get(key);
 			const ask = row?.bridge?.asks.find((run) => run.id === id);
 			if (ask?.status === "answering") continue;
-			this.awaitingAnswer.delete(pid);
-			if (!row || !ask || this.askViewPid === pid) continue;
+			this.awaitingAnswer.delete(key);
+			if (!row || !ask || this.askViewKey === key) continue;
 			if (ask.status === "answered") this.notify(`${rowLabel(row)} answered your question (i to read it)`);
 			else this.notify(`${rowLabel(row)} could not answer: ${ask.error ?? "failed"}`, true);
 		}
@@ -111,17 +115,17 @@ export class App implements Component {
 
 	private selected(): SessionRow | undefined {
 		const rows = this.services.store.ordered();
-		const current = rows.find((row) => row.pid === this.selectedPid) ?? rows.find((row) => row.slot !== undefined && row.slot === this.selectedSlot) ?? rows[0];
-		this.selectedPid = current?.pid;
+		const current = rows.find((row) => row.key === this.selectedKey) ?? rows.find((row) => row.slot !== undefined && row.slot === this.selectedSlot) ?? rows[0];
+		this.selectedKey = current?.key;
 		this.selectedSlot = current?.slot;
 		return current;
 	}
 
 	private select(row: SessionRow | undefined): void {
 		if (!row) return;
-		this.selectedPid = row.pid;
+		this.selectedKey = row.key;
 		this.selectedSlot = row.slot;
-		this.services.store.acknowledge(row.pid);
+		this.services.store.acknowledge(row.key);
 	}
 
 	render(width: number): string[] {
@@ -129,6 +133,7 @@ export class App implements Component {
 		const now = Date.now();
 		const ctx: ViewContext = {
 			store: this.services.store,
+			remotes: this.services.network.remotes,
 			usage: this.services.usage,
 			quota: this.services.quota,
 			gpu: this.services.gpu,
@@ -177,7 +182,7 @@ export class App implements Component {
 			this.selectNextAttention();
 		} else if (matchesKey(data, Key.up) || data === "k" || matchesKey(data, Key.down) || data === "j") {
 			const rows = store.ordered();
-			const index = rows.findIndex((row) => row.pid === this.selected()?.pid);
+			const index = rows.findIndex((row) => row.key === this.selected()?.key);
 			const delta = matchesKey(data, Key.up) || data === "k" ? -1 : 1;
 			this.select(rows[Math.max(0, Math.min(rows.length - 1, index + delta))]);
 		} else if (matchesKey(data, Key.enter)) {
@@ -196,7 +201,7 @@ export class App implements Component {
 			const index = USAGE_RANGES.indexOf(this.range) + (matchesKey(data, Key.left) ? -1 : 1);
 			this.range = USAGE_RANGES[(index + USAGE_RANGES.length) % USAGE_RANGES.length];
 		} else if (data === "n") {
-			this.pickProject("New session in…", (cwd) => this.launch(cwd, basename(cwd)));
+			this.newSession();
 		} else {
 			const row = this.selected();
 			if (!row) {
@@ -215,7 +220,7 @@ export class App implements Component {
 			.filter((row) => isAlert(row.status.kind))
 			.sort((a, b) => (a.status.since ?? Number.POSITIVE_INFINITY) - (b.status.since ?? Number.POSITIVE_INFINITY));
 		if (!candidates.length) return this.notify("No session needs you");
-		const current = candidates.findIndex((row) => row.pid === this.selected()?.pid);
+		const current = candidates.findIndex((row) => row.key === this.selected()?.key);
 		this.select(candidates[(current + 1) % candidates.length]);
 	}
 
@@ -275,7 +280,7 @@ export class App implements Component {
 				return this.pickSession(row);
 			case "d":
 				if (row.exitedAt === undefined) return this.notify("Only exited sessions can be dismissed", true);
-				this.services.store.dismiss(row.pid);
+				this.services.store.dismiss(row.key);
 				return;
 			case "M":
 				return this.pickModel(row);
@@ -336,15 +341,17 @@ export class App implements Component {
 			this.notify(`${rowLabel(row)} has exited (r resumes it)`, true);
 			return false;
 		}
-		if (!row.bridge || !this.services.hub.isConnected(row.pid)) {
-			this.notify(`${rowLabel(row)} has no bridge connection (started before pi-dash was installed?)`, true);
+		if (!row.bridge || !this.services.network.isConnected(row)) {
+			const remote = row.host === undefined ? undefined : this.services.network.remotes.get(row.host);
+			if (remote && remote.status.kind !== "online") this.notify(`${remote.name} is ${remote.status.kind}; ${rowLabel(row)} cannot be reached`, true);
+			else this.notify(`${rowLabel(row)} has no bridge connection (started before pi-dash was installed?)`, true);
 			return false;
 		}
 		return true;
 	}
 
 	private send(row: SessionRow, command: Command, success: string): void {
-		this.services.hub.send(row.bridge!, command).then(
+		this.services.network.send(row, command).then(
 			() => this.notify(success),
 			(error: Error) => this.notify(`${rowLabel(row)}: ${error.message}`, true),
 		);
@@ -359,7 +366,7 @@ export class App implements Component {
 	private closeOverlay(): void {
 		this.overlay?.hide();
 		this.overlay = undefined;
-		this.askViewPid = undefined;
+		this.askViewKey = undefined;
 		if (this.peekTimer) clearInterval(this.peekTimer);
 		this.peekTimer = undefined;
 		if (this.peekFile) {
@@ -386,9 +393,15 @@ export class App implements Component {
 		);
 	}
 
+	/** Git runs where the session's project is. */
+	private gitFor(row: SessionRow): GitService {
+		return row.host === undefined ? this.services.git : new RemoteGit(this.services.network.remote(row.host));
+	}
+
 	private openGit(row: SessionRow): void {
 		const cwd = rowCwd(row);
 		if (!cwd) return this.notify("Unknown project directory", true);
+		const git = this.gitFor(row);
 		let summary: GitSummary | undefined;
 		let loading = false;
 		let error: string | undefined;
@@ -397,7 +410,7 @@ export class App implements Component {
 			loading = true;
 			error = undefined;
 			this.services.tui.requestRender();
-			this.services.git.getSummary(cwd).then(
+			git.getSummary(cwd).then(
 				(result) => {
 					summary = result;
 					loading = false;
@@ -417,10 +430,10 @@ export class App implements Component {
 				loading: () => loading,
 				error: () => error,
 				height: () => this.services.tui.terminal.rows,
-				onPull: () => this.confirmGitPull(cwd, summary),
-				onPush: () => this.confirmGitPush(cwd, summary),
-				onSwitch: () => void this.pickGitBranch(row, cwd, summary),
-				onStatus: () => void this.showGitStatus(row, cwd),
+				onPull: () => this.confirmGitPull(git, row, cwd, summary),
+				onPush: () => this.confirmGitPush(git, cwd, summary),
+				onSwitch: () => void this.pickGitBranch(git, row, cwd, summary),
+				onStatus: () => void this.showGitStatus(git, row, cwd),
 				onCommitPrompt: () => this.openCommitPrompt(row, summary),
 				onRefresh: refresh,
 				onClose: () => this.closeOverlay(),
@@ -430,29 +443,29 @@ export class App implements Component {
 		refresh();
 	}
 
-	private confirmGitPull(cwd: string, summary: GitSummary | undefined): void {
+	private confirmGitPull(git: GitService, row: SessionRow, cwd: string, summary: GitSummary | undefined): void {
 		if (!summary) return this.notify("Git status has not loaded yet", true);
 		if (!summary.branch) return this.notify("Cannot pull from detached HEAD", true);
 		if (!summary.upstream) return this.notify("No upstream is configured; set one in git first", true);
 		const dirty = isGitSummaryClean(summary) ? "" : `\n\nWorking tree is ${gitDirtySummary(summary)}; git may refuse if local changes overlap.`;
-		const message = `Run git pull --ff-only in ${shortPath(summary.root)} on ${gitHeadLabel(summary)}?${dirty}${this.workingSessionWarning(cwd)}`;
-		this.confirm("Git pull", message, () => this.runGitAction(() => this.services.git.pull(cwd), `pulled ${gitHeadLabel(summary)}`));
+		const message = `Run git pull --ff-only in ${this.projectPath(row.host, summary.root)} on ${gitHeadLabel(summary)}?${dirty}${this.workingSessionWarning(row.host, cwd)}`;
+		this.confirm("Git pull", message, () => this.runGitAction(() => git.pull(cwd), `pulled ${gitHeadLabel(summary)}`));
 	}
 
-	private confirmGitPush(cwd: string, summary: GitSummary | undefined): void {
+	private confirmGitPush(git: GitService, cwd: string, summary: GitSummary | undefined): void {
 		if (!summary) return this.notify("Git status has not loaded yet", true);
 		if (!summary.branch) return this.notify("Cannot push from detached HEAD", true);
 		let action: () => Promise<GitOperationResult>;
 		let command: string;
 		let target: string;
 		if (summary.upstream) {
-			action = () => this.services.git.push(cwd);
+			action = () => git.push(cwd);
 			command = "git push";
 			target = summary.upstream;
 		} else {
 			if (summary.remotes.length !== 1) return this.notify("No upstream is configured; set one in git first", true);
 			const remote = summary.remotes[0];
-			action = () => this.services.git.pushSetUpstream(cwd, remote);
+			action = () => git.pushSetUpstream(cwd, remote);
 			command = `git push -u ${remote} HEAD`;
 			target = `${remote}/${summary.branch}`;
 		}
@@ -461,13 +474,13 @@ export class App implements Component {
 		this.confirm("Git push", `Run ${command} and publish ${gitHeadLabel(summary)}${ahead} to ${target}?${behind}`, () => this.runGitAction(action, `pushed ${gitHeadLabel(summary)}`));
 	}
 
-	private async pickGitBranch(row: SessionRow, cwd: string, summary: GitSummary | undefined): Promise<void> {
+	private async pickGitBranch(git: GitService, row: SessionRow, cwd: string, summary: GitSummary | undefined): Promise<void> {
 		if (!summary) return this.notify("Git status has not loaded yet", true);
 		if (!isGitSummaryClean(summary)) return this.notify("Working tree has changes; ask the agent to review, commit, or stash first", true);
 		const menu = this.overlay;
 		let branches: GitBranch[];
 		try {
-			branches = await this.services.git.listBranches(cwd);
+			branches = await git.listBranches(cwd);
 		} catch (error) {
 			this.notify(this.gitMessage(error as Error), true);
 			return;
@@ -482,26 +495,26 @@ export class App implements Component {
 		}));
 		this.show(
 			new Picker({
-				title: `Switch branch in ${shortPath(summary.root)}`,
+				title: `Switch branch in ${this.projectPath(row.host, summary.root)}`,
 				items,
 				onSelect: (item) => {
 					if (item.value === summary.branch) {
 						this.notify(`${item.label} is already checked out`);
 						return;
 					}
-					const message = `Switch ${rowLabel(row)} from ${gitHeadLabel(summary)} to ${item.value}?${this.workingSessionWarning(cwd)}`;
-					this.confirm("Switch branch", message, () => this.runGitAction(() => this.services.git.switchBranch(cwd, item.value), `switched ${rowLabel(row)} to ${item.value}`));
+					const message = `Switch ${rowLabel(row)} from ${gitHeadLabel(summary)} to ${item.value}?${this.workingSessionWarning(row.host, cwd)}`;
+					this.confirm("Switch branch", message, () => this.runGitAction(() => git.switchBranch(cwd, item.value), `switched ${rowLabel(row)} to ${item.value}`));
 				},
 				onCancel: () => this.closeOverlay(),
 			}),
 		);
 	}
 
-	private async showGitStatus(row: SessionRow, cwd: string): Promise<void> {
+	private async showGitStatus(git: GitService, row: SessionRow, cwd: string): Promise<void> {
 		const menu = this.overlay;
 		let output: string;
 		try {
-			output = await this.services.git.status(cwd);
+			output = await git.status(cwd);
 		} catch (error) {
 			this.notify(this.gitMessage(error as Error), true);
 			return;
@@ -551,9 +564,8 @@ export class App implements Component {
 		return compact.length > GIT_MESSAGE_LIMIT ? `${compact.slice(0, GIT_MESSAGE_LIMIT - 1)}…` : compact;
 	}
 
-	private workingSessionWarning(cwd: string): string {
-		const working = this.services.store
-			.ordered()
+	private workingSessionWarning(host: string | undefined, cwd: string): string {
+		const working = hostRows(this.services.store.ordered(), host)
 			.filter((row) => row.exitedAt === undefined && rowCwd(row) === cwd && row.bridge?.phase === "working")
 			.map((row) => rowLabel(row));
 		if (!working.length) return "";
@@ -574,13 +586,13 @@ export class App implements Component {
 		this.show(
 			new Composer(this.services.tui, {
 				target: `${row.slot ?? "·"} ${rowLabel(row)}`,
-				isWorking: () => store.rows.get(row.pid)?.bridge?.phase === "working",
-				suggestion: () => store.rows.get(row.pid)?.bridge?.suggestion,
+				isWorking: () => store.rows.get(row.key)?.bridge?.phase === "working",
+				suggestion: () => store.rows.get(row.key)?.bridge?.suggestion,
 				initialText,
 				initialMode,
 				onSubmit: (text, deliverAs) => {
 					this.closeOverlay();
-					const working = store.rows.get(row.pid)?.bridge?.phase === "working";
+					const working = store.rows.get(row.key)?.bridge?.phase === "working";
 					this.send(row, { kind: "prompt", text, deliverAs: working ? deliverAs : undefined }, working ? `queued as ${deliverAs === "steer" ? "steer" : "follow-up"} for ${rowLabel(row)}` : `sent to ${rowLabel(row)}`);
 				},
 				onCancel: () => this.closeOverlay(),
@@ -591,19 +603,19 @@ export class App implements Component {
 
 	private openAsk(row: SessionRow): void {
 		if (!this.requireBridge(row)) return;
-		const { store, hub, tui } = this.services;
+		const { store, network, tui } = this.services;
 		this.show(
 			new AskView(tui, {
 				target: `${row.slot ?? "·"} ${rowLabel(row)}`,
-				asks: () => store.rows.get(row.pid)?.bridge?.asks ?? [],
+				asks: () => store.rows.get(row.key)?.bridge?.asks ?? [],
 				height: () => tui.terminal.rows,
 				onAsk: (question) =>
-					hub
-						.send(row.bridge!, { kind: "ask", question })
+					network
+						.send(row, { kind: "ask", question })
 						.then(() => {
 							// The bridge sends the new ask before its ack.
-							const id = store.rows.get(row.pid)?.bridge?.asks.at(-1)?.id;
-							if (id !== undefined) this.awaitingAnswer.set(row.pid, id);
+							const id = store.rows.get(row.key)?.bridge?.asks.at(-1)?.id;
+							if (id !== undefined) this.awaitingAnswer.set(row.key, id);
 						})
 						.finally(() => tui.requestRender()),
 				onClose: () => this.closeOverlay(),
@@ -611,7 +623,7 @@ export class App implements Component {
 			{ width: "100%", maxHeight: "100%" },
 		);
 		// After show(), which closes any earlier overlay.
-		this.askViewPid = row.pid;
+		this.askViewKey = row.key;
 	}
 
 	private openHermes(): void {
@@ -672,23 +684,23 @@ export class App implements Component {
 		});
 	}
 
-	private hermesRow(pid: number): SessionRow | undefined {
-		return this.services.store.rows.get(pid);
+	private hermesRow(session: string): SessionRow | undefined {
+		return this.services.store.rows.get(session);
 	}
 
 	private hermesActionMessage(action: HermesCardAction): string {
 		switch (action.kind) {
 			case "ask": {
-				const row = this.hermesRow(action.pid);
-				return `Ask ${row ? rowLabel(row) : `pid ${action.pid}`}: "${action.question}"?`;
+				const row = this.hermesRow(action.session);
+				return `Ask ${row ? rowLabel(row) : `session ${action.session}`}: "${action.question}"?`;
 			}
 			case "prompt": {
-				const row = this.hermesRow(action.pid);
-				return `Send prompt to ${row ? rowLabel(row) : `pid ${action.pid}`}: "${action.text}"?`;
+				const row = this.hermesRow(action.session);
+				return `Send prompt to ${row ? rowLabel(row) : `session ${action.session}`}: "${action.text}"?`;
 			}
 			case "compact": {
-				const row = this.hermesRow(action.pid);
-				return `Compact ${row ? rowLabel(row) : `pid ${action.pid}`}?`;
+				const row = this.hermesRow(action.session);
+				return `Compact ${row ? rowLabel(row) : `session ${action.session}`}?`;
 			}
 			case "notify":
 				return `Show notification: "${action.message}"?`;
@@ -706,15 +718,15 @@ export class App implements Component {
 		const failed = (detail: string) => void this.services.advisor.recordFeedback(feedbackFor(card, "failed", detail));
 		switch (action.kind) {
 			case "ask": {
-				const row = this.hermesRow(action.pid);
+				const row = this.hermesRow(action.session);
 				if (!row || !this.requireBridge(row)) {
 					failed("session unavailable");
 					return;
 				}
-				this.services.hub.send(row.bridge!, { kind: "ask", question: action.question }).then(
+				this.services.network.send(row, { kind: "ask", question: action.question }).then(
 					() => {
-						const id = this.services.store.rows.get(row.pid)?.bridge?.asks.at(-1)?.id;
-						if (id !== undefined) this.awaitingAnswer.set(row.pid, id);
+						const id = this.services.store.rows.get(row.key)?.bridge?.asks.at(-1)?.id;
+						if (id !== undefined) this.awaitingAnswer.set(row.key, id);
 						this.notify(`asked ${rowLabel(row)}`);
 						succeeded();
 					},
@@ -726,14 +738,14 @@ export class App implements Component {
 				return;
 			}
 			case "prompt": {
-				const row = this.hermesRow(action.pid);
+				const row = this.hermesRow(action.session);
 				if (!row || !this.requireBridge(row)) {
 					failed("session unavailable");
 					return;
 				}
 				const working = row.bridge?.phase === "working";
 				const deliverAs = working ? (action.deliverAs ?? "steer") : undefined;
-				this.services.hub.send(row.bridge!, { kind: "prompt", text: action.text, deliverAs }).then(
+				this.services.network.send(row, { kind: "prompt", text: action.text, deliverAs }).then(
 					() => {
 						this.notify(working ? `queued Hermes prompt for ${rowLabel(row)}` : `sent Hermes prompt to ${rowLabel(row)}`);
 						succeeded();
@@ -746,12 +758,12 @@ export class App implements Component {
 				return;
 			}
 			case "compact": {
-				const row = this.hermesRow(action.pid);
+				const row = this.hermesRow(action.session);
 				if (!row || !this.requireBridge(row)) {
 					failed("session unavailable");
 					return;
 				}
-				this.services.hub.send(row.bridge!, { kind: "compact" }).then(
+				this.services.network.send(row, { kind: "compact" }).then(
 					() => {
 						this.notify(`compacting ${rowLabel(row)}`);
 						succeeded();
@@ -785,45 +797,88 @@ export class App implements Component {
 		const working = row.bridge?.phase === "working";
 		const message = `${recycle ? "Close and start a fresh session in the same project" : "Close"} ${label}?${working ? " It closes when the current run finishes (x aborts it)." : ""}`;
 		this.confirm(recycle ? "Recycle" : "Close", message, () => {
-			if (recycle && cwd) this.recycles.set(row.pid, { cwd, label: basename(cwd) });
+			if (recycle && cwd) this.recycles.set(row.key, { host: row.host, cwd, label: basename(cwd) });
 			this.send(row, { kind: "shutdown" }, recycle ? `closing ${label}; a new session starts when it exits` : `closing ${label}`);
 		});
 	}
 
-	private launch(cwd: string, label: string, sessionFile?: string, replaces?: SessionRow): void {
+	/** A request to a remote host's relay (rejected, not thrown, for a host that is not configured). */
+	private async request<K extends RelayOp>(host: string, op: K, params: RelayOps[K]["params"]): Promise<RelayOps[K]["result"]> {
+		return this.services.network.remote(host).request(op, params);
+	}
+
+	/** A project directory as the user knows it: `~/…` here, `host:/path` on a remote host. */
+	private projectPath(host: string | undefined, path: string): string {
+		return host === undefined ? shortPath(path) : `${host}:${path}`;
+	}
+
+	/** Starts pi on `host` (this machine when undefined). */
+	private launch(host: string | undefined, cwd: string, label: string, sessionFile?: string, replaces?: SessionRow): void {
+		const started = (name: string) => {
+			this.services.store.expectLaunch(name, replaces?.slot, replaces?.key, host);
+			this.notify(`started ${name} in a detached screen (${this.projectPath(host, cwd)})`);
+		};
+		const failed = (error: Error) => this.notify(`launch failed: ${error.message}`, true);
+		if (host !== undefined) {
+			this.request(host, "launch", { cwd, label, sessionFile }).then(started, failed);
+			return;
+		}
 		try {
-			const name = launchSession({ cwd, label, sessionFile }, this.services.store.ordered(), this.services.runtimeDir);
-			this.services.store.expectLaunch(name, replaces?.slot, replaces?.pid);
-			this.notify(`started ${name} in a detached screen (${shortPath(cwd)})`);
+			started(launchSession({ cwd, label, sessionFile }, hostRows(this.services.store.ordered(), undefined), this.services.runtimeDir));
 		} catch (error) {
-			this.notify(`launch failed: ${(error as Error).message}`, true);
+			failed(error as Error);
 		}
 	}
 
-	private pickProject(title: string, onPick: (cwd: string) => void): void {
-		const live = openCwds(this.services.store.ordered());
+	/** With remote hosts configured, `n` first asks where the session should run. */
+	private newSession(): void {
+		const remotes = [...this.services.network.remotes.values()];
+		if (!remotes.length) return this.pickProject(undefined);
+		const items: SelectItem[] = [
+			{ value: "", label: hostname(), description: "this machine" },
+			...remotes.map((remote) => ({ value: remote.name, label: remote.name, description: hostStatusText(remote, Date.now()) })),
+		];
+		this.show(
+			new Picker({
+				title: "New session on…",
+				items,
+				onSelect: (item) => {
+					this.closeOverlay();
+					this.pickProject(item.value || undefined);
+				},
+				onCancel: () => this.closeOverlay(),
+			}),
+		);
+	}
+
+	private pickProject(host: string | undefined): void {
+		const live = openCwds(hostRows(this.services.store.ordered(), host));
+		if (host === undefined) return this.showProjects(undefined, listProjects(this.services.sessionRoot, live), live);
+		// A picker arriving late must not replace whatever the user opened meanwhile.
+		const before = this.overlay;
+		this.request(host, "projects", { live }).then(
+			(projects) => {
+				if (this.overlay === before) this.showProjects(host, projects, live);
+			},
+			(error: Error) => this.notify(`${host}: ${error.message}`, true),
+		);
+	}
+
+	private showProjects(host: string | undefined, projects: readonly Project[], live: readonly string[]): void {
 		const now = Date.now();
-		const items: SelectItem[] = listProjects(this.services.sessionRoot, live).map((project) => ({
+		const items: SelectItem[] = projects.map((project) => ({
 			value: project.cwd,
-			label: shortPath(project.cwd),
+			label: host === undefined ? shortPath(project.cwd) : project.cwd,
 			description: `${project.sessions} session${project.sessions === 1 ? "" : "s"} · ${live.includes(project.cwd) ? "open now" : `${fmtDuration(now - project.lastActive)} ago`}`,
 		}));
 		this.show(
 			new Picker({
-				title,
+				title: host === undefined ? "New session in…" : `New session on ${host} in…`,
 				items,
-				extraItem: (filter) => {
-					const path = filter.startsWith("~") ? join(homedir(), filter.slice(1)) : filter;
-					if (!path.startsWith("/") || items.some((item) => item.value === path)) return undefined;
-					try {
-						return existsSync(path) && statSync(path).isDirectory() ? { value: path, label: `open ${shortPath(path)}`, description: "directory" } : undefined;
-					} catch {
-						return undefined;
-					}
-				},
+				extraItem: (filter) => (host === undefined ? localDirectoryItem(filter, items) : remoteDirectoryItem(host, filter, items)),
 				onSelect: (item) => {
 					this.closeOverlay();
-					onPick(item.value);
+					this.launch(host, item.value, basename(item.value));
 				},
 				onCancel: () => this.closeOverlay(),
 			}),
@@ -833,13 +888,25 @@ export class App implements Component {
 	private pickSession(row: SessionRow): void {
 		const cwd = rowCwd(row);
 		if (!cwd) return this.notify("Unknown project directory", true);
+		if (row.host === undefined) return this.showSessions(row, cwd, listSessions(this.services.sessionRoot, cwd, this.services.usage));
+		const host = row.host;
+		const before = this.overlay;
+		this.request(host, "sessions", { cwd }).then(
+			(sessions) => {
+				if (this.overlay === before) this.showSessions(row, cwd, sessions);
+			},
+			(error: Error) => this.notify(`${host}: ${error.message}`, true),
+		);
+	}
+
+	private showSessions(row: SessionRow, cwd: string, sessions: readonly SessionSummary[]): void {
+		// Session files are paths on the session's host.
 		const open = new Map<string, SessionRow>();
-		for (const other of this.services.store.rows.values()) {
+		for (const other of hostRows(this.services.store.ordered(), row.host)) {
 			if (other.exitedAt !== undefined) continue;
 			if (other.bridge?.sessionFile) open.set(other.bridge.sessionFile, other);
 		}
 		const now = Date.now();
-		const sessions = listSessions(this.services.sessionRoot, cwd, this.services.usage);
 		const items: SelectItem[] = sessions.map((session) => {
 			const holder = open.get(session.path);
 			const usage = session.cost !== undefined ? ` · ${fmtTokens(session.tokens ?? 0)} tok · $${fmtCost(session.cost)} (30d)` : "";
@@ -854,7 +921,7 @@ export class App implements Component {
 		if (own) items.sort((a, b) => Number(b.value === own) - Number(a.value === own));
 		this.show(
 			new Picker({
-				title: `Resume in ${shortPath(cwd)}`,
+				title: `Resume in ${this.projectPath(row.host, cwd)}`,
 				items,
 				onSelect: (item) => {
 					if (open.has(item.value)) {
@@ -862,9 +929,9 @@ export class App implements Component {
 						return;
 					}
 					this.closeOverlay();
-					const blocked = resumeBlocked(this.services.store.ordered(), cwd, item.value);
+					const blocked = resumeBlocked(hostRows(this.services.store.ordered(), row.host), cwd, item.value);
 					if (blocked) return this.notify(blocked, true);
-					this.launch(cwd, basename(cwd), item.value, row.exitedAt !== undefined ? row : undefined);
+					this.launch(row.host, cwd, basename(cwd), item.value, row.exitedAt !== undefined ? row : undefined);
 				},
 				onCancel: () => this.closeOverlay(),
 			}),
@@ -875,14 +942,36 @@ export class App implements Component {
 		const sty = rowSty(row);
 		if (!sty || row.exitedAt !== undefined) return this.notify(`${rowLabel(row)} is not running inside screen`, true);
 		const window = rowWindow(row);
-		const file = join(this.services.runtimeDir, `peek-${row.pid}.txt`);
-		this.peekFile = file;
 		let lines: string[] | undefined;
-		const refresh = () => {
-			lines = readHardcopy(file) ?? lines;
-			requestHardcopy(sty, window, file);
-			this.services.tui.requestRender();
-		};
+		let refresh: () => void;
+		if (row.host === undefined) {
+			const file = join(this.services.runtimeDir, `peek-${row.pid}.txt`);
+			this.peekFile = file;
+			refresh = () => {
+				lines = readHardcopy(file) ?? lines;
+				requestHardcopy(sty, window, file);
+				this.services.tui.requestRender();
+			};
+		} else {
+			const host = row.host;
+			let waiting = false;
+			refresh = () => {
+				if (waiting) return;
+				waiting = true;
+				this.request(host, "peek", { pid: row.pid, sty, window })
+					.then(
+						(capture) => {
+							lines = capture ?? lines;
+							this.services.tui.requestRender();
+						},
+						// The peek keeps the last capture; the host's status line tells why it stopped.
+						() => {},
+					)
+					.finally(() => {
+						waiting = false;
+					});
+			};
+		}
 		refresh();
 		this.peekTimer = setInterval(refresh, PEEK_REFRESH_MS);
 		this.peekTimer.unref();
@@ -915,7 +1004,7 @@ export class App implements Component {
 		this.show(
 			new Reader({
 				title: `said · ${rowLabel(row)}`,
-				text: () => store.rows.get(row.pid)?.bridge?.lastSaid ?? "",
+				text: () => store.rows.get(row.key)?.bridge?.lastSaid ?? "",
 				height: () => this.services.tui.terminal.rows,
 				keys: [["p", "prompt"], ["Esc", "close"]],
 				onKey: (data) => {
@@ -936,9 +1025,9 @@ export class App implements Component {
 		const tui = this.services.tui;
 		this.attached = true;
 		tui.stop({ preserveScreen: true });
-		process.stdout.write(`\x1b[2J\x1b[H[pi-dash] attaching to ${sty} — press Ctrl-a d to return\n`);
+		process.stdout.write(`\x1b[2J\x1b[H[pi-dash] attaching to ${sty}${row.host === undefined ? "" : ` on ${row.host}`} — press Ctrl-a d to return\n`);
 		try {
-			await attachSession(sty, rowWindow(row));
+			await attachSession(sty, rowWindow(row), row.host);
 		} finally {
 			this.attached = false;
 			tui.start();
@@ -946,4 +1035,21 @@ export class App implements Component {
 			tui.requestRender(true);
 		}
 	}
+}
+
+/** A typed directory on this machine that the project list does not have. */
+function localDirectoryItem(filter: string, items: readonly SelectItem[]): SelectItem | undefined {
+	const path = filter.startsWith("~") ? join(homedir(), filter.slice(1)) : filter;
+	if (!path.startsWith("/") || items.some((item) => item.value === path)) return undefined;
+	try {
+		return existsSync(path) && statSync(path).isDirectory() ? { value: path, label: `open ${shortPath(path)}`, description: "directory" } : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** A typed directory on a remote host; the host checks it when the session starts (`~` is its home). */
+function remoteDirectoryItem(host: string, filter: string, items: readonly SelectItem[]): SelectItem | undefined {
+	if (!/^(\/|~(\/|$))/.test(filter) || items.some((item) => item.value === filter)) return undefined;
+	return { value: filter, label: `open ${filter}`, description: `directory on ${host}` };
 }

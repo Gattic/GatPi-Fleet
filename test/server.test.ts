@@ -53,7 +53,7 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	await new Promise<void>((resolve) => bridge.listen(socketPath(process.pid, run), resolve));
 	t.after(() => { bridgeSocket?.destroy(); bridge.close(); });
 	runtime.hub.scan();
-	await until(() => runtime.store.rows.get(process.pid)?.connected);
+	await until(() => runtime.store.rows.get(String(process.pid))?.connected);
 	const devices = new DeviceStore(join(dir, "devices.json"));
 	const paired = devices.pair("test phone");
 	const gateway = new Gateway({ listen: "127.0.0.1", port: 7443, url: "https://127.0.0.1:7443", label: "test host", cert, key, devices: devices.path, auditDir: join(dir, "audit") }, runtime);
@@ -138,7 +138,7 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	assert.deepEqual(gateway.sessions.projects().map((p) => p.path).sort(), [elsewhere, project].sort());
 	runtime.store.bye(12345, "quit");
 	assert.deepEqual(gateway.sessions.projects().map((p) => p.path), [project]);
-	const row = runtime.store.rows.get(process.pid)!;
+	const row = runtime.store.rows.get(String(process.pid))!;
 	assert.ok(resumeBlocked([{ ...row, bridge: undefined, proc: { pid: row.pid, cwd: project, startedAt: 1 } }], project, "/file"));
 	let closed = false; ws.on("close", () => { closed = true; });
 	devices.revoke(paired.device.id);
@@ -189,7 +189,7 @@ test("mobile contract fixtures and projections keep missing metrics missing and 
 	assert.equal(clean("\x1b[31mred\x1b[0m\u0000"), "red");
 	const runtime = new ManagerRuntime();
 	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] });
-	const row = runtime.store.rows.get(11)!;
+	const row = runtime.store.rows.get("11")!;
 	assert.equal(summary(row).resources, null);
 	assert.notEqual(sessionRef(row), sessionRef({ ...row, bridge: { ...row.bridge!, instanceId: "new" } }));
 	const fixture = JSON.parse(readFileSync(new URL("../api/fixtures/snapshot.json", import.meta.url), "utf8"));

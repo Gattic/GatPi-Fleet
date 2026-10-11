@@ -1,6 +1,7 @@
 # pi-dash
 
-One terminal tab to watch and drive every running [pi](https://pi.dev) session.
+One terminal tab to watch and drive every running [pi](https://pi.dev) session, on this machine
+and on the other machines of your network (over ssh).
 
 - **State at a glance**: working (with the current tool or thinking/writing), waiting for you,
   error / rate limited, stalled, exited. When a session starts needing you, its row is highlighted,
@@ -36,6 +37,8 @@ One terminal tab to watch and drive every running [pi](https://pi.dev) session.
 
 - Linux (`/proc`, cgroup v2), Node ≥ 22.19 (runs the TypeScript sources directly), GNU screen.
 - pi ≥ 1.0 with the bridge extension installed (below).
+- Remote hosts (optional): key-based ssh from this machine, and on the host GNU screen, pi, and
+  Node ≥ 22.19 on its login PATH or under `~/.nvm` (see [Remote hosts](#remote-hosts)).
 - Optional: `nvidia-smi` for GPU stats, GatPi-Harness for roadmap progress and next-prompt
   suggestions, the `pi-multi-account` failover state for quota gauges, `hermes` on PATH for the
   advisor's model-refined cards (local rule cards still work without it).
@@ -46,6 +49,7 @@ One terminal tab to watch and drive every running [pi](https://pi.dev) session.
 cd ~/dev/GatPi-Fleet && npm install          # dashboard dependencies
 pi install /home/user/dev/GatPi-Fleet      # bridge extension, loaded by new pi sessions
 ln -s /home/user/dev/GatPi-Fleet/bin/pi-dash ~/.local/bin/pi-dash
+ln -s /home/user/dev/GatPi-Fleet/bin/pi-dash-host ~/.local/bin/pi-dash-host   # remote hosts
 ```
 
 `pi install <path>` adds the local package to `~/.pi/agent/settings.json` without copying it. The
@@ -110,12 +114,50 @@ pi-dash takes mouse input for clicks and the wheel. Dragging selects text and co
 OSC 52; where the terminal does not support that, hold `Shift` while dragging to use the
 terminal's own selection.
 
+## Remote hosts
+
+pi-dash also shows and drives the pi sessions of other machines. It reaches them over ssh, so a
+host needs nothing that listens on the network, and adding a machine is one command run here:
+
+```sh
+pi-dash-host add box00 box01 boxhome    # install or update, then list them
+pi-dash-host list                       # which hosts answer, and which machine each is
+pi-dash-host remove box01              # stop listing it (its install stays)
+```
+
+A host is an ssh destination, usually a `~/.ssh/config` alias. `add` copies this checkout's
+`package.json`, `bin`, `config` and `src` (the files git tracks or would track; ignored files such
+as `.pi/` stay here) to `~/.local/share/pi-dash` on the host (replacing an earlier copy), registers its bridge with the host's pi (`pi install`), checks that the relay
+answers, and adds the host to `~/.config/pi-dash/hosts.json` (`{"hosts": ["box00", …]}`; you can
+edit it by hand). Run `add` again after updating pi-dash here: an older or newer host shows
+`✖ offline … run pi-dash-host add HOST`. pi sessions already running on a host show `? no bridge`
+until `/reload`; `add` refuses this machine itself, whose sessions are already shown.
+
+Remote sessions are listed as `name@host`. Everything in the table above works on them: commands
+and asks go to their bridge, `v` peeks and `a` attaches over ssh (`ssh -t HOST screen -rx`), `g`
+runs git on the host, and `n` first asks where the new session should run. The `HOSTS` line shows
+each host's link (`●` online, with its CPU and memory when there is room, `…` connecting, `✖`
+offline with the reason) and pi-dash reconnects on its own, backing off up to a minute. While a
+host is unreachable its bridged sessions show `… reconnecting`.
+
+A host's relay runs as you on that host, like its bridges. pi-dash still treats what it sends as
+another machine's: text is shown without terminal control sequences, and a relay that sends
+something malformed, does not greet within 30 s, or stops answering (30 s; 150 s for git) loses its
+link and is reconnected, without affecting the other hosts.
+
+What stays local: the usage view and `today $` count this machine's session files (each remote
+session's own $ comes from its bridge, without its subagents), quota gauges are this machine's
+logins, and the mobile gateway (`pi-dash-server`) shows and drives this machine's sessions only,
+so a paired phone reaches no other host.
+
 ## How it works
 
 ```
 pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.sock ──┐
 pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.sock ──┼── pi-dash
-/proc, cgroups, nvidia-smi, session files, provider-failover-state.json ────┘
+/proc, cgroups, nvidia-smi, session files, provider-failover-state.json ────┤
+                                                                            │
+remote host: bridges, /proc, screen, git ── pi-dash-relay ══ ssh stdio ═════┘
 ```
 
 - `src/bridge/`: pi extension. It publishes session state (snapshot, then coalesced patches) and runs
@@ -124,6 +166,11 @@ pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.soc
 - `src/manager/`: shared headless runtime, collectors, model, usage index and nonterminal actions.
 - `src/dashboard/`: the TUI (built on `@earendil-works/pi-tui`), terminal-only interactions and Hermes.
 - `src/server/`: authenticated HTTPS/WSS intranet gateway with typed inputs and command receipts.
+- `src/relay/`: `pi-dash-relay`, which pi-dash starts on each remote host over ssh. It runs the same
+  bridge hub, process sampler and actions there and speaks LF-delimited JSON on stdin/stdout:
+  bridge states as a snapshot then patches, and typed requests (command, sample, peek, projects,
+  sessions, launch, git). `bin/pi-dash-relay` takes PATH from a login shell and picks a Node that
+  strips types. `src/manager/remote/` is pi-dash's side; `src/hosts/` is `pi-dash-host`.
 - `android/`: native Kotlin/Compose dashboard and optional direct G1 display; see the
   [setup, security and build guide](docs/ANDROID.md) and [acceptance status](docs/ANDROID-ACCEPTANCE.md).
 - The Hermes advisor (`H`) runs in pi-dash, not in the bridge. It sends Hermes only a redacted
@@ -147,7 +194,9 @@ pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.soc
 Files written: the usage index cache at `~/.cache/pi-dash/usage-index.json` (derived, keeps
 30 days, about 200 KB), Hermes advisor feedback at
 `~/.cache/pi-dash/hermes-advisor-events.jsonl`, and short-lived peek captures and sockets in
-`$XDG_RUNTIME_DIR/pi-dash/`.
+`$XDG_RUNTIME_DIR/pi-dash/` (on remote hosts too; the relay removes its captures when it ends).
+`pi-dash-host` writes `~/.config/pi-dash/hosts.json` here, and on each host it adds installs
+`~/.local/share/pi-dash` (about 500 KB) and its entry in pi's `settings.json`.
 The first start indexes recent session files in a background thread; on this machine that took
 about 17 s for 3.6 GB, and later scans take milliseconds.
 

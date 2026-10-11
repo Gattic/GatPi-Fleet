@@ -71,7 +71,8 @@ export interface SessionSummary {
 	cost?: number;
 }
 
-export function listSessions(sessionRoot: string, cwd: string, index: UsageIndex): SessionSummary[] {
+/** Without a usage index (pi-dash-relay), sessions have no token and cost totals. */
+export function listSessions(sessionRoot: string, cwd: string, index?: UsageIndex): SessionSummary[] {
 	const dir = join(sessionRoot, sessionDirName(cwd));
 	let names: string[] = [];
 	try {
@@ -86,7 +87,7 @@ export function listSessions(sessionRoot: string, cwd: string, index: UsageIndex
 		} catch {
 			continue;
 		}
-		const indexed = index.files.get(path);
+		const indexed = index?.files.get(path);
 		const head = indexed ? undefined : readHead(path);
 		let tokens: number | undefined;
 		let cost: number | undefined;

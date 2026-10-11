@@ -53,20 +53,26 @@ test("Hermes snapshots are redacted and local rules produce action cards", () =>
 test("Hermes card normalization accepts only known sessions and safe actions", () => {
 	const store = new Store(() => {});
 	store.setState(101, session({ lastSettledAt: Date.now() }));
+	// The same pid on a remote host is another session.
+	store.setState(101, session({ lastSettledAt: Date.now(), cwd: "/home/user/other" }), "box03");
 	const snapshot = buildHermesSnapshot(store);
+	assert.deepEqual(snapshot.sessions.map((entry) => [entry.session, entry.label]).sort(), [["101", "proj"], ["box03:101", "other@box03"]]);
 	const cards = normalizeHermesCards(
 		{
 			cards: [
-				{ id: "ok", severity: "critical", title: "Ask", body: "Ask it", targetPid: 101, evidence: ["waiting"], action: { kind: "ask", pid: 101, question: "Why?" } },
-				{ id: "bad", title: "Unknown", body: "No", action: { kind: "compact", pid: 999 } },
+				{ id: "ok", severity: "critical", title: "Ask", body: "Ask it", targetSession: "box03:101", evidence: ["waiting"], action: { kind: "ask", session: "box03:101", question: "Why?" } },
+				{ id: "bad", title: "Unknown", body: "No", action: { kind: "compact", session: "999" } },
+				{ id: "pid", title: "Pid only", body: "No", action: { kind: "compact", session: 101 } },
 			],
 		},
 		snapshot,
 	);
-	assert.equal(cards.length, 2);
+	assert.equal(cards.length, 3);
 	assert.equal(cards[0]?.source, "hermes");
-	assert.deepEqual(cards[0]?.action, { kind: "ask", pid: 101, question: "Why?" });
-	assert.equal(cards[1]?.action, undefined, "unknown pids are not executable");
+	assert.deepEqual(cards[0]?.action, { kind: "ask", session: "box03:101", question: "Why?" });
+	assert.equal(cards[0]?.targetLabel, "other@box03");
+	assert.equal(cards[1]?.action, undefined, "unknown sessions are not executable");
+	assert.equal(cards[2]?.action, undefined, "a bare pid is ambiguous across hosts");
 });
 
 test("Hermes feedback ledger is summarized into later local reviews", async (t) => {

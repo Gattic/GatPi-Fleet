@@ -244,6 +244,19 @@ export class LineDecoder {
 	}
 }
 
+/** The patch that turns `previous` into `next` under applyPatch: fields whose value is no longer the same object. */
+export function diffState(previous: SessionState, next: SessionState): SessionPatch {
+	const before = previous as unknown as Record<string, unknown>;
+	const after = next as unknown as Record<string, unknown>;
+	const changes: Record<string, unknown> = {};
+	for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+		if (after[key] === undefined) {
+			if (before[key] !== undefined) changes[key] = null;
+		} else if (after[key] !== before[key]) changes[key] = after[key];
+	}
+	return changes as SessionPatch;
+}
+
 export function applyPatch(state: SessionState, changes: SessionPatch): SessionState {
 	const next: Record<string, unknown> = { ...state };
 	for (const [key, value] of Object.entries(changes)) {

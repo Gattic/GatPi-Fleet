@@ -63,7 +63,7 @@ function context(): ViewContext {
 	const usage = new UsageIndex({ sessionRoot: "", cachePath: "", retentionMs: 0, onUpdate: () => {} });
 	const quota = new QuotaMonitor("/nonexistent", "/nonexistent");
 	quota.windows = [{ provider: "anthropic", providerLabel: "anthropic", label: "5h", usedPercent: 24, resetAt: Date.now() + 3_600_000, windowSeconds: 18000, fetchedAt: Date.now() }];
-	return { store, usage, quota, gpu: new GpuMonitor(), now: Date.now(), spinner: "⠹", selected: store.ordered()[0] };
+	return { store, remotes: new Map(), usage, quota, gpu: new GpuMonitor(), now: Date.now(), spinner: "⠹", selected: store.ordered()[0] };
 }
 
 test("views fit the terminal at 80, 100 and 140 columns and show each state", () => {
@@ -92,7 +92,7 @@ test("views fit the terminal at 80, 100 and 140 columns and show each state", ()
 
 test("a highlighted row keeps its background across truncated cells", () => {
 	const ctx = context();
-	ctx.selected = ctx.store.rows.get(104);
+	ctx.selected = ctx.store.rows.get("104");
 	const background = theme.selected("x").split("x")[0];
 	const line = renderOverview(ctx, 80, 30).find((text) => strip(text).includes("a very long")) ?? "";
 	assert.ok(line.includes("\x1b[0m"), "the long name is truncated");
@@ -103,7 +103,7 @@ test("the overview previews the selected session's latest reply in the rows the 
 	const ctx = context();
 	const plan = { title: "Ship it", lifecycle: "active", complete: 1, total: 2, blocked: 0, milestones: [], activePath: [] };
 	ctx.store.setState(101, state(101, { plan, lastPrompt: "Ship it", suggestion: "Run the tests", lastSaid: Array.from({ length: 60 }, (_, index) => `reply line ${index + 1}`).join("\n") }));
-	ctx.selected = ctx.store.rows.get(101);
+	ctx.selected = ctx.store.rows.get("101");
 	const lines = renderOverview(ctx, 100, 30).map(strip);
 	assert.equal(lines.length, 29, "the preview fills the view");
 	const first = lines.findIndex((line) => /^ SAID +reply line 1 /.test(line));
@@ -117,7 +117,7 @@ test("the overview previews the selected session's latest reply in the rows the 
 test("plan counts with three digits are shown whole", () => {
 	const ctx = context();
 	ctx.store.setState(101, state(101, { plan: { title: "Big plan", lifecycle: "active", complete: 92, total: 100, blocked: 0, milestones: [], activePath: [{ title: "Assess", status: "active" }] } }));
-	ctx.selected = ctx.store.rows.get(101);
+	ctx.selected = ctx.store.rows.get("101");
 	for (const width of [80, 100, 150]) {
 		assert.match(strip(renderOverview(ctx, width, 30).join("\n")), /^ PLAN .*[▰▱] 92\/100 *$/m, `at ${width} columns`);
 	}
@@ -126,7 +126,7 @@ test("plan counts with three digits are shown whole", () => {
 test("overview sparklines share one scale, so an idle session does not look busy", () => {
 	const ctx = context();
 	const load = (pid: number, cores: number) => {
-		const row = ctx.store.rows.get(pid);
+		const row = ctx.store.rows.get(String(pid));
 		assert.ok(row);
 		for (let index = 0; index < 60; index++) {
 			row.cpuDirect.push(cores);
@@ -144,7 +144,7 @@ test("overview sparklines share one scale, so an idle session does not look busy
 
 test("detail charts have a floor, so small, flat use does not fill them", () => {
 	const ctx = context();
-	const row = ctx.store.rows.get(101);
+	const row = ctx.store.rows.get("101");
 	assert.ok(row);
 	for (let index = 0; index < 30; index++) {
 		row.cpuDirect.push(0.4);
@@ -161,7 +161,7 @@ test("detail charts have a floor, so small, flat use does not fill them", () => 
 test("at 80×24 the detail view still shows SAID, NEXT and the activity lane", () => {
 	const ctx = context();
 	ctx.store.setState(101, state(101, { lastSaid: "Done.", suggestion: "Run the tests", tools: Array.from({ length: 8 }, (_, index) => ({ id: String(index), name: "bash", detail: `step ${index}`, startedAt: Date.now() - 1000, endedAt: Date.now() })) }));
-	ctx.selected = ctx.store.rows.get(101);
+	ctx.selected = ctx.store.rows.get("101");
 	const lines = renderDetail(ctx, 80, 24, new TextPane()).lines.map(strip);
 	assert.equal(lines.length, 23);
 	assert.ok(lines.some((line) => /^ SAID +Done\./.test(line)));
@@ -182,7 +182,7 @@ test("at 80×24 the detail view still shows SAID, NEXT and the activity lane", (
 
 test("background jobs and subagents show as a BG badge on wide terminals and as a list for the selected session", () => {
 	const ctx = context();
-	const row = ctx.store.rows.get(101);
+	const row = ctx.store.rows.get("101");
 	assert.ok(row);
 	const now = ctx.now;
 	row.resources = {
@@ -224,7 +224,7 @@ test("sessions on models without a price show tokens instead of an empty cost", 
 	});
 
 	assert.match(strip(renderOverview(ctx, 120, 30).join("\n")), /^ 2 project-102 .* 173Mt $/m);
-	ctx.selected = ctx.store.rows.get(102);
+	ctx.selected = ctx.store.rows.get("102");
 	const detail = strip(renderDetail(ctx, 120, 40, new TextPane()).lines.join("\n"));
 	assert.match(detail, /direct +█+ 173M tok/);
 	assert.match(detail, /total 173M tok/);
@@ -263,7 +263,7 @@ test("detail shows the whole reply in a scrollable SAID pane, then the suggested
 	const ctx = context();
 	const said = Array.from({ length: 60 }, (_, index) => `reply line ${index + 1}`).join("\n");
 	ctx.store.setState(101, state(101, { lastSaid: said, suggestion: "Run the full test suite\nand report" }));
-	ctx.selected = ctx.store.rows.get(101);
+	ctx.selected = ctx.store.rows.get("101");
 	const pane = new TextPane();
 	const render = () => {
 		const view = renderDetail(ctx, 100, 40, pane);

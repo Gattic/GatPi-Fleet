@@ -4,7 +4,8 @@ import { parseGpuQuery } from "../src/manager/collectors/gpu.ts";
 import { parseQuota } from "../src/manager/collectors/quota.ts";
 import { Series } from "../src/manager/model/series.ts";
 import { deriveStatus, STALL_MS } from "../src/manager/model/status.ts";
-import { SAMPLE_MS, Store } from "../src/manager/model/store.ts";
+import type { ResourceSample } from "../src/manager/collectors/procs.ts";
+import { rowLabel, SAMPLE_MS, Store } from "../src/manager/model/store.ts";
 import { LANE } from "../src/manager/model/status.ts";
 import { emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
@@ -69,33 +70,85 @@ test("Store keeps stable slots and gives a recycled session its predecessor's sl
 	store.setState(30, bridge({ pid: 30, sty: "3.c" }));
 	assert.deepEqual(store.ordered().map((row) => row.slot), [1, 2, 3]);
 	store.bye(20, "quit");
-	store.expectLaunch("pi-b", 2, 20);
+	store.expectLaunch("pi-b", 2, "20");
 	store.setState(40, bridge({ pid: 40, sty: "4.pi-b" }));
-	assert.equal(store.rows.has(20), false, "the exited row is replaced");
-	assert.equal(store.rows.get(40)?.slot, 2);
+	assert.equal(store.rows.has("20"), false, "the exited row is replaced");
+	assert.equal(store.rows.get("40")?.slot, 2);
 	store.setState(50, bridge({ pid: 50, sty: "5.e" }));
-	assert.equal(store.rows.get(50)?.slot, 4);
+	assert.equal(store.rows.get("50")?.slot, 4);
 });
 
 test("Store raises an alert when a session starts needing the user", () => {
 	const store = new Store(() => {});
 	store.setState(10, bridge({ pid: 10, phase: "working" }));
-	assert.equal(store.rows.get(10)?.alertUntil, undefined);
+	assert.equal(store.rows.get("10")?.alertUntil, undefined);
 	store.setState(10, bridge({ pid: 10, phase: "idle", lastSettledAt: Date.now() }));
-	assert.ok((store.rows.get(10)?.alertUntil ?? 0) > Date.now());
-	store.acknowledge(10);
-	assert.equal(store.rows.get(10)?.alertUntil, undefined);
+	assert.ok((store.rows.get("10")?.alertUntil ?? 0) > Date.now());
+	store.acknowledge("10");
+	assert.equal(store.rows.get("10")?.alertUntil, undefined);
 });
 
 test("Store does not alert when connecting reveals a state, only when a session enters one", () => {
 	const store = new Store(() => {});
 	store.setState(10, bridge({ pid: 10, phase: "idle", lastSettledAt: Date.now() }));
-	assert.equal(store.rows.get(10)?.status.kind, "needs-you");
-	assert.equal(store.rows.get(10)?.alertUntil, undefined, "first contact");
+	assert.equal(store.rows.get("10")?.status.kind, "needs-you");
+	assert.equal(store.rows.get("10")?.alertUntil, undefined, "first contact");
 	store.bye(10, "reload");
-	assert.equal(store.rows.get(10)?.status.kind, "connecting");
+	assert.equal(store.rows.get("10")?.status.kind, "connecting");
 	store.setState(10, bridge({ pid: 10, phase: "idle", lastSettledAt: Date.now() }));
-	assert.equal(store.rows.get(10)?.alertUntil, undefined, "reconnect after /reload");
+	assert.equal(store.rows.get("10")?.alertUntil, undefined, "reconnect after /reload");
+});
+
+test("Store keeps each host's sessions apart: same pids, own samples, and a lost link", () => {
+	const store = new Store(() => {});
+	const host = { cpu: 0, cores: 1, memUsed: 0, memTotal: 1, load1: 0 };
+	const busy: ResourceSample = { directCpu: 0.5, indirectCpu: 0, directMem: 1, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0, consumers: [], background: [] };
+	store.setState(10, bridge({ pid: 10, cwd: "/here" }));
+	store.setState(10, bridge({ pid: 10, cwd: "/there" }), "box03");
+	assert.deepEqual(store.ordered().map((row) => [row.key, rowLabel(row)]), [["10", "here"], ["box03:10", "there@box03"]]);
+	assert.deepEqual(store.targets("box03"), [{ key: "10", pid: 10, sessionId: "s" }]);
+
+	store.applyRemoteSample("box03", { resources: new Map([["10", busy]]), piProcesses: [{ pid: 10, startedAt: 1 }, { pid: 20, startedAt: 1, cwd: "/there/b" }], host }, store.targets("box03"), NOW);
+	assert.equal(store.rows.get("box03:20")?.status.kind, "unbridged", "a remote pi without a bridge");
+	assert.equal(store.rows.get("box03:10")?.resources?.directCpu, 0.5);
+	assert.equal(store.rows.get("10")?.resources, undefined, "another host's sample leaves this machine's rows alone");
+
+	store.hostLost("box03");
+	assert.equal(store.rows.has("box03:20"), false, "unbridged rows are only known from samples");
+	assert.equal(store.rows.get("box03:10")?.status.kind, "connecting");
+	assert.equal(store.rows.get("10")?.status.kind, "ready");
+	// Back online: the session ended meanwhile, and the first sample shows it.
+	store.applyRemoteSample("box03", { resources: new Map(), piProcesses: [], host }, store.targets("box03"), NOW);
+	assert.equal(store.rows.get("box03:10")?.status.kind, "exited");
+
+	// A remote sample answers for the rows it was asked about: a session that appeared and
+	// reloaded while it was in flight is not taken for exited.
+	const asked = store.targets("box03");
+	store.setState(40, bridge({ pid: 40 }), "box03");
+	store.disconnect(40, true, "box03");
+	store.applyRemoteSample("box03", { resources: new Map(), piProcesses: [], host }, asked, NOW);
+	assert.equal(store.rows.get("box03:40")?.status.kind, "connecting");
+
+	store.setState(30, bridge({ pid: 30 }), "box03");
+	store.disconnect(30, true, "box03");
+	assert.equal(store.rows.get("box03:30")?.status.kind, "connecting", "a live pi reconnects after /reload");
+	store.disconnect(30, false, "box03");
+	assert.equal(store.rows.get("box03:30")?.status.kind, "exited");
+});
+
+test("a launch is claimed only by a session on the host it was launched on", () => {
+	const store = new Store(() => {});
+	store.setState(10, bridge({ pid: 10, sty: "1.a" }), "box03");
+	store.bye(10, "quit", "box03");
+	store.expectLaunch("pi-proj-1234abcd", 1, "box03:10", "box03");
+	// The same screen name elsewhere (here, or on another host) is someone else's session.
+	store.setState(20, bridge({ pid: 20, sty: "2.pi-proj-1234abcd" }));
+	store.setState(20, bridge({ pid: 20, sty: "2.pi-proj-1234abcd" }), "box01");
+	assert.ok(store.rows.has("box03:10"), "the exited row stays until its replacement arrives");
+	assert.notEqual(store.rows.get("20")?.slot, 1);
+	store.setState(30, bridge({ pid: 30, sty: "3.pi-proj-1234abcd" }), "box03");
+	assert.equal(store.rows.has("box03:10"), false);
+	assert.equal(store.rows.get("box03:30")?.slot, 1);
 });
 
 test("Store fills a new row's activity lane from the bridge's timeline", () => {
@@ -103,7 +156,7 @@ test("Store fills a new row's activity lane from the bridge's timeline", () => {
 	const now = Date.now();
 	const minute = 60_000;
 	store.setState(10, bridge({ pid: 10, timeline: [{ at: now - 30 * minute, state: "idle" }, { at: now - 20 * minute, state: "working" }, { at: now - 5 * minute, state: "waiting" }] }));
-	const lane = store.rows.get(10)?.lane.last() ?? [];
+	const lane = store.rows.get("10")?.lane.last() ?? [];
 	const count = (state: number) => lane.filter((value) => value === state).length;
 	const samples = (minutes: number) => (minutes * minute) / SAMPLE_MS;
 	assert.ok(Math.abs(lane.length - samples(30)) <= 1, `30 minutes of samples (${lane.length})`);
@@ -113,7 +166,7 @@ test("Store fills a new row's activity lane from the bridge's timeline", () => {
 
 	const before = lane.length;
 	store.setState(10, bridge({ pid: 10, timeline: [{ at: now - 50 * minute, state: "working" }] }));
-	assert.equal(store.rows.get(10)?.lane.length, before, "later states do not rebuild the lane");
+	assert.equal(store.rows.get("10")?.lane.length, before, "later states do not rebuild the lane");
 });
 
 test("parseQuota reads provider-failover windows for logged-in providers only", () => {

@@ -5,12 +5,14 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { Component, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { sessionDirName } from "../src/manager/actions/sessions.ts";
-import type { BridgeHub } from "../src/manager/collectors/bridges.ts";
 import type { GitOperationResult, GitService, GitSummary } from "../src/manager/actions/git.ts";
 import { GpuMonitor } from "../src/manager/collectors/gpu.ts";
 import { HermesAdvisor, type HermesAdvisorClient, type HermesFeedbackEvent, type HermesSnapshot } from "../src/dashboard/hermes/advisor.ts";
 import { QuotaMonitor } from "../src/manager/collectors/quota.ts";
-import { Store } from "../src/manager/model/store.ts";
+import { type SessionRow, Store } from "../src/manager/model/store.ts";
+import type { Network } from "../src/manager/network.ts";
+import type { RemoteHost } from "../src/manager/remote/host.ts";
+import type { RelayOp, RelayOps } from "../src/relay/protocol.ts";
 import { ManagerRuntime } from "../src/manager/runtime.ts";
 import { Sessions } from "../src/server/sessions.ts";
 import { App, COMMIT_REVIEW_PROMPT } from "../src/dashboard/ui/app.ts";
@@ -76,7 +78,7 @@ function gitStub(summary: GitSummary = cleanGitSummary()) {
 	return { service, calls };
 }
 
-function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitService = gitStub().service) {
+function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitService = gitStub().service, remotes = new Map<string, RemoteHost>()) {
 	const overlays: Component[] = [];
 	const tui = {
 		terminal: { rows: 40, columns: 120 },
@@ -93,7 +95,7 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 		requestRender: () => {},
 	} as unknown as TUI;
 	const sent: Command[] = [];
-	const hub = { isConnected: () => true, send: async (_pid: number, command: Command) => void sent.push(command) } as unknown as BridgeHub;
+	const network = { remotes, remote: (host: string) => remotes.get(host), isConnected: () => true, send: async (_row: SessionRow, command: Command) => void sent.push(command) } as unknown as Network;
 	const store = new Store(() => {});
 	const feedback: HermesFeedbackEvent[] = [];
 	const advisorService = advisor ?? {
@@ -104,7 +106,7 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 	const app = new App({
 		tui,
 		store,
-		hub,
+		network,
 		usage: new UsageIndex({ sessionRoot, cachePath: "", retentionMs: 0, onUpdate: () => {} }),
 		quota: new QuotaMonitor("/nonexistent", "/nonexistent"),
 		gpu: new GpuMonitor(),
@@ -248,9 +250,9 @@ test("Hermes advisor shows action cards and confirms an ask action", async () =>
 					body: "Hermes thinks the selected session should explain its blocker.",
 					evidence: ["Session is waiting on the operator."],
 					source: "hermes",
-					targetPid: 101,
+					targetSession: "101",
 					targetLabel: "proj",
-					action: { kind: "ask", pid: 101, question: "What is blocking you?" },
+					action: { kind: "ask", session: "101", question: "What is blocking you?" },
 				},
 			],
 		}),
@@ -647,4 +649,50 @@ test("an answer that lands while its ask view is open is not announced; a failur
 	ui.app.onTick();
 	assert.doesNotMatch(strip(ui.app.render(120).at(-1) ?? ""), /could not answer/);
 	assert.match(ui.dialog() ?? "", /Why\?[\s\S]*✖ prompt is too long/);
+});
+
+test("a remote session's resume, new sessions and Git run on its host", async () => {
+	const requests: [RelayOp, unknown][] = [];
+	const answers: { [K in RelayOp]?: RelayOps[K]["result"] } = {
+		sessions: [{ path: "/home/user/.pi/agent/sessions/p/a.jsonl", sessionId: "a", title: "earlier work", lastActive: Date.now() - 60_000 }],
+		projects: [{ cwd: "/home/user/proj", lastActive: Date.now(), sessions: 1 }],
+		launch: "pi-proj-1234abcd",
+		git: cleanGitSummary({ cwd: "/home/user/proj", root: "/home/user/proj" }),
+	};
+	const remote = {
+		name: "box03",
+		status: { kind: "online", since: Date.now(), hostname: "eeprocsvr2" },
+		request: async (op: RelayOp, params: unknown) => {
+			requests.push([op, params]);
+			return answers[op];
+		},
+	} as unknown as RemoteHost;
+	const local = gitStub();
+	const ui = harness("/nonexistent", undefined, local.service, new Map([["box03", remote]]));
+	ui.store.setState(101, session({}));
+	// The same pid on the remote host is its own row.
+	ui.store.setState(101, session({ cwd: "/home/user/proj", lastSettledAt: Date.now() - 1000 }), "box03");
+	ui.press("2");
+	assert.match(strip(ui.app.render(120).join("\n")), /proj@box03/);
+
+	ui.press("r");
+	await eventually(() => assert.match(ui.dialog() ?? "", /Resume in box03:\/home\/user\/proj[\s\S]*earlier work/));
+	ui.press("\r");
+	await eventually(() => assert.match(strip(ui.app.render(120).at(-1) ?? ""), /started pi-proj-1234abcd .*box03:\/home\/user\/proj/));
+	assert.deepEqual(requests.slice(0, 2), [
+		["sessions", { cwd: "/home/user/proj" }],
+		["launch", { cwd: "/home/user/proj", label: "proj", sessionFile: "/home/user/.pi/agent/sessions/p/a.jsonl" }],
+	]);
+
+	ui.press("n");
+	assert.match(ui.dialog() ?? "", /this machine[\s\S]*box03 +online · eeprocsvr2/);
+	ui.press("\x1b[B", "\r");
+	await eventually(() => assert.match(ui.dialog() ?? "", /New session on box03 in/));
+	assert.deepEqual(requests[2], ["projects", { live: ["/home/user/proj"] }], "the host's open projects only");
+	ui.press(..."~/new", "\r");
+	await eventually(() => assert.deepEqual(requests[3], ["launch", { cwd: "~/new", label: "new", sessionFile: undefined }]));
+
+	ui.press("g");
+	await eventually(() => assert.deepEqual(requests[4], ["git", { method: "getSummary", args: ["/home/user/proj"] }]));
+	assert.deepEqual(local.calls, [], "nothing ran in this machine's repositories");
 });

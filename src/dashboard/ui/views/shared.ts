@@ -1,6 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { GpuMonitor } from "../../../manager/collectors/gpu.ts";
 import type { QuotaMonitor, QuotaWindow } from "../../../manager/collectors/quota.ts";
+import type { RemoteHost } from "../../../manager/remote/host.ts";
 import { PROTOCOL_VERSION } from "../../../protocol/index.ts";
 import { rowLabel, type SessionRow, type Store } from "../../../manager/model/store.ts";
 import type { UsageIndex } from "../../../manager/usage/usage-index.ts";
@@ -11,6 +12,8 @@ import { levelColor, type Paint, theme } from "../theme.ts";
 
 export interface ViewContext {
 	store: Store;
+	/** Remote hosts by hosts.json name. */
+	remotes: ReadonlyMap<string, RemoteHost>;
 	usage: UsageIndex;
 	quota: QuotaMonitor;
 	gpu: GpuMonitor;
@@ -154,6 +157,44 @@ export function hostLine(ctx: ViewContext, width: number): string {
 	if (gpu && ctx.gpu.available) parts.push(`${theme.muted("gpu")} ${trend(ctx.store.gpuUtil.last(spark * 15))}${theme.text(`${Math.round(gpu.utilization * 100)}%`)}${spark ? ` ${theme.text(fmtBytes(gpu.memUsed))}${theme.dim(`/${fmtBytes(gpu.memTotal)}`)}` : ""}`);
 	parts.push(todayText);
 	return fit(`${field("HOST")}${parts.join(width >= 100 ? "    " : "   ")}`, width);
+}
+
+/** A remote host's link for pickers: online (and which machine), connecting, or offline and why. */
+export function hostStatusText(remote: RemoteHost, now: number): string {
+	const status = remote.status;
+	switch (status.kind) {
+		case "online":
+			return `online · ${status.hostname}`;
+		case "connecting":
+			return "connecting…";
+		case "offline":
+			return `offline ${fmtDuration(now - status.since)}: ${status.error}`;
+	}
+}
+
+/** One cell per remote host: link state, and CPU and memory while online (`detail`) or why it is offline. */
+function hostCell(remote: RemoteHost, now: number, detail: boolean): string {
+	const status = remote.status;
+	if (status.kind === "connecting") return `${theme.dim("…")} ${theme.muted(remote.name)}`;
+	if (status.kind === "offline") {
+		const why = detail ? `: ${oneLine(status.error).slice(0, 48)}` : "";
+		return `${theme.error("✖")} ${theme.muted(remote.name)} ${theme.dim(`offline ${fmtDuration(now - status.since)}${why}`)}`;
+	}
+	const vitals = remote.vitals?.host;
+	const load = detail && vitals ? ` ${theme.muted(`${Math.round(vitals.cpu * 100)}%`)} ${theme.dim(`${fmtBytes(vitals.memUsed)}/${fmtBytes(vitals.memTotal)}`)}` : "";
+	return `${theme.working("●")} ${theme.text(remote.name)}${load}`;
+}
+
+/** The remote hosts' links; undefined without remote hosts. */
+export function hostsLine(ctx: ViewContext, width: number): string | undefined {
+	const remotes = [...ctx.remotes.values()];
+	if (!remotes.length) return undefined;
+	let line = "";
+	for (const detail of [true, false]) {
+		line = `${field("HOSTS")}${remotes.map((remote) => hostCell(remote, ctx.now, detail)).join("   ")}`;
+		if (visibleWidth(line) <= width) break;
+	}
+	return fit(line, width);
 }
 
 /** Faint horizontal rule, optionally with a label after a short lead-in. */

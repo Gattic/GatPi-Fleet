@@ -9,9 +9,9 @@ export type HermesAdviceSeverity = "info" | "suggestion" | "warning" | "critical
 export type HermesAdviceSource = "local" | "hermes";
 
 export type HermesCardAction =
-	| { kind: "ask"; pid: number; question: string }
-	| { kind: "prompt"; pid: number; text: string; deliverAs?: DeliverAs }
-	| { kind: "compact"; pid: number }
+	| { kind: "ask"; session: string; question: string }
+	| { kind: "prompt"; session: string; text: string; deliverAs?: DeliverAs }
+	| { kind: "compact"; session: string }
 	| { kind: "notify"; message: string }
 	| { kind: "memory_proposal"; text: string }
 	| { kind: "skill_proposal"; title: string; body: string };
@@ -23,13 +23,14 @@ export interface HermesAdviceCard {
 	body: string;
 	evidence: string[];
 	source: HermesAdviceSource;
-	targetPid?: number;
+	targetSession?: string;
 	targetLabel?: string;
 	action?: HermesCardAction;
 }
 
 export interface HermesSessionSnapshot {
-	pid: number;
+	/** The dashboard row key: the pid here, `host:pid` on a remote host. */
+	session: string;
 	slot?: number;
 	label: string;
 	cwdName?: string;
@@ -61,7 +62,7 @@ export interface HermesFeedbackEvent {
 	cardTitle: string;
 	source: HermesAdviceSource;
 	actionKind?: HermesCardAction["kind"];
-	targetPid?: number;
+	targetSession?: string;
 	targetLabel?: string;
 	detail?: string;
 }
@@ -126,13 +127,13 @@ function card(
 	action?: HermesCardAction,
 ): HermesAdviceCard {
 	return {
-		id: hashId("local", [severity, title, session?.pid, action]),
+		id: hashId("local", [severity, title, session?.session, action]),
 		severity,
 		title: clip(title, 120),
 		body: clip(body),
 		evidence: evidence.map((item) => clip(item, EVIDENCE_LIMIT)).slice(0, 4),
 		source: "local",
-		targetPid: session?.pid,
+		targetSession: session?.session,
 		targetLabel: session?.label,
 		action,
 	};
@@ -159,7 +160,7 @@ export function buildHermesSnapshot(store: Store, now: number = Date.now()): Her
 				}
 			: undefined;
 		return {
-			pid: row.pid,
+			session: row.key,
 			slot: row.slot,
 			label: rowLabel(row),
 			cwdName: cwd ? basename(cwd) : undefined,
@@ -212,7 +213,7 @@ export function deriveLocalCards(snapshot: HermesSnapshot): HermesAdviceCard[] {
 					`Ask the session to explain whether it is blocked and what intervention it needs.${goal}`,
 					[`Status has been stalled${statusAge ? ` for ${statusAge}` : ""}.`, session.activity?.tool ? `Current tool: ${session.activity.tool}.` : "No current tool reported."],
 					session,
-					{ kind: "ask", pid: session.pid, question: "Are you stuck or waiting on something? Summarize the current state, what is blocking progress, and the next operator action you need." },
+					{ kind: "ask", session: session.session, question: "Are you stuck or waiting on something? Summarize the current state, what is blocking progress, and the next operator action you need." },
 				),
 			);
 		}
@@ -224,7 +225,7 @@ export function deriveLocalCards(snapshot: HermesSnapshot): HermesAdviceCard[] {
 					"Ask for a concise failure summary before deciding whether to restart, steer, or inspect logs.",
 					[`Error: ${session.lastError ?? session.status.label}.`, statusAge ? `Error age: ${statusAge}.` : "Error age unknown."],
 					session,
-					{ kind: "ask", pid: session.pid, question: "Summarize the latest error, the likely cause, and the smallest next fix or diagnostic step. Do not continue the task." },
+					{ kind: "ask", session: session.session, question: "Summarize the latest error, the likely cause, and the smallest next fix or diagnostic step. Do not continue the task." },
 				),
 			);
 		}
@@ -247,7 +248,7 @@ export function deriveLocalCards(snapshot: HermesSnapshot): HermesAdviceCard[] {
 					"Compact while idle before sending more work so the next turn has room.",
 					[`Context is ${Math.round(session.contextPercent ?? 0)}% full.`, "Session is idle and waiting on you."],
 					session,
-					{ kind: "compact", pid: session.pid },
+					{ kind: "compact", session: session.session },
 				),
 			);
 		}
@@ -259,7 +260,7 @@ export function deriveLocalCards(snapshot: HermesSnapshot): HermesAdviceCard[] {
 					"Send the existing prompt suggestion if it still matches your intent.",
 					[`Suggestion: ${session.suggestion}`, statusAge ? `Waiting for ${statusAge}.` : "Waiting on the operator."],
 					session,
-					{ kind: "prompt", pid: session.pid, text: session.suggestion },
+					{ kind: "prompt", session: session.session, text: session.suggestion },
 				),
 			);
 		}
@@ -288,8 +289,8 @@ export function deriveLocalCards(snapshot: HermesSnapshot): HermesAdviceCard[] {
 	return cards.slice(0, DEFAULT_MAX_CARDS);
 }
 
-function knownSession(snapshot: HermesSnapshot, pid: unknown): HermesSessionSnapshot | undefined {
-	return typeof pid === "number" ? snapshot.sessions.find((session) => session.pid === pid) : undefined;
+function knownSession(snapshot: HermesSnapshot, key: unknown): HermesSessionSnapshot | undefined {
+	return typeof key === "string" ? snapshot.sessions.find((session) => session.session === key) : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -301,17 +302,17 @@ function actionFrom(value: unknown, snapshot: HermesSnapshot): HermesCardAction 
 	if (!input || typeof input.kind !== "string") return undefined;
 	switch (input.kind) {
 		case "ask": {
-			const session = knownSession(snapshot, input.pid);
-			return session && typeof input.question === "string" && input.question.trim() ? { kind: "ask", pid: session.pid, question: clip(input.question, 1000) } : undefined;
+			const session = knownSession(snapshot, input.session);
+			return session && typeof input.question === "string" && input.question.trim() ? { kind: "ask", session: session.session, question: clip(input.question, 1000) } : undefined;
 		}
 		case "prompt": {
-			const session = knownSession(snapshot, input.pid);
+			const session = knownSession(snapshot, input.session);
 			const deliverAs = input.deliverAs === "steer" || input.deliverAs === "followUp" ? input.deliverAs : undefined;
-			return session && typeof input.text === "string" && input.text.trim() ? { kind: "prompt", pid: session.pid, text: clip(input.text, 2000), deliverAs } : undefined;
+			return session && typeof input.text === "string" && input.text.trim() ? { kind: "prompt", session: session.session, text: clip(input.text, 2000), deliverAs } : undefined;
 		}
 		case "compact": {
-			const session = knownSession(snapshot, input.pid);
-			return session ? { kind: "compact", pid: session.pid } : undefined;
+			const session = knownSession(snapshot, input.session);
+			return session ? { kind: "compact", session: session.session } : undefined;
 		}
 		case "notify":
 			return typeof input.message === "string" && input.message.trim() ? { kind: "notify", message: clip(input.message, 1000) } : undefined;
@@ -350,7 +351,7 @@ export function normalizeHermesCards(raw: unknown, snapshot: HermesSnapshot, max
 		const input = asRecord(item);
 		if (!input || typeof input.title !== "string" || typeof input.body !== "string") continue;
 		const action = actionFrom(input.action, snapshot);
-		const target = knownSession(snapshot, input.targetPid) ?? (action && "pid" in action ? knownSession(snapshot, action.pid) : undefined);
+		const target = knownSession(snapshot, input.targetSession) ?? (action && "session" in action ? knownSession(snapshot, action.session) : undefined);
 		const evidence = Array.isArray(input.evidence) ? input.evidence.filter((value): value is string => typeof value === "string") : [];
 		cards.push({
 			id: typeof input.id === "string" && input.id.trim() ? `hermes_${clip(input.id, 80).replace(/[^A-Za-z0-9_-]+/g, "_")}` : hashId("hermes", [input.title, input.body, action]),
@@ -359,7 +360,7 @@ export function normalizeHermesCards(raw: unknown, snapshot: HermesSnapshot, max
 			body: clip(input.body),
 			evidence: evidence.map((entry) => clip(entry, EVIDENCE_LIMIT)).slice(0, 4),
 			source: "hermes",
-			targetPid: target?.pid,
+			targetSession: target?.session,
 			targetLabel: target?.label,
 			action,
 		});
@@ -368,7 +369,7 @@ export function normalizeHermesCards(raw: unknown, snapshot: HermesSnapshot, max
 }
 
 function promptFor(snapshot: HermesSnapshot, localCards: HermesAdviceCard[], feedbackSummary: readonly string[]): string {
-	return `You are Hermes advising pi-dash, a terminal dashboard that manages running pi coding-agent sessions.\n\nReturn ONLY JSON matching this schema:\n{\"cards\":[{\"id\":\"short-stable-id\",\"severity\":\"info|suggestion|warning|critical\",\"title\":\"<=80 chars\",\"body\":\"<=500 chars\",\"targetPid\":123,\"evidence\":[\"short evidence\"],\"action\":{\"kind\":\"ask|prompt|compact|notify|memory_proposal|skill_proposal\", ...}}]}\n\nAllowed actions:\n- ask: {\"kind\":\"ask\",\"pid\":number,\"question\":string}\n- prompt: {\"kind\":\"prompt\",\"pid\":number,\"text\":string,\"deliverAs\":\"steer\"|\"followUp\" optional}\n- compact: {\"kind\":\"compact\",\"pid\":number}\n- notify: {\"kind\":\"notify\",\"message\":string}\n- memory_proposal: {\"kind\":\"memory_proposal\",\"text\":string}\n- skill_proposal: {\"kind\":\"skill_proposal\",\"title\":string,\"body\":string}\n\nRules:\n- Use only pids present in the snapshot.\n- Do not request transcript or tool-output access.\n- Prefer one clear next action over many speculative cards.\n- Mutating actions will be human-confirmed by pi-dash; still keep them conservative.\n- If repeated feedback suggests a durable preference, propose memory_proposal rather than claiming you wrote memory.\n\nRecent local feedback summary:\n${feedbackSummary.length ? feedbackSummary.map((line) => `- ${line}`).join("\n") : "- none yet"}\n\nDeterministic local cards pi-dash can already produce:\n${JSON.stringify(localCards, null, 2)}\n\nRedacted dashboard snapshot:\n${JSON.stringify(snapshot, null, 2)}\n`;
+	return `You are Hermes advising pi-dash, a terminal dashboard that manages running pi coding-agent sessions.\n\nReturn ONLY JSON matching this schema:\n{\"cards\":[{\"id\":\"short-stable-id\",\"severity\":\"info|suggestion|warning|critical\",\"title\":\"<=80 chars\",\"body\":\"<=500 chars\",\"targetSession\":\"box03:4242\",\"evidence\":[\"short evidence\"],\"action\":{\"kind\":\"ask|prompt|compact|notify|memory_proposal|skill_proposal\", ...}}]}\n\nAllowed actions:\n- ask: {\"kind\":\"ask\",\"session\":string,\"question\":string}\n- prompt: {\"kind\":\"prompt\",\"session\":string,\"text\":string,\"deliverAs\":\"steer\"|\"followUp\" optional}\n- compact: {\"kind\":\"compact\",\"session\":string}\n- notify: {\"kind\":\"notify\",\"message\":string}\n- memory_proposal: {\"kind\":\"memory_proposal\",\"text\":string}\n- skill_proposal: {\"kind\":\"skill_proposal\",\"title\":string,\"body\":string}\n\nRules:\n- Use only session ids present in the snapshot.\n- Do not request transcript or tool-output access.\n- Prefer one clear next action over many speculative cards.\n- Mutating actions will be human-confirmed by pi-dash; still keep them conservative.\n- If repeated feedback suggests a durable preference, propose memory_proposal rather than claiming you wrote memory.\n\nRecent local feedback summary:\n${feedbackSummary.length ? feedbackSummary.map((line) => `- ${line}`).join("\n") : "- none yet"}\n\nDeterministic local cards pi-dash can already produce:\n${JSON.stringify(localCards, null, 2)}\n\nRedacted dashboard snapshot:\n${JSON.stringify(snapshot, null, 2)}\n`;
 }
 
 async function runCommand(command: string, args: string[], timeoutMs: number): Promise<string> {
@@ -472,7 +473,7 @@ export function feedbackFor(card: HermesAdviceCard, kind: HermesFeedbackKind, de
 		cardTitle: card.title,
 		source: card.source,
 		actionKind: actionKind(card.action),
-		targetPid: card.targetPid,
+		targetSession: card.targetSession,
 		targetLabel: card.targetLabel,
 		detail,
 	};

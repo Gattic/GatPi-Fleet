@@ -650,7 +650,7 @@ const HELP: [string, [string, string][]][] = [
 			["PgUp PgDn", "scroll SAID in the detail view (or mouse wheel)"],
 			["x", "abort the current run"],
 			["v", "peek: live read-only mirror of the pi screen"],
-			["a", "attach (screen -rx; Ctrl-a d returns here)"],
+			["a", "attach (screen -rx, over ssh for a remote host; Ctrl-a d returns here)"],
 			["M / T", "switch model / thinking level"],
 			["Z", "compact the conversation (when idle)"],
 			["R", "rename session"],
@@ -659,7 +659,7 @@ const HELP: [string, [string, string][]][] = [
 	[
 		"MANAGE",
 		[
-			["n", "new session in a project"],
+			["n", "new session in a project (on this machine or a remote host)"],
 			["r", "resume a session of the selected project"],
 			["c / C", "close session / close and start a new one"],
 			["d", "dismiss an exited session"],
@@ -695,6 +695,7 @@ export class Help implements Component {
 			["", `${theme.accent("▰▱")} roadmap progress   ${theme.working("█")} working ${theme.waiting("▒")} waiting on you ${theme.dim("░")} idle (activity lane)`],
 			["COLUMNS", `${theme.text("CTX")} ${theme.muted("context used")}   ${theme.text("$")} ${theme.muted("API-equivalent cost, or tokens (173Mt) for unpriced models")}`],
 			["", `${theme.text("BG")} ${theme.muted("background work:")} ${theme.text("j")} ${theme.muted("bg_run jobs,")} ${theme.text("s")} ${theme.muted("subagents")}`],
+			["HOSTS", `${theme.text("name@host")} ${theme.muted("runs on a remote host (pi-dash-host add HOST)")}   ${theme.working("●")} ${theme.dim("online")}  ${theme.dim("… connecting")}  ${theme.error("✖")} ${theme.dim("offline")}`],
 			["NOTES", theme.muted("$ is pi's API-equivalent cost; quota % is the subscription limit that actually applies.")],
 			["", theme.muted("Not tracked: LLM calls extensions make outside the session transcript.")],
 		];

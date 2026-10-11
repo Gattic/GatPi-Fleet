@@ -2,20 +2,28 @@
 import { join } from "node:path";
 import { getKeybindings, ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
 import { GitCli } from "../manager/actions/git.ts";
+import { hostsPath, loadHosts } from "../manager/remote/hosts.ts";
 import { ManagerRuntime } from "../manager/runtime.ts";
 import { HermesAdvisor } from "./hermes/advisor.ts";
 import { App } from "./ui/app.ts";
 
 function main(): void {
 	if (process.argv.includes("--help") || process.argv.includes("-h")) {
-		process.stdout.write("pi-dash — dashboard and manager for running pi sessions\n\nUsage: pi-dash\n\nInstall the bridge with pi install <repo>. Press ? for keys.\nEnvironment: PI_CODING_AGENT_DIR, XDG_RUNTIME_DIR, XDG_CACHE_HOME\nMobile gateway: pi-dash-server --help\n");
+		process.stdout.write(`pi-dash — dashboard and manager for running pi sessions\n\nUsage: pi-dash\n\nInstall the bridge with pi install <repo>. Press ? for keys.\nRemote hosts: ${hostsPath()} (pi-dash-host add HOST)\nEnvironment: PI_CODING_AGENT_DIR, XDG_RUNTIME_DIR, XDG_CACHE_HOME, XDG_CONFIG_HOME\nMobile gateway: pi-dash-server --help\n`);
 		return;
 	}
 	if (!process.stdin.isTTY || !process.stdout.isTTY) {
 		process.stderr.write("pi-dash needs an interactive terminal\n");
 		process.exit(1);
 	}
-	const runtime = new ManagerRuntime();
+	let hosts: string[];
+	try {
+		hosts = loadHosts();
+	} catch (error) {
+		process.stderr.write(`pi-dash: ${(error as Error).message}\n`);
+		process.exit(1);
+	}
+	const runtime = new ManagerRuntime({ hosts });
 	const terminal = new ProcessTerminal();
 	const tui = new TuiAltScreen(terminal);
 	getKeybindings().setUserBindings({ "tui.altScreen.pageUp": [], "tui.altScreen.pageDown": [] });

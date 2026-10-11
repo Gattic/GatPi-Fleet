@@ -10,6 +10,7 @@
   ],
   "bin": {
     "pi-dash": "bin/pi-dash",
+    "pi-dash-host": "bin/pi-dash-host",
     "pi-dash-server": "bin/pi-dash-server",
     "pi-dash-server-start": "bin/pi-dash-server-start",
     "pi-dash-server-stop": "bin/pi-dash-server-stop"

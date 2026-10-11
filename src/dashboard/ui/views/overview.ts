@@ -11,6 +11,7 @@ import {
 	cpuSeries,
 	field,
 	hostLine,
+	hostsLine,
 	laneLegend,
 	MIN_CPU_SCALE,
 	MIN_MEM_SCALE,
@@ -172,7 +173,10 @@ export function renderOverview(ctx: ViewContext, width: number, height: number):
 	const lines = [titleBar(ctx, width, "overview")];
 	const quota = quotaLine(ctx, width);
 	if (quota) lines.push(quota);
-	lines.push(hostLine(ctx, width), "");
+	lines.push(hostLine(ctx, width));
+	const hosts = hostsLine(ctx, width);
+	if (hosts) lines.push(hosts);
+	lines.push("");
 	const rows = ctx.store.ordered();
 	const cols = columns(width, rows);
 	lines.push(headerRow(cols, width));

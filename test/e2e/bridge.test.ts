@@ -9,7 +9,7 @@ import { LineDecoder, encodeMessage, socketPath, type BridgeMessage } from "../.
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { readHardcopy, requestHardcopy } from "../../src/dashboard/actions/screen.ts";
+import { readHardcopy, requestHardcopy } from "../../src/manager/actions/peek.ts";
 import { BridgeHub } from "../../src/manager/collectors/bridges.ts";
 import { pidFromSocketName, type SessionState } from "../../src/protocol/index.ts";
 

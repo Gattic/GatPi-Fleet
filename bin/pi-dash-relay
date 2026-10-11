@@ -1,0 +1,20 @@
+#!/bin/sh
+# pi-dash runs this on a remote host over ssh, where the login environment is not set up: take
+# PATH from a login shell, then run the relay with the first Node.js >= 22.19 that strips types by
+# default (not 23.0-23.5) on that PATH or under ~/.nvm. Its directory goes first on PATH, so pi
+# installed with it is found.
+here=$(dirname "$(readlink -f "$0")")
+login_path=$("${SHELL:-/bin/sh}" -lc 'printf "\n%s\n" "$PATH"' </dev/null 2>/dev/null | tail -n 1)
+if [ -n "$login_path" ]; then PATH=$login_path; export PATH; fi
+supported() {
+	"$1" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(process.features.typescript && (major > 22 || (major === 22 && minor >= 19)) ? 0 : 1)' 2>/dev/null
+}
+for node in "$(command -v node)" $(ls -d "$HOME"/.nvm/versions/node/v*/bin/node 2>/dev/null | sort -rV); do
+	if [ -n "$node" ] && supported "$node"; then
+		PATH=$(dirname "$node"):$PATH
+		export PATH
+		exec "$node" "$here/../src/relay/main.ts" "$@"
+	fi
+done
+echo "pi-dash-relay: no Node.js >= 22.19 on PATH or in ~/.nvm" >&2
+exit 127
