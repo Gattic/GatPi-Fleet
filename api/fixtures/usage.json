@@ -1,0 +1,325 @@
+{
+  "at": 1768478400000,
+  "indexing": false,
+  "quota": [
+    {
+      "provider": "anthropic",
+      "window": "5h",
+      "usedPercent": 24,
+      "resetAt": 1768485600000,
+      "exhaustedUntil": null,
+      "shares": [
+        {
+          "label": "pi-dash",
+          "open": true,
+          "share": 1
+        }
+      ]
+    },
+    {
+      "provider": "codex",
+      "window": "wk",
+      "usedPercent": 100,
+      "resetAt": 1768737600000,
+      "exhaustedUntil": 1768482000000,
+      "shares": [
+        {
+          "label": "site › Fix the header",
+          "open": false,
+          "share": 1
+        }
+      ]
+    }
+  ],
+  "ranges": [
+    {
+      "range": "today",
+      "bucketHours": 1,
+      "total": {
+        "cost": 3.25,
+        "tokens": 2100000,
+        "cacheHit": 0.75
+      },
+      "cost": {
+        "series": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0.25,
+          3
+        ],
+        "sessions": [
+          {
+            "label": "pi-dash",
+            "open": true,
+            "value": 3.25
+          }
+        ],
+        "models": [
+          {
+            "name": "claude-opus",
+            "value": 3.25
+          }
+        ]
+      },
+      "tokens": {
+        "series": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          100000,
+          2000000
+        ],
+        "sessions": [
+          {
+            "label": "pi-dash",
+            "open": true,
+            "value": 2100000
+          }
+        ],
+        "models": [
+          {
+            "name": "claude-opus",
+            "value": 2100000
+          }
+        ]
+      }
+    },
+    {
+      "range": "7d",
+      "bucketHours": 6,
+      "total": {
+        "cost": 3.25,
+        "tokens": 8100000,
+        "cacheHit": 0.75
+      },
+      "cost": {
+        "series": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          3.25
+        ],
+        "sessions": [
+          {
+            "label": "pi-dash",
+            "open": true,
+            "value": 3.25
+          }
+        ],
+        "models": [
+          {
+            "name": "claude-opus",
+            "value": 3.25
+          }
+        ]
+      },
+      "tokens": {
+        "series": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          6000000,
+          0,
+          0,
+          0,
+          0,
+          2100000
+        ],
+        "sessions": [
+          {
+            "label": "site › Fix the header",
+            "open": false,
+            "value": 6000000
+          },
+          {
+            "label": "pi-dash",
+            "open": true,
+            "value": 2100000
+          }
+        ],
+        "models": [
+          {
+            "name": "gpt-6",
+            "value": 6000000
+          },
+          {
+            "name": "claude-opus",
+            "value": 2100000
+          }
+        ]
+      }
+    },
+    {
+      "range": "30d",
+      "bucketHours": 24,
+      "total": {
+        "cost": 3.25,
+        "tokens": 8100000,
+        "cacheHit": 0.75
+      },
+      "cost": {
+        "series": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          3.25
+        ],
+        "sessions": [
+          {
+            "label": "pi-dash",
+            "open": true,
+            "value": 3.25
+          }
+        ],
+        "models": [
+          {
+            "name": "claude-opus",
+            "value": 3.25
+          }
+        ]
+      },
+      "tokens": {
+        "series": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          6000000,
+          2100000
+        ],
+        "sessions": [
+          {
+            "label": "site › Fix the header",
+            "open": false,
+            "value": 6000000
+          },
+          {
+            "label": "pi-dash",
+            "open": true,
+            "value": 2100000
+          }
+        ],
+        "models": [
+          {
+            "name": "gpt-6",
+            "value": 6000000
+          },
+          {
+            "name": "claude-opus",
+            "value": 2100000
+          }
+        ]
+      }
+    }
+  ]
+}

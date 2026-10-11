@@ -84,6 +84,7 @@ fun DashScreen(vm: DashViewModel = viewModel()) {
                     Screen.Sessions -> SessionsScreen(vm, state)
                     Screen.Session -> SessionScreen(vm, state, actionsEnabled)
                     Screen.Projects -> ProjectsScreen(vm, actionsEnabled)
+                    Screen.Usage -> UsageScreen(vm, state.fresh)
                     Screen.Glasses -> GlassesScreen(vm)
                     Screen.Pairing -> PairingScreen(vm, host)
                 }
@@ -173,17 +174,24 @@ private fun DashNavigation(screen: Screen, fresh: Boolean, vm: DashViewModel) {
     val destinations = listOf(
         Destination(Screen.Sessions, "Sessions", Icons.AutoMirrored.Filled.List),
         Destination(Screen.Projects, "Projects", ImageVector.vectorResource(R.drawable.ic_folder)),
+        Destination(Screen.Usage, "Usage", ImageVector.vectorResource(R.drawable.ic_usage)),
         Destination(Screen.Glasses, "Glasses", ImageVector.vectorResource(R.drawable.ic_glasses)),
         Destination(Screen.Pairing, "Pairing", Icons.Filled.Lock),
     )
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
         for (destination in destinations) {
-            val projects = destination.screen == Screen.Projects
+            // Project choices and usage are fetched from the host, so they need a live connection.
+            val fetched = destination.screen == Screen.Projects || destination.screen == Screen.Usage
             NavigationBarItem(
                 selected = screen == destination.screen,
-                onClick = { if (projects) vm.openProjects() else vm.screen.value = destination.screen },
-                // Project choices are fetched from the host, so they need a live connection.
-                enabled = !projects || fresh,
+                onClick = {
+                    when (destination.screen) {
+                        Screen.Projects -> vm.openProjects()
+                        Screen.Usage -> vm.openUsage()
+                        else -> vm.screen.value = destination.screen
+                    }
+                },
+                enabled = fresh || !fetched,
                 icon = { Icon(destination.icon, null) }, label = { Text(destination.label) },
                 colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.primaryContainer),
             )

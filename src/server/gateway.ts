@@ -10,6 +10,7 @@ import { API_VERSION, ApiError, MAX_BODY, MAX_FRAME, commandRequest, launchReque
 import type { ServerConfig } from "./config.ts";
 import { Receipts, type Receipt } from "./receipts.ts";
 import { Sessions } from "./sessions.ts";
+import { usageReport } from "./usage.ts";
 
 interface Peer { ws: WebSocket; authorization: string; device: string; seq: number; selected: string | null; overview: string; detail: string; alive: boolean }
 
@@ -113,8 +114,9 @@ export class Gateway {
 		const path = url.pathname;
 		if (req.method === "GET") {
 			let result: unknown;
-			if (path === "/api/v1/info") result = { version: API_VERSION, epoch: this.epoch, label: this.config.label, capabilities: ["sessions", "commands", "launch", "g1-display"] };
+			if (path === "/api/v1/info") result = { version: API_VERSION, epoch: this.epoch, label: this.config.label, capabilities: ["sessions", "commands", "launch", "usage", "g1-display"] };
 			else if (path === "/api/v1/sessions") result = { sessions: this.sessions.overview() };
+			else if (path === "/api/v1/usage") result = usageReport(this.sessions.runtime);
 			else if (path === "/api/v1/projects") result = await this.sessions.projects();
 			else if (/^\/api\/v1\/projects\/[a-f0-9]{32}\/sessions$/.test(path)) result = { sessions: await this.sessions.history(path.split("/")[4]) };
 			else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}$/.test(path)) result = this.sessions.detail(path.split("/")[4]);

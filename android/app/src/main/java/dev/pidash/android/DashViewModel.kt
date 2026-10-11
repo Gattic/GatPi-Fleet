@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-enum class Screen { Sessions, Session, Projects, Glasses, Pairing }
+enum class Screen { Sessions, Session, Projects, Usage, Glasses, Pairing }
 
 data class Confirmation(val title: String, val description: String, val target: Session? = null, val command: JSONObject? = null, val project: Project? = null, val history: History? = null, val dismissReceipt: Boolean = false)
 
@@ -26,6 +26,10 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
     val projects = MutableStateFlow<Projects?>(null)
     val history = MutableStateFlow<List<History>>(emptyList())
     val project = MutableStateFlow<Project?>(null)
+    /** The host's usage report fetched for this visit to Usage; null until it arrives. */
+    val usage = MutableStateFlow<UsageReport?>(null)
+    val usageRange = MutableStateFlow(UsageReport.RANGES.first())
+    val usageMetric = MutableStateFlow(Metric.Cost)
     val busy = MutableStateFlow(false)
     private val drafts = linkedMapOf<String, String>()
     init {
@@ -92,6 +96,13 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
         history.value = emptyList()
         run { projects.value = repository.projects() }
     }
+    fun openUsage() {
+        screen.value = Screen.Usage
+        // An earlier visit's report may be long outdated, or another host's after re-pairing.
+        usage.value = null
+        refreshUsage()
+    }
+    fun refreshUsage() { run { usage.value = repository.usage() } }
     /** Expands one project's resumable history in place; selecting it again collapses it. */
     fun history(p: Project) {
         if (project.value == p) { project.value = null; return }

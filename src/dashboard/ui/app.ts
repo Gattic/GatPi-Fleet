@@ -16,6 +16,7 @@ import { isAlert } from "../../manager/model/status.ts";
 import { hostRows, openCwds, rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../../manager/model/store.ts";
 import type { Network } from "../../manager/network.ts";
 import { RemoteGit } from "../../manager/remote/git.ts";
+import { USAGE_RANGES, type UsageMetric, type UsageRange } from "../../manager/usage/report.ts";
 import type { UsageIndex } from "../../manager/usage/usage-index.ts";
 import type { RelayOp, RelayOps } from "../../relay/protocol.ts";
 import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
@@ -26,7 +27,7 @@ import { GitView } from "./git-view.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
 import { renderOverview } from "./views/overview.ts";
 import { background, hostStatusText, SPINNER, type ViewContext, type ViewName } from "./views/shared.ts";
-import { renderUsage, USAGE_RANGES, type UsageMetric, type UsageRange } from "./views/usage.ts";
+import { renderUsage } from "./views/usage.ts";
 
 export interface Services {
 	tui: TUI;

@@ -1,25 +1,14 @@
-import { basename } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { rowLabel } from "../../../manager/model/store.ts";
-import type { FileUsage, UsageBucket } from "../../../manager/usage/types.ts";
+import { bucketHours, cacheHit, quotaShares, rangeStart, rankedModels, rankedOwners, sessionTitle, USAGE_METRICS, USAGE_RANGES, type UsageMetric, type UsageRange } from "../../../manager/usage/report.ts";
+import type { FileUsage } from "../../../manager/usage/types.ts";
 import { gauge, hbar, shareBar, stackedArea, stretch } from "../charts.ts";
 import { fit, fitRight, fmtCost, fmtDuration, fmtTokens } from "../format.ts";
 import { levelColor, type Paint, theme } from "../theme.ts";
-import { field, monthAgo, rule, startOfToday, titleBar, type ViewContext, weekAgo } from "./shared.ts";
-
-export type UsageRange = "today" | "7d" | "30d";
-export const USAGE_RANGES: UsageRange[] = ["today", "7d", "30d"];
-/** What the usage view measures: pi's API-equivalent cost, or tokens (the only measure for models without a price). */
-export type UsageMetric = "cost" | "tokens";
-export const USAGE_METRICS: UsageMetric[] = ["cost", "tokens"];
+import { field, rule, titleBar, type ViewContext } from "./shared.ts";
 
 const PALETTE: Paint[] = [theme.accent, theme.working, theme.waiting, theme.indirect, theme.error, theme.muted];
 const CHART_HEIGHT = 6;
-
-function rangeStart(range: UsageRange, now: number): number {
-	if (range === "today") return startOfToday(now);
-	return range === "7d" ? weekAgo(now) : monthAgo(now);
-}
 
 /** Open sessions by slot and row label. */
 function openLabels(ctx: ViewContext): Map<string, string> {
@@ -32,8 +21,7 @@ function openLabels(ctx: ViewContext): Map<string, string> {
 function ownerLabel(open: Map<string, string>, owner: string, file: FileUsage, paint?: Paint): string {
 	const label = open.get(owner);
 	if (label) return (paint ?? theme.text)(label);
-	const project = file.cwd ? basename(file.cwd) : "unknown";
-	const title = file.name ?? file.firstPrompt;
+	const { project, title } = sessionTitle(file);
 	if (paint) return paint(title ? `${project} › ${title}` : project);
 	return `${theme.muted(project)}${title ? theme.dim(` › ${title}`) : ""}`;
 }
@@ -50,16 +38,6 @@ function amount(metric: UsageMetric, value: number): string {
 	return metric === "cost" ? `$${fmtCost(value)}` : fmtTokens(value);
 }
 
-/**
- * Each session's part of a quota window, weighted by cost; providers whose usage in the window has no
- * price are weighted by tokens instead.
- */
-export function quotaShares(owners: Map<string, { file: FileUsage; usage: UsageBucket }>): { owner: string; file: FileUsage; weight: number }[] {
-	const entries = [...owners.entries()];
-	const metric: UsageMetric = entries.some(([, entry]) => entry.usage.cost > 0) ? "cost" : "tokens";
-	return entries.map(([owner, entry]) => ({ owner, file: entry.file, weight: entry.usage[metric] })).filter((share) => share.weight > 0).sort((a, b) => b.weight - a.weight);
-}
-
 export function renderUsage(ctx: ViewContext, width: number, height: number, range: UsageRange, metric: UsageMetric): string[] {
 	const lines = [titleBar(ctx, width, "usage")];
 	const open = openLabels(ctx);
@@ -73,8 +51,7 @@ export function renderUsage(ctx: ViewContext, width: number, height: number, ran
 	}
 	let previous: string | undefined;
 	for (const window of ctx.quota.windows) {
-		const since = Math.max(window.resetAt - window.windowSeconds * 1000, ctx.now - window.windowSeconds * 1000);
-		const shares = quotaShares(ctx.usage.byOwner(since, window.provider));
+		const shares = quotaShares(ctx.usage, window, ctx.now);
 		const top = shares.slice(0, 4);
 		const rest = shares.slice(4).reduce((sum, share) => sum + share.weight, 0);
 		const parts = top.map((share, index) => ({ value: share.weight, paint: PALETTE[index] }));
@@ -97,46 +74,38 @@ export function renderUsage(ctx: ViewContext, width: number, height: number, ran
 	const chips = <T extends string>(options: readonly T[], active: T, label: (option: T) => string) =>
 		options.map((option) => (option === active ? theme.chip(theme.bold(theme.text(` ${label(option)} `))) : theme.dim(` ${label(option)} `))).join("");
 	const selector = `${chips(USAGE_RANGES, range, (option) => option)}  ${chips(USAGE_METRICS, metric, (option) => (option === "cost" ? "$" : "tokens"))}`;
-	const cacheHit = total.prompt > 0 ? total.cacheRead / total.prompt : 0;
 	const status = ctx.usage.scanned ? "" : theme.waiting(`   indexing session files… (${ctx.usage.files.size} so far)`);
-	lines.push("", rule(width, `${selector}   ${theme.bold(theme.text(`$${fmtCost(total.cost)}`))} ${theme.dim(`· ${fmtTokens(total.tokens)} tokens · cache hit ${Math.round(cacheHit * 100)}%`)}${status}`), "");
+	lines.push("", rule(width, `${selector}   ${theme.bold(theme.text(`$${fmtCost(total.cost)}`))} ${theme.dim(`· ${fmtTokens(total.tokens)} tokens · cache hit ${Math.round(cacheHit(total) * 100)}%`)}${status}`), "");
 
 	const leftWidth = Math.floor((width - 3) / 2);
 	const rightWidth = width - 3 - leftWidth;
 	const noun = metric === "cost" ? "COST" : "TOKENS";
 	const left: string[] = [`${theme.muted(`${noun} BY SESSION`)}   ${theme.accent("■")}${theme.dim(" open")}`];
-	// Sessions below half a cent round to nothing in cost; any token counts.
-	const owners = [...ctx.usage.byOwner(since).entries()].filter(([, entry]) => (metric === "cost" ? entry.usage.cost >= 0.005 : entry.usage.tokens > 0)).sort((a, b) => b[1].usage[metric] - a[1].usage[metric]);
-	const maxOwner = owners[0]?.[1].usage[metric] ?? 0;
+	const owners = rankedOwners(ctx.usage, since, metric);
+	const maxOwner = owners[0]?.usage[metric] ?? 0;
 	const listed = Math.max(1, height - lines.length - 4);
 	const nameWidth = Math.max(14, Math.floor(leftWidth * 0.45));
-	for (const [owner, entry] of owners.slice(0, listed)) {
+	for (const { owner, file, usage } of owners.slice(0, listed)) {
 		const live = open.has(owner);
-		const value = entry.usage[metric];
-		left.push(`${fit(ownerLabel(open, owner, entry.file), nameWidth)} ${hbar(value, maxOwner, Math.max(4, leftWidth - nameWidth - 10), live ? theme.accent : theme.faint)} ${fitRight(theme.text(metric === "cost" ? fmtCost(value) : fmtTokens(value)), 7)}`);
+		const value = usage[metric];
+		left.push(`${fit(ownerLabel(open, owner, file), nameWidth)} ${hbar(value, maxOwner, Math.max(4, leftWidth - nameWidth - 10), live ? theme.accent : theme.faint)} ${fitRight(theme.text(metric === "cost" ? fmtCost(value) : fmtTokens(value)), 7)}`);
 	}
 	if (!owners.length) left.push(theme.dim(ctx.usage.scanned ? "no usage in range" : "…"));
 
-	const bucketHours = range === "today" ? 1 : range === "7d" ? 6 : 24;
+	const hours = bucketHours(range);
 	const chartWidth = Math.max(8, rightWidth - 8);
 	// The buckets cover the whole range, so they fill the chart from its start label to "now".
-	const series = stretch(ctx.usage.series(since, ctx.now, bucketHours, metric), chartWidth);
+	const series = stretch(ctx.usage.series(since, ctx.now, hours, metric), chartWidth);
 	const maxBucket = Math.max(1e-9, ...series);
-	const right: string[] = [`${theme.muted(`${noun} per ${bucketHours === 1 ? "hour" : bucketHours === 6 ? "6h" : "day"}`)}`];
+	const right: string[] = [`${theme.muted(`${noun} per ${hours === 1 ? "hour" : hours === 6 ? "6h" : "day"}`)}`];
 	stackedArea(series, series.map(() => 0), chartWidth, CHART_HEIGHT, maxBucket).forEach((row, index) => {
 		const axis = index === 0 ? amount(metric, maxBucket) : index === CHART_HEIGHT - 1 ? "0" : "";
 		right.push(`${theme.dim(fitRight(axis, 7))}${theme.faint(axis ? "┤" : "│")}${row}`);
 	});
 	right.push(theme.dim(`${" ".repeat(8)}${fit(range === "today" ? "00:00" : range, Math.floor(chartWidth / 2))}${fitRight("now", Math.ceil(chartWidth / 2))}`));
 	right.push("", theme.muted("BY MODEL"));
-	// One model reached through several accounts (e.g. codex and codex#2) is one model here.
-	const models = new Map<string, number>();
-	for (const [model, usage] of ctx.usage.byModel(since)) {
-		const name = model.split("/").pop() ?? model;
-		models.set(name, (models.get(name) ?? 0) + usage[metric]);
-	}
 	const totalValue = total[metric];
-	for (const [model, value] of [...models.entries()].filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]).slice(0, 5)) {
+	for (const { model, value } of rankedModels(ctx.usage, since, metric).slice(0, 5)) {
 		const share = totalValue > 0 ? value / totalValue : 0;
 		right.push(`${fit(theme.text(model), 18)} ${hbar(share, 1, Math.max(4, rightWidth - 34))} ${fitRight(theme.text(`${Math.round(share * 100)}%`), 4)} ${fitRight(theme.dim(amount(metric, value)), 8)}`);
 	}

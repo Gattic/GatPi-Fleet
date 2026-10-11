@@ -4,6 +4,7 @@ import type { QuotaMonitor, QuotaWindow } from "../../../manager/collectors/quot
 import type { RemoteHost } from "../../../manager/remote/host.ts";
 import { PROTOCOL_VERSION } from "../../../protocol/index.ts";
 import { rowLabel, type SessionRow, type Store } from "../../../manager/model/store.ts";
+import { startOfToday } from "../../../manager/usage/report.ts";
 import type { UsageIndex } from "../../../manager/usage/usage-index.ts";
 import { gauge, planBar, sparkline } from "../charts.ts";
 import { fit, fitRight, fmtBytes, fmtCost, fmtDuration, fmtTokens, oneLine } from "../format.ts";
@@ -24,7 +25,6 @@ export interface ViewContext {
 }
 
 export const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
-const DAY_MS = 86_400_000;
 /** Memory bars and charts never scale below this, so small sessions do not look full. */
 export const MIN_MEM_SCALE = 4 * 1024 ** 3;
 /** CPU charts never scale below one core. */
@@ -64,12 +64,6 @@ export function sessionUsage(row: SessionRow, usage: UsageIndex): SessionUsage {
 	const sub = bridge ? usage.subagentUsage(bridge.sessionId) : undefined;
 	const subagents = { cost: sub?.cost ?? 0, tokens: sub?.tokens ?? 0 };
 	return { direct, indirect, subagents, total: { cost: direct.cost + indirect.cost + subagents.cost, tokens: direct.tokens + indirect.tokens + subagents.tokens } };
-}
-
-export function startOfToday(now: number): number {
-	const date = new Date(now);
-	date.setHours(0, 0, 0, 0);
-	return date.getTime();
 }
 
 /** Columns taken by a row label such as PLAN or SAID, including its margins. */
@@ -297,12 +291,4 @@ export function backgroundLine(row: SessionRow, now: number, width: number): str
 
 export function laneLegend(): string {
 	return `${theme.working("█")}${theme.dim(" working  ")}${theme.waiting("▒")}${theme.dim(" waiting on you  ")}${theme.dim("░ idle")}`;
-}
-
-export function weekAgo(now: number): number {
-	return now - 7 * DAY_MS;
-}
-
-export function monthAgo(now: number): number {
-	return now - 30 * DAY_MS;
 }

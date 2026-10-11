@@ -61,6 +61,54 @@ data class Projects(val projects: List<Project>, val unreachable: List<Unreachab
     }
 }
 data class History(val id: String, val title: String, val blocked: String?)
+
+/** What usage is measured in: pi's API-equivalent cost, or tokens (the only measure for models without a price). */
+enum class Metric { Cost, Tokens }
+/** A session's ([open] while it runs) or a model's usage in one measure. */
+data class UsageItem(val label: String, val value: Double, val open: Boolean = false)
+/** Usage in one measure over a range: per chart bucket (oldest first), and the largest sessions and models. */
+data class UsageMeasure(val series: List<Double>, val sessions: List<UsageItem>, val models: List<UsageItem>) {
+    companion object {
+        fun parse(j: JSONObject) = UsageMeasure(
+            j.getJSONArray("series").let { a -> (0 until a.length()).map(a::getDouble) },
+            j.getJSONArray("sessions").objects().map { UsageItem(it.getString("label"), it.getDouble("value"), it.getBoolean("open")) },
+            j.getJSONArray("models").objects().map { UsageItem(it.getString("name"), it.getDouble("value")) },
+        )
+    }
+}
+/** [range] is "today", "7d" or "30d"; [cacheHit] is the part of prompt tokens read from the provider's cache. */
+data class UsageRange(val range: String, val bucketHours: Int, val cost: Double, val tokens: Double, val cacheHit: Double, val costs: UsageMeasure, val tokenCounts: UsageMeasure) {
+    fun total(metric: Metric): Double = if (metric == Metric.Cost) cost else tokens
+    fun measure(metric: Metric): UsageMeasure = if (metric == Metric.Cost) costs else tokenCounts
+    companion object {
+        fun parse(j: JSONObject): UsageRange {
+            val total = j.getJSONObject("total")
+            return UsageRange(j.getString("range"), j.getInt("bucketHours"), total.getDouble("cost"), total.getDouble("tokens"), total.getDouble("cacheHit"),
+                UsageMeasure.parse(j.getJSONObject("cost")), UsageMeasure.parse(j.getJSONObject("tokens")))
+        }
+    }
+}
+/** A session's estimated part of a quota window. */
+data class QuotaShare(val label: String, val open: Boolean, val share: Double)
+/** A subscription quota window (e.g. 5h, wk) of one provider login; times are host epoch milliseconds. */
+data class Quota(val provider: String, val window: String, val usedPercent: Double, val resetAt: Long?, val exhaustedUntil: Long?, val shares: List<QuotaShare>)
+/** The host's usage view as of [at] (host epoch milliseconds); [indexing] while its first scan of session files runs. */
+data class UsageReport(val at: Long, val indexing: Boolean, val quota: List<Quota>, val ranges: List<UsageRange>) {
+    fun range(id: String): UsageRange = ranges.first { it.range == id }
+    companion object {
+        val RANGES = listOf("today", "7d", "30d")
+        fun parse(j: JSONObject): UsageReport {
+            val ranges = j.getJSONArray("ranges").objects().map(UsageRange::parse)
+            require(ranges.map { it.range } == RANGES) { "Unsupported usage ranges" }
+            return UsageReport(j.getLong("at"), j.getBoolean("indexing"),
+                j.getJSONArray("quota").objects().map { q ->
+                    Quota(q.getString("provider"), q.getString("window"), q.getDouble("usedPercent"), q.number("resetAt")?.toLong(), q.number("exhaustedUntil")?.toLong(),
+                        q.getJSONArray("shares").objects().map { QuotaShare(it.getString("label"), it.getBoolean("open"), it.getDouble("share")) })
+                },
+                ranges)
+        }
+    }
+}
 data class Pending(val id: String, val epoch: String, val description: String)
 data class Dashboard(
     val sessions: List<Session> = emptyList(), val selected: String? = null, val detail: Detail? = null,

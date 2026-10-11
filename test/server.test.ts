@@ -19,6 +19,7 @@ import { CommandRequestSchema, LaunchRequestSchema, SubscriptionSchema } from ".
 import { Gateway } from "../src/server/gateway.ts";
 import { Receipts } from "../src/server/receipts.ts";
 import { clean, ref, sessionRef, Sessions, summary } from "../src/server/sessions.ts";
+import { usageFixture } from "../scripts/usage-fixture.ts";
 
 const RELAY = fileURLToPath(new URL("../src/relay/main.ts", import.meta.url));
 
@@ -79,12 +80,13 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	// Without an allowlist, project listing, history and launch keep the same device and native-client checks.
 	// The launch body names an unlisted project, so even a regression here could not start pi.
 	const unlisted = { requestId: randomUUID(), epoch: info.epoch, projectId: ref(tmpdir()) };
-	for (const [path, data] of [["/api/v1/projects", undefined], [`/api/v1/projects/${ref(project)}/sessions`, undefined], ["/api/v1/sessions", unlisted]] as const) {
+	for (const [path, data] of [["/api/v1/projects", undefined], [`/api/v1/projects/${ref(project)}/sessions`, undefined], ["/api/v1/sessions", unlisted], ["/api/v1/usage", undefined]] as const) {
 		assert.equal((await get(path, data, "")).status, 401, path);
 		assert.equal((await get(path, data, `Bearer ${"A".repeat(43)}`)).status, 401, path);
 		assert.equal((await get(path, data, auth, "https://evil.invalid")).status, 403, path);
 	}
 	assert.deepEqual((await get("/api/v1/projects")).data.projects.map((p: { path: string }) => p.path), [project]);
+	assert.deepEqual((await get("/api/v1/usage")).data.ranges.map((r: { range: string }) => r.range), ["today", "7d", "30d"]);
 	const stream = (headers: Record<string, string>) => new Promise((resolve, reject) => {
 		const socket = new WebSocket(`wss://127.0.0.1:${port}/api/v1/events`, { ca, headers });
 		socket.on("open", () => { socket.terminate(); resolve("open"); }); socket.on("error", reject);
@@ -279,4 +281,32 @@ test("mobile contract fixtures and projections keep missing metrics missing and 
 	assert.deepEqual(fixture.sessions[0], summary(row));
 	const schemas = JSON.parse(readFileSync(new URL("../api/requests.schema.json", import.meta.url), "utf8"));
 	assert.deepEqual(schemas, JSON.parse(JSON.stringify({ command: CommandRequestSchema, launch: LaunchRequestSchema, subscribe: SubscriptionSchema })));
+});
+
+test("the usage tab gets the dashboard's usage view as data", (t) => {
+	const tz = process.env.TZ;
+	process.env.TZ = "UTC";
+	t.after(() => {
+		if (tz === undefined) delete process.env.TZ;
+		else process.env.TZ = tz;
+	});
+	const report = usageFixture();
+	const fixture = JSON.parse(readFileSync(new URL("../api/fixtures/usage.json", import.meta.url), "utf8"));
+	assert.deepEqual(fixture, JSON.parse(JSON.stringify(report)), "regenerate with npm run api:generate");
+	const [today, week] = report.ranges;
+	// An open session is named as in the session list, and its subagents count toward it.
+	assert.deepEqual(today.cost.sessions, [{ label: "pi-dash", open: true, value: 3.25 }]);
+	assert.equal(today.cost.series.at(-1), 3);
+	// An ended session is named by project and first prompt. Without a price it has tokens, not cost.
+	assert.deepEqual(week.tokens.sessions.map((s) => s.label), ["site \u203a Fix the header", "pi-dash"]);
+	assert.deepEqual(week.cost.sessions.map((s) => s.label), ["pi-dash"]);
+	assert.deepEqual(week.tokens.models, [{ name: "gpt-6", value: 6e6 }, { name: "claude-opus", value: 2.1e6 }], "one model through two accounts is one model");
+	// 7 and 30 days are whole 6-hour and daily buckets; the last holds the latest 6 or 24 hours, not the current hour alone.
+	assert.equal(week.cost.series.length, 28);
+	assert.equal(week.cost.series.at(-1), 3.25);
+	assert.equal(report.ranges[2].tokens.series.length, 30);
+	assert.deepEqual(report.ranges[2].tokens.series.slice(-2), [6e6, 2.1e6]);
+	const codex = report.quota[1];
+	assert.deepEqual(codex.shares, [{ label: "site \u203a Fix the header", open: false, share: 1 }], "an unpriced window is shared by tokens");
+	assert.notEqual(codex.exhaustedUntil, null);
 });
