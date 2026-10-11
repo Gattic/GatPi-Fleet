@@ -217,17 +217,17 @@ test("the phone's project list is the n picker's: open projects first, then most
 		store.bye(204, "quit");
 	}
 
-	const lists = (expected: string[]) => {
+	const lists = async (expected: string[]) => {
 		ui.press("n");
 		const picker = (ui.dialog() ?? "").split("\n").flatMap((line) => expected.filter((p) => line.includes(p)));
 		ui.press("\x1b");
 		assert.deepEqual(picker, expected, "dashboard n picker");
-		assert.deepEqual(new Sessions(runtime).projects().map((p) => p.path), expected, "gateway /api/v1/projects");
+		assert.deepEqual((await new Sessions(runtime).projects()).projects.map((p) => p.path), expected, "gateway /api/v1/projects");
 	};
 
-	lists(["open-1", "open-2", "open-new", "closed-1", "exited", "closed-2"].map(path));
+	await lists(["open-1", "open-2", "open-new", "closed-1", "exited", "closed-2"].map(path));
 	history("open-2", 10); // new activity in the other open project moves it ahead
-	lists(["open-2", "open-1", "open-new", "closed-1", "exited", "closed-2"].map(path));
+	await lists(["open-2", "open-1", "open-new", "closed-1", "exited", "closed-2"].map(path));
 });
 
 function session(overrides: Partial<SessionState>): SessionState {

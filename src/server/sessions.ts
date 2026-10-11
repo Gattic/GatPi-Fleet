@@ -2,15 +2,23 @@ import { createHash } from "node:crypto";
 import { basename, isAbsolute, relative, sep } from "node:path";
 import { realpathSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
-import { openCwds, rowCwd, rowIncarnation, rowLabel, type SessionRow } from "../manager/model/store.ts";
+import { hostRows, openCwds, rowCwd, rowIncarnation, rowLabel, type SessionRow } from "../manager/model/store.ts";
 import { isAlert } from "../manager/model/status.ts";
 import { launchSession, resumeBlocked } from "../manager/actions/launch.ts";
-import { listProjects, listSessions } from "../manager/actions/sessions.ts";
+import { listProjects, listSessions, type Project, type SessionSummary } from "../manager/actions/sessions.ts";
 import type { ManagerRuntime } from "../manager/runtime.ts";
 import { ApiError, type CommandRequest, type LaunchRequest } from "./contract.ts";
 
 type CommandKind = CommandRequest["command"]["kind"];
 const COMMANDS = ["prompt", "ask", "abort", "shutdown", "compact", "rename", "model", "thinking", "dismiss"] as const satisfies readonly CommandKind[];
+
+/** A directory to start or resume pi in, on this machine (host null) or a remote host. */
+export interface ProjectChoice {
+	id: string;
+	host: string | null;
+	label: string;
+	path: string;
+}
 
 export const ref = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 32);
 export const clean = (text: string | undefined, max = 500): string | null => text === undefined ? null : stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").slice(0, max);
@@ -47,6 +55,10 @@ export function summary(row: SessionRow, gpuAvailable = false) {
 	};
 }
 
+function choices(host: string | undefined, projects: readonly Project[]): ProjectChoice[] {
+	return projects.slice(0, 200).map(({ cwd }) => ({ id: ref(host === undefined ? cwd : `${host}:${cwd}`), host: host ?? null, label: basename(cwd), path: cwd }));
+}
+
 export class Sessions {
 	readonly runtime: ManagerRuntime;
 	constructor(runtime: ManagerRuntime) { this.runtime = runtime; }
@@ -76,36 +88,64 @@ export class Sessions {
 		if (command.kind === "dismiss") return this.runtime.dismiss(row);
 		if (command.kind === "prompt" && command.text.trimStart().startsWith("/")) throw new ApiError(400, "Slash commands require desktop pi; use the typed mobile actions");
 		if (command.kind === "prompt" && row.bridge!.phase === "working" && !command.deliverAs) throw new ApiError(400, "Choose steer or follow-up for a working session");
-		await this.runtime.hub.send(row.bridge!, command);
+		await this.runtime.network.send(row, command);
 	}
-	/** The dashboard's new-session picker choices, in its order. */
-	projects() {
-		return listProjects(this.runtime.sessionRoot, openCwds(this.runtime.store.ordered())).slice(0, 200).map(({ cwd }) => ({ id: ref(cwd), label: basename(cwd), path: cwd }));
+	/** The dashboard's new-session picker choices, in its order: this machine's, then those of each remote host that answers. */
+	async projects(): Promise<{ projects: ProjectChoice[]; unreachable: { host: string; error: string }[] }> {
+		const rows = this.runtime.store.ordered();
+		const remotes = [...this.runtime.network.remotes.values()];
+		const listed = await Promise.allSettled(remotes.map((remote) => remote.request("projects", { live: openCwds(hostRows(rows, remote.name)) })));
+		const projects = choices(undefined, listProjects(this.runtime.sessionRoot, openCwds(hostRows(rows, undefined))));
+		const unreachable: { host: string; error: string }[] = [];
+		listed.forEach((result, index) => {
+			const host = remotes[index].name;
+			if (result.status === "fulfilled") projects.push(...choices(host, result.value));
+			else unreachable.push({ host, error: clean(result.reason instanceof Error ? result.reason.message : String(result.reason)) ?? "" });
+		});
+		return { projects, unreachable };
 	}
-	private project(id: string) {
-		const project = this.projects().find((p) => p.id === id);
+	private async project(id: string): Promise<ProjectChoice> {
+		const project = (await this.projects()).projects.find((p) => p.id === id);
 		if (!project) throw new ApiError(404, "Project no longer exists; refresh");
 		return project;
 	}
-	history(id: string) {
-		const project = this.project(id);
-		return listSessions(this.runtime.sessionRoot, project.path, this.runtime.usage).slice(0, 200).map((s) => ({
+	/** Session files are paths on the project's host. */
+	private async sessionsOf(project: ProjectChoice): Promise<SessionSummary[]> {
+		if (project.host === null) return listSessions(this.runtime.sessionRoot, project.path, this.runtime.usage);
+		return this.runtime.network.remote(project.host).request("sessions", { cwd: project.path });
+	}
+	async history(id: string) {
+		const project = await this.project(id);
+		const sessions = await this.sessionsOf(project);
+		const rows = hostRows(this.runtime.store.ordered(), project.host ?? undefined);
+		return sessions.slice(0, 200).map((s) => ({
 			id: ref(s.path), title: clean(s.title, 200), lastActive: s.lastActive,
-			blocked: resumeBlocked(this.runtime.store.ordered(), project.path, s.path) ?? null,
+			blocked: resumeBlocked(rows, project.path, s.path) ?? null,
 		}));
 	}
-	launch(input: LaunchRequest): { screen: string } {
-		const project = this.project(input.projectId);
-		const file = input.sessionRef ? listSessions(this.runtime.sessionRoot, project.path, this.runtime.usage).find((s) => ref(s.path) === input.sessionRef)?.path : undefined;
+	async launch(input: LaunchRequest): Promise<{ screen: string }> {
+		const project = await this.project(input.projectId);
+		const host = project.host ?? undefined;
+		const file = input.sessionRef ? (await this.sessionsOf(project)).find((s) => ref(s.path) === input.sessionRef)?.path : undefined;
 		if (input.sessionRef && !file) throw new ApiError(404, "Historical session no longer exists");
-		if (file) {
-			const actual = realpathSync(file);
-			const root = realpathSync(this.runtime.sessionRoot);
-			const rel = relative(root, actual);
-			if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) throw new ApiError(403, "Session file escapes the session directory");
+		const rows = hostRows(this.runtime.store.ordered(), host);
+		const options = { cwd: project.path, label: project.label, sessionFile: file };
+		let screen: string;
+		if (host === undefined) {
+			if (file) {
+				const actual = realpathSync(file);
+				const root = realpathSync(this.runtime.sessionRoot);
+				const rel = relative(root, actual);
+				if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) throw new ApiError(403, "Session file escapes the session directory");
+			}
+			screen = launchSession(options, rows, this.runtime.runtimeDir);
+		} else {
+			// The relay does not know which session files its host's pi processes hold: check here, like the dashboard.
+			const blocked = file === undefined ? undefined : resumeBlocked(rows, project.path, file);
+			if (blocked) throw new ApiError(409, blocked);
+			screen = await this.runtime.network.remote(host).request("launch", options);
 		}
-		const screen = launchSession({ cwd: project.path, label: project.label, sessionFile: file }, this.runtime.store.ordered(), this.runtime.runtimeDir);
-		this.runtime.store.expectLaunch(screen);
+		this.runtime.store.expectLaunch(screen, undefined, undefined, host);
 		return { screen };
 	}
 }

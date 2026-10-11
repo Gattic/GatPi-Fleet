@@ -34,8 +34,11 @@ pi-dash-server serve
 
 `init` creates `~/.config/pi-dash-server/config.json`, a private TLS key and a
 one-year self-signed CA/server certificate. The default bind is loopback if
-`--listen` is omitted. New/Resume offer the same projects as the dashboard's `n`
-picker: every directory with pi session history plus those of open sessions.
+`--listen` is omitted. The gateway also shows and drives the sessions of the remote
+hosts listed in pi-dash's `~/.config/pi-dash/hosts.json` (README, "Remote hosts"),
+over its own ssh links. New/Resume offer the same projects as the dashboard's `n`
+picker on each host: every directory with pi session history plus those of open
+sessions.
 Project paths/session references supplied by a client are never executed as
 arbitrary filesystem or shell paths.
 
@@ -58,6 +61,9 @@ systemctl --user status pi-dash-server
 ```
 
 The service uses the same user's XDG runtime directory and pi agent directory.
+With remote hosts it also needs ssh that does not prompt: keys without a passphrase,
+or an agent whose `SSH_AUTH_SOCK` is in the service's environment
+(`systemctl --user show-environment`). Restart it after `pi-dash-host add`/`remove`.
 If you use `PI_CODING_AGENT_DIR`, set it consistently for pi, the TUI and the
 service. A service PATH must include `node`, `pi`, `screen`, and the commands pi
 needs. Do not copy isolated test-agent/runtime directories or test-bin wrappers
@@ -173,9 +179,13 @@ resources, usage and side-question answers; it is not a full transcript browser.
 Missing resource/context fields display as unknown rather than zero. Cost is
 pi's API-equivalent usage, not a provider subscription invoice.
 
+Sessions of remote hosts are labelled `name@host`, and Projects groups each host's
+projects under its name (the gateway's own machine first; a host that did not answer
+is named with the reason).
+
 Phone actions: prompt, explicit steer/follow-up when working, abort, compact,
 rename, model/thinking changes, graceful close, side question, new session and
-resume in any known project, and dismissing an exited session. Dismissing
+resume in any known project on any host, and dismissing an exited session. Dismissing
 removes it from the list on the phone and in pi-dash; `d` in pi-dash removes it from
 the phone too. Abort/compact/close/new/resume require confirmation.
 Side questions use the session's provider context and are billed separately.

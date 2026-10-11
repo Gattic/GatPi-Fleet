@@ -108,7 +108,8 @@ export class RemoteHost {
 		const child = this.child;
 		if (!child || this.status.kind !== "online") return Promise.reject(new Error(`${this.name} is ${this.status.kind}`));
 		const id = this.nextId++;
-		const command = op === "command";
+		// Without an answer, whether a command ran or a session started is unknown, not failed.
+		const command = op === "command" || op === "launch";
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);

@@ -23,7 +23,7 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
     val delivery = MutableStateFlow("followUp")
     val confirmation = MutableStateFlow<Confirmation?>(null)
     /** The project choices fetched for this visit to Projects; null until they arrive. */
-    val projects = MutableStateFlow<List<Project>?>(null)
+    val projects = MutableStateFlow<Projects?>(null)
     val history = MutableStateFlow<List<History>>(emptyList())
     val project = MutableStateFlow<Project?>(null)
     val busy = MutableStateFlow(false)
@@ -71,7 +71,7 @@ class DashViewModel(application: Application) : AndroidViewModel(application) {
         }
         confirmation.value = Confirmation(title, "${session.label}\n${session.project}\n${session.statusLabel}\n\n$text", session, JSONObject().put("kind", kind))
     }
-    fun confirmLaunch(p: Project, h: History?) { confirmation.value = Confirmation(if (h == null) "New session" else "Resume session", "${p.path}\n${h?.title ?: "Start a fresh pi session"}", project = p, history = h) }
+    fun confirmLaunch(p: Project, h: History?) { confirmation.value = Confirmation(if (h == null) "New session" else "Resume session", "${p.location}\n${h?.title ?: "Start a fresh pi session"}", project = p, history = h) }
     fun confirmed() {
         val c = confirmation.value ?: return
         confirmation.value = null

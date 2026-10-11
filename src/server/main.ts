@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { isIP } from "node:net";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { hostsPath, loadHosts } from "../manager/remote/hosts.ts";
 import { ManagerRuntime } from "../manager/runtime.ts";
 import { DeviceStore } from "./auth.ts";
 import { loadConfig, type ServerConfig } from "./config.ts";
@@ -26,7 +27,8 @@ init --url https://HOST:7443 --listen LAN_IP
 pair --name PHONE          Prints sensitive pairing JSON; copy into Android locally
 list                       List paired device IDs (no tokens)
 revoke --id DEVICE_ID       Existing streams close within five seconds
-serve                      Run using the configured HTTPS listener
+serve                      Run using the configured HTTPS listener; includes the remote
+                           hosts in ${hostsPath()} (pi-dash-host add HOST)
 
 All commands accept --config PATH or --dir DIRECTORY.
 Default directory: ~/.config/pi-dash-server
@@ -60,7 +62,8 @@ certificate; verify its fingerprint on the phone. No host/provider secrets enter
 	if (action === "list") { console.log(JSON.stringify(devices.list().map(({ id, name, createdAt }) => ({ id, name, createdAt })), null, 2)); return; }
 	if (action === "revoke") { if (!values.id) throw new Error("revoke requires --id"); devices.revoke(values.id); console.log("Revoked; streams close within five seconds"); return; }
 	if (action !== "serve") throw new Error(`Unknown action: ${action}`);
-	const runtime = new ManagerRuntime({ cacheName: "usage-index-server.json" });
+	const hosts = loadHosts();
+	const runtime = new ManagerRuntime({ cacheName: "usage-index-server.json", hosts });
 	const gateway = new Gateway(config, runtime);
 	let stopping = false;
 	const stop = async () => { if (stopping) return; stopping = true; await gateway.close(); await runtime.close(); };
@@ -68,7 +71,7 @@ certificate; verify its fingerprint on the phone. No host/provider secrets enter
 	process.on("SIGTERM", () => { void stop(); });
 	try { await gateway.listen(); runtime.start(); }
 	catch (error) { await stop(); throw error; }
-	console.log(`pi-dash gateway listening on ${config.listen}:${config.port}; ${devices.list().length} paired devices`);
+	console.log(`pi-dash gateway listening on ${config.listen}:${config.port}; ${devices.list().length} paired devices; ${hosts.length} remote hosts`);
 }
 
 main().catch((error: unknown) => { console.error(error instanceof Error ? error.message : "Gateway failed"); process.exitCode = 1; });

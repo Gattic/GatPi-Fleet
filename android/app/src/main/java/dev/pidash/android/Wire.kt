@@ -45,7 +45,21 @@ data class Detail(val session: Session, val prompt: String?, val reply: String?,
             j.getJSONArray("tools").objects().map { Tool(it.getString("name"), it.getString("detail"), it.isNull("endedAt"), it.getBoolean("isError")) })
     }
 }
-data class Project(val id: String, val label: String, val path: String)
+/** [host] is a remote host of the gateway's pi-dash, or null for the gateway's own machine. */
+data class Project(val id: String, val host: String?, val label: String, val path: String) {
+    /** The directory as pi-dash shows it: `host:/path` on a remote host. */
+    val location: String get() = host?.let { "$it:$path" } ?: path
+}
+data class Unreachable(val host: String, val error: String)
+/** New/resume choices: the projects of every host that answered, and the hosts that did not. */
+data class Projects(val projects: List<Project>, val unreachable: List<Unreachable>) {
+    companion object {
+        fun parse(j: JSONObject) = Projects(
+            j.getJSONArray("projects").objects().map { Project(it.getString("id"), it.text("host"), it.getString("label"), it.getString("path")) },
+            j.getJSONArray("unreachable").objects().map { Unreachable(it.getString("host"), it.getString("error")) },
+        )
+    }
+}
 data class History(val id: String, val title: String, val blocked: String?)
 data class Pending(val id: String, val epoch: String, val description: String)
 data class Dashboard(

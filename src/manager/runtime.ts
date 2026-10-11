@@ -10,6 +10,7 @@ import { QuotaMonitor } from "./collectors/quota.ts";
 import { Dismissals } from "./dismissals.ts";
 import { hostRows, rowCwd, rowIncarnation, rowLabel, SAMPLE_MS, type SessionRow, Store } from "./model/store.ts";
 import { Network } from "./network.ts";
+import { relayCommand } from "./remote/hosts.ts";
 import { RemoteHost } from "./remote/host.ts";
 import { UsageIndex } from "./usage/usage-index.ts";
 
@@ -35,8 +36,8 @@ export class ManagerRuntime {
 	private readonly sampling = new Set<string>();
 	private timers: NodeJS.Timeout[] = [];
 
-	/** `hosts`: remote hosts (hosts.json names) whose sessions to include. */
-	constructor(options: { agent?: string; runtimeDir?: string; cacheDir?: string; cacheName?: string; hosts?: readonly string[] } = {}) {
+	/** `hosts`: remote hosts (hosts.json names) whose sessions to include; `relay` starts a host's relay (ssh by default). */
+	constructor(options: { agent?: string; runtimeDir?: string; cacheDir?: string; cacheName?: string; hosts?: readonly string[]; relay?: (host: string) => readonly string[] } = {}) {
 		const agent = options.agent ?? agentDir();
 		this.sessionRoot = join(agent, "sessions");
 		this.runtimeDir = options.runtimeDir ?? socketDir();
@@ -58,7 +59,7 @@ export class ManagerRuntime {
 					onDisconnect: (pid, alive) => this.store.disconnect(pid, alive, name),
 					onIncompatible: (pid, version) => this.store.incompatible(pid, version, name),
 					onLost: () => this.store.hostLost(name),
-				}),
+				}, (options.relay ?? relayCommand)(name)),
 			]),
 		);
 		this.network = new Network(this.hub, remotes);

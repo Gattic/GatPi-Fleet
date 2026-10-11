@@ -36,28 +36,36 @@ import dev.pidash.android.Project
 
 @Composable
 internal fun ProjectsScreen(vm: DashViewModel, enabled: Boolean) {
-    val projects = vm.projects.collectAsStateWithLifecycle().value
+    val choices = vm.projects.collectAsStateWithLifecycle().value
     val expanded by vm.project.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    // In order: the gateway's own machine (null), then its remote hosts.
+    val byHost = choices?.projects.orEmpty().groupBy { it.host }
+    val remotes = byHost.keys.any { it != null } || !choices?.unreachable.isNullOrEmpty()
+    val gateway = vm.repository.host()?.removePrefix("https://") ?: "Gateway host"
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Projects", style = MaterialTheme.typography.headlineSmall)
-                Text("Start a new pi session or resume a previous one on the host.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Start a new pi session or resume a previous one on a host.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         when {
-            projects == null -> if (!busy) item { Hint("Projects were not loaded. Tap Projects to try again.") }
-            projects.isEmpty() -> item { Hint("No projects yet. Projects appear once pi has run in them on the host.") }
+            choices == null -> if (!busy) item { Hint("Projects were not loaded. Tap Projects to try again.") }
+            choices.projects.isEmpty() -> item { Hint("No projects yet. Projects appear once pi has run in them on a host.") }
         }
-        items(projects.orEmpty(), key = { it.id }) { project ->
-            val open = expanded == project
-            ProjectCard(
-                project, open, history.takeIf { open }, loading = open && busy, enabled = enabled,
-                onNew = { vm.confirmLaunch(project, null) }, onHistory = { vm.history(project) }, onResume = { vm.confirmLaunch(project, it) },
-            )
+        byHost.forEach { (host, projects) ->
+            if (remotes) item(key = "host:$host") { SectionLabel(host ?: gateway) }
+            items(projects, key = { it.id }) { project ->
+                val open = expanded == project
+                ProjectCard(
+                    project, open, history.takeIf { open }, loading = open && busy, enabled = enabled,
+                    onNew = { vm.confirmLaunch(project, null) }, onHistory = { vm.history(project) }, onResume = { vm.confirmLaunch(project, it) },
+                )
+            }
         }
+        items(choices?.unreachable.orEmpty(), key = { "unreachable:${it.host}" }) { Notice("${it.host}: ${it.error}", Pi.Error) }
     }
 }
 

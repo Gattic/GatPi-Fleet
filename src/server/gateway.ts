@@ -115,8 +115,8 @@ export class Gateway {
 			let result: unknown;
 			if (path === "/api/v1/info") result = { version: API_VERSION, epoch: this.epoch, label: this.config.label, capabilities: ["sessions", "commands", "launch", "g1-display"] };
 			else if (path === "/api/v1/sessions") result = { sessions: this.sessions.overview() };
-			else if (path === "/api/v1/projects") result = { projects: this.sessions.projects() };
-			else if (/^\/api\/v1\/projects\/[a-f0-9]{32}\/sessions$/.test(path)) result = { sessions: this.sessions.history(path.split("/")[4]) };
+			else if (path === "/api/v1/projects") result = await this.sessions.projects();
+			else if (/^\/api\/v1\/projects\/[a-f0-9]{32}\/sessions$/.test(path)) result = { sessions: await this.sessions.history(path.split("/")[4]) };
 			else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}$/.test(path)) result = this.sessions.detail(path.split("/")[4]);
 			else if (/^\/api\/v1\/commands\/[a-f0-9-]{36}$/.test(path)) result = this.receipts.get(device.id, path.split("/")[4]) ?? { state: "unknown", error: "No receipt in this server epoch; do not replay automatically" };
 			else throw new ApiError(404, "Unknown endpoint");
@@ -132,7 +132,7 @@ export class Gateway {
 			if (!launchRequest.Check(input)) throw new ApiError(400, "Invalid launch request");
 			if (input.epoch !== this.epoch) throw new ApiError(409, "Gateway restarted; refresh, do not replay old actions");
 			this.audit.write(device.id, input.projectId, input.sessionRef ? "resume" : "new", "received");
-			receipt = this.receipts.submit(device.id, input.requestId, { path, input }, async () => this.sessions.launch(input));
+			receipt = this.receipts.submit(device.id, input.requestId, { path, input }, () => this.sessions.launch(input));
 		} else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}\/commands$/.test(path)) {
 			if (!commandRequest.Check(input)) throw new ApiError(400, "Invalid command request");
 			if (input.epoch !== this.epoch) throw new ApiError(409, "Gateway restarted; refresh, do not replay old actions");

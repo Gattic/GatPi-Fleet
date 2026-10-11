@@ -7,16 +7,20 @@ import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { ManagerRuntime } from "../src/manager/runtime.ts";
 import { UncertainCommandError } from "../src/manager/collectors/bridges.ts";
 import { resumeBlocked } from "../src/manager/actions/launch.ts";
+import { sessionDirName } from "../src/manager/actions/sessions.ts";
 import { emptyUsage, encodeMessage, LineDecoder, PROTOCOL_VERSION, socketPath, type ClientMessage, type SessionState } from "../src/protocol/index.ts";
 import { DeviceStore } from "../src/server/auth.ts";
 import { CommandRequestSchema, LaunchRequestSchema, SubscriptionSchema } from "../src/server/contract.ts";
 import { Gateway } from "../src/server/gateway.ts";
 import { Receipts } from "../src/server/receipts.ts";
-import { clean, ref, sessionRef, summary } from "../src/server/sessions.ts";
+import { clean, ref, sessionRef, Sessions, summary } from "../src/server/sessions.ts";
+
+const RELAY = fileURLToPath(new URL("../src/relay/main.ts", import.meta.url));
 
 async function until<T>(check: () => T | false | undefined, timeout = 6000): Promise<T> {
 	const end = Date.now() + timeout;
@@ -135,9 +139,9 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	// Like the dashboard's new-session picker: any open session's project, with no allowlist.
 	const elsewhere = join(dir, "elsewhere"); mkdirSync(elsewhere);
 	runtime.store.setState(12345, { ...state, pid: 12345, cwd: elsewhere });
-	assert.deepEqual(gateway.sessions.projects().map((p) => p.path).sort(), [elsewhere, project].sort());
+	assert.deepEqual((await gateway.sessions.projects()).projects.map((p) => p.path).sort(), [elsewhere, project].sort());
 	runtime.store.bye(12345, "quit");
-	assert.deepEqual(gateway.sessions.projects().map((p) => p.path), [project]);
+	assert.deepEqual(await gateway.sessions.projects(), { projects: [{ id: ref(project), host: null, label: "project", path: project }], unreachable: [] });
 	// The phone dismisses an exited session; the dashboard, another process with its own store, lets it go too.
 	const dashboard = new ManagerRuntime({ runtimeDir: run, agent: join(dir, "agent"), cacheDir: join(dir, "dashboard-cache") });
 	t.after(() => dashboard.close());
@@ -167,6 +171,64 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	await assert.rejects(stream({ Authorization: auth }), /Unexpected server response: 401/);
 	await until(() => closed);
 	assert.ok(!readFileSync(devices.path, "utf8").includes(paired.token));
+});
+
+test("the gateway lists, drives and dismisses the sessions of remote hosts", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-dash-server-hosts-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	// "box" runs the real relay as a local child process in place of ssh, with its own runtime and agent directories.
+	const boxRun = join(dir, "box-run"); const boxAgent = join(dir, "box-agent"); const project = join(dir, "remote-project");
+	mkdirSync(join(boxRun, "pi-dash"), { recursive: true, mode: 0o700 }); mkdirSync(project);
+	const sessionDir = join(boxAgent, "sessions", sessionDirName(project));
+	mkdirSync(sessionDir, { recursive: true });
+	const file = join(sessionDir, "a.jsonl");
+	writeFileSync(file, `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: project })}\n`);
+	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "a", sessionFile: file, cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [] };
+	const received: ClientMessage[] = [];
+	let bridgeSocket: Socket;
+	const bridge = createServer((s) => {
+		bridgeSocket = s;
+		s.write(encodeMessage({ type: "hello", version: PROTOCOL_VERSION }));
+		s.write(encodeMessage({ type: "snapshot", state }));
+		const decoder = new LineDecoder(); s.setEncoding("utf8");
+		s.on("data", (chunk: string) => {
+			for (const command of decoder.push(chunk) as ClientMessage[]) { received.push(command); s.write(encodeMessage({ type: "ack", id: command.id, ok: true })); }
+		});
+		s.on("error", () => {});
+	});
+	await new Promise<void>((resolve) => bridge.listen(socketPath(process.pid, join(boxRun, "pi-dash")), resolve));
+	t.after(() => { bridgeSocket?.destroy(); bridge.close(); });
+	const relay = (host: string) => host === "box" ? ["env", `XDG_RUNTIME_DIR=${boxRun}`, `PI_CODING_AGENT_DIR=${boxAgent}`, process.execPath, RELAY] : [process.execPath, "-e", "process.exit(3)"];
+	const runtime = new ManagerRuntime({ runtimeDir: join(dir, "run"), agent: join(dir, "agent"), cacheDir: join(dir, "cache"), hosts: ["box", "gone"], relay });
+	t.after(() => runtime.close());
+	for (const remote of runtime.network.remotes.values()) remote.start();
+	const key = `box:${process.pid}`;
+	await until(() => runtime.store.rows.get(key)?.connected);
+	const sessions = new Sessions(runtime);
+	const [remote] = sessions.overview();
+	assert.equal(remote.label, "remote-project@box");
+	assert.notEqual(remote.id, ref(`${process.pid}:a:${state.instanceId}`), "the same pid on this machine would be another session");
+
+	// Commands reach the bridge through the host's relay.
+	const epoch = randomUUID();
+	await sessions.command(remote.id, { requestId: randomUUID(), epoch, revision: remote.revision, command: { kind: "prompt", text: "hi" } });
+	assert.deepEqual(received.map((m) => m.command), [{ kind: "prompt", text: "hi" }]);
+
+	// Projects of every host that answers, and which hosts did not.
+	const { projects, unreachable } = await sessions.projects();
+	assert.deepEqual(projects, [{ id: ref(`box:${project}`), host: "box", label: "remote-project", path: project }]);
+	assert.deepEqual(unreachable.map((u) => u.host), ["gone"]);
+	// Resuming is checked against the sessions open on that host.
+	const [history] = await sessions.history(projects[0].id);
+	assert.equal(history.blocked, "That session is already open; select its running session instead");
+	await assert.rejects(sessions.launch({ requestId: randomUUID(), epoch, projectId: projects[0].id, sessionRef: history.id }), /already open/);
+
+	bridgeSocket!.write(encodeMessage({ type: "bye", reason: "quit" }));
+	await until(() => runtime.store.rows.get(key)?.exitedAt);
+	const exited = sessions.overview()[0];
+	await sessions.command(exited.id, { requestId: randomUUID(), epoch, revision: exited.revision, command: { kind: "dismiss" } });
+	assert.deepEqual(sessions.overview(), []);
+	assert.equal(received.length, 1);
 });
 
 test("local CLI provisions a private certificate/device and revokes without exposing tokens in list", (t) => {

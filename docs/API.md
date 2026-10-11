@@ -21,12 +21,14 @@ Errors use HTTP status plus `{ "error": "description" }`.
 | `GET /api/v1/info` | `version`, `epoch`, host `label` |
 | `GET /api/v1/sessions` | `sessions` overview array (epoch is supplied by info/the stream) |
 | `GET /api/v1/sessions/:id` | Selected detail object |
-| `GET /api/v1/projects` | `projects`: opaque `id`, `label`, `path`; open projects first, then most recently active |
+| `GET /api/v1/projects` | `projects`: opaque `id`, `host` (remote host name, or null for the gateway's machine), `label`, `path`; per host (the gateway's machine, then `hosts.json` order) open projects first, then most recently active. `unreachable`: `host`, `error` for each remote host that did not answer |
 | `GET /api/v1/projects/:id/sessions` | `sessions`: opaque `id`, title, lastActive, blocked reason or null |
 | `GET /api/v1/commands/:requestId` | Receipt, or unknown if absent |
 
-Session IDs are opaque SHA-256-derived references to the PID, pi session ID and
-random bridge incarnation. A PID is never sufficient to dispatch a command.
+Sessions include those of the remote hosts in pi-dash's `hosts.json` (labelled `name@host`),
+reached through the same relays as the dashboard. Session IDs are opaque SHA-256-derived
+references to the host, PID, pi session ID and random bridge incarnation. A PID is never
+sufficient to dispatch a command.
 References are not credentials. Overview fields include revision, label/project,
 status/since, attention transition key, bridge connected flag, model/thinking,
 contextPercent, plan, resource/usage aggregates, and per-command disabled reasons.
@@ -89,10 +91,11 @@ still grant the session its normal tool authority, so a paired phone is privileg
 Compact requires idle state. Ask is refused while another side question is active.
 The bridge independently checks the exact target immediately before dispatch.
 
-`POST /api/v1/sessions` launches a new session in a listed project:
-`{requestId, epoch, projectId}`. Include `sessionRef` from that project's history
-to resume. Projects are the same choices as the dashboard's `n` picker: every
-directory with pi session history plus the directories of open sessions. Current
+`POST /api/v1/sessions` launches a new session in a listed project, on that
+project's host: `{requestId, epoch, projectId}`. Include `sessionRef` from that
+project's history to resume. Projects are the same choices as the dashboard's `n`
+picker on each host: every directory with pi session history plus the directories
+of open sessions. A remote launch whose answer is lost has an unknown outcome. Current
 ownership checks and shared exclusive resume reservations apply; arbitrary
 paths/launch arguments are not accepted.
 
