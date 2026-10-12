@@ -23,7 +23,7 @@ export function usageFixture() {
 		],
 	});
 	runtime.quota.providers = ["anthropic", "openai-codex"];
-	runtime.quota.readings.set("anthropic", { fetchedAt: NOW, windows: [{ label: "5h", usedPercent: 25, resetAt: NOW + HOUR }, { label: "7d", usedPercent: 57, resetAt: NOW + 3 * 24 * HOUR }] });
+	runtime.quota.readings.set("anthropic", { fetchedAt: NOW, windows: [{ label: "5h", usedPercent: 0, resetAt: null }, { label: "7d", usedPercent: 57, resetAt: NOW + 3 * 24 * HOUR }] });
 	runtime.quota.readings.set("openai-codex", { fetchedAt: NOW - 5 * 60_000, windows: [{ label: "7d", usedPercent: 7, resetAt: NOW + 2 * 24 * HOUR }], error: "Usage endpoint HTTP 429" });
 	runtime.quota.cooldowns = [{ provider: "anthropic", until: NOW + HOUR }, { provider: "openai-codex", until: NOW }];
 	return usageReport(runtime, NOW);

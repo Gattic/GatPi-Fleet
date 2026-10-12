@@ -11,8 +11,8 @@
       "windows": [
         {
           "label": "5h",
-          "usedPercent": 25,
-          "resetAt": 1768482000000
+          "usedPercent": 0,
+          "resetAt": null
         },
         {
           "label": "7d",

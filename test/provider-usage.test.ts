@@ -20,6 +20,36 @@ test("provider windows preserve zero, percentages, actual duration, seconds and 
 	assert.deepEqual(parseUsage("codex", { rate_limit: { allowed: true } }), [], "availability is not a balance");
 });
 
+test("Anthropic's idle five-hour balance survives a null reset without adding a Codex five-hour limit", () => {
+	assert.deepEqual(parseUsage("anthropic", { ...anthropic, five_hour: { utilization: 0, resets_at: null } }), [
+		{ label: "5h", usedPercent: 0, resetAt: null },
+		{ label: "7d", usedPercent: 57, resetAt: NOW + 3 * 86400_000 },
+	]);
+	assert.deepEqual(parseUsage("codex", { rate_limit: { primary_window: { used_percent: 44, reset_at: (NOW + 86400_000) / 1000, limit_window_seconds: 7 * 86400 }, secondary_window: null } }), [
+		{ label: "7d", usedPercent: 44, resetAt: NOW + 86400_000 },
+	]);
+	for (const resets_at of [undefined, "bad", false, 0]) {
+		assert.deepEqual(parseUsage("anthropic", { five_hour: { utilization: 0, resets_at } }), [], "malformed resets are not explicit provider nulls");
+	}
+});
+
+test("a balance without a reset still expires and respects the ordinary poll interval", async (t) => {
+	let calls = 0;
+	const f = monitor(t, async () => { calls++; return Response.json({ five_hour: { utilization: 0, resets_at: null } }); });
+	f.save({ anthropic: credential });
+	await f.quota.refresh();
+	assert.equal(f.snapshot()[0].status, "fresh");
+	assert.equal(f.snapshot()[0].freshUntil, NOW + 20 * 60_000);
+	assert.deepEqual(f.snapshot()[0].windows, [{ label: "5h", usedPercent: 0, resetAt: null }]);
+	f.tick(10 * 60_000 - 1); await f.quota.refresh();
+	assert.equal(calls, 1, "no reset timestamp must not cause a hot polling loop");
+	f.tick(1); await f.quota.refresh();
+	assert.equal(calls, 2);
+	assert.equal(f.snapshot()[0].freshUntil, NOW + 30 * 60_000);
+	f.tick(20 * 60_000);
+	assert.equal(f.snapshot()[0].status, "stale", "no reset timestamp must not mean indefinitely fresh");
+});
+
 test("only exact provider families send stored OAuth credentials to fixed origins without redirects", async () => {
 	for (const [provider, host, body] of [["anthropic-account-2", "https://api.anthropic.com/api/oauth/usage", anthropic], ["openai-codex-account-2", "https://chatgpt.com/backend-api/wham/usage", codex]] as const) {
 		let calls = 0;

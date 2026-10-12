@@ -116,7 +116,11 @@ private fun QuotaCard(report: UsageReport, now: Long) {
                         val color = if (!fresh) MaterialTheme.colorScheme.onSurfaceVariant else if (left <= 10) MaterialTheme.colorScheme.error else if (left <= 30) Pi.Waiting else MaterialTheme.colorScheme.primary
                         Text("${window.label}: $left% left", color = color)
                         LinearProgressIndicator(progress = { ((100 - window.usedPercent) / 100).toFloat() }, modifier = Modifier.fillMaxWidth(), color = color)
-                        Text(if (window.resetAt > now) "Resets in ${duration(window.resetAt - now)}" else "Reset due — refresh to update", style = MaterialTheme.typography.bodySmall)
+                        Text(when {
+                            window.resetAt == null -> "Reset time not reported"
+                            window.resetAt > now -> "Resets in ${duration(window.resetAt - now)}"
+                            else -> "Reset due — refresh to update"
+                        }, style = MaterialTheme.typography.bodySmall)
                     }
                     Text("Updated ${duration((now - (account.fetchedAt ?: now)).coerceAtLeast(0))} ago", style = MaterialTheme.typography.bodySmall)
                 }

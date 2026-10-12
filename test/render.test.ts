@@ -134,6 +134,27 @@ test("live quota bars, remaining percentages, both window timers and stale label
 	assert.doesNotMatch(stale, /100% left/, "reset is not assumed to refill quota");
 });
 
+test("Anthropic's idle five-hour balance is visible without a fabricated reset or Codex window", () => {
+	const ctx = context();
+	ctx.quota.readings.set("anthropic", { fetchedAt: ctx.now, windows: [{ label: "5h", usedPercent: 0, resetAt: null }, { label: "7d", usedPercent: 100, resetAt: ctx.now + 60_000 }] });
+	ctx.quota.providers!.push("openai-codex-account-2");
+	ctx.quota.readings.set("openai-codex-account-2", { fetchedAt: ctx.now, windows: [{ label: "7d", usedPercent: 56, resetAt: ctx.now + 86400_000 }] });
+	for (const width of [80, 100, 140]) {
+		for (const lines of [renderOverview(ctx, width, 30), renderUsage(ctx, width, 30, "today", "cost")]) {
+			const text = strip(lines.join("\n"));
+			assert.match(text, /anthropic 5h .+100% left.*reset time not reported/);
+			assert.match(text, /anthropic 7d .+0% left.*↻ 1m00s/);
+			assert.match(text, /codex#2 7d .+44% left/);
+			assert.doesNotMatch(text, /stale|reset due|codex#2 5h/);
+			for (const line of lines) assert.ok(visibleWidth(line) <= width);
+		}
+	}
+	ctx.now += 60_000;
+	const expired = strip(renderUsage(ctx, 100, 30, "today", "cost").join("\n"));
+	assert.match(expired, /anthropic 5h .+100% left.*reset time not reported.*stale/);
+	assert.match(expired, /anthropic 7d .+0% left.*reset due.*stale/);
+});
+
 test("a highlighted row keeps its background across truncated cells", () => {
 	const ctx = context();
 	ctx.selected = ctx.store.rows.get("104");

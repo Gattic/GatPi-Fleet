@@ -45,7 +45,10 @@ or null when login state cannot be read; an empty array means no logins. `provid
 label, never an email or credential. `status` is `fresh`, `stale`, `unknown`, or `unsupported`.
 `fetchedAt` and `freshUntil` are host epoch milliseconds (null before any reading); `message`
 is a sanitized diagnostic or null. Each window is `{ label, usedPercent, resetAt }`, with a
-0–100 percentage and host epoch reset time. Bars show `100 - usedPercent` **left**.
+0–100 percentage and host epoch reset time, or `resetAt: null` when the provider reports no
+reset timestamp (for example, Anthropic's unused five-hour window). A null reset does not discard
+the reported balance or mean “reset due”; show “Reset time not reported” without a countdown.
+Bars show `100 - usedPercent` **left**.
 Clients must stop presenting a fresh reading as current at `freshUntil`, even without another
 fetch. Reset expiry does not imply a refill. Stale readings retain their original timestamps;
 missing windows stay missing. See [quota collection](QUOTAS.md) for polling and auth boundaries.

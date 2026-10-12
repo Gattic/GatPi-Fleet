@@ -4,6 +4,10 @@ The overview and Usage views show each signed-in Anthropic/Codex account's provi
 allowance: a bar, percentage **left**, and reset countdown for each returned window. Aliases
 such as `anthropic-account-2` and `openai-codex-account-2` have their own readings. Window labels
 use the provider's duration, so a Codex monthly window is not mislabelled as five hours.
+Anthropic's five-hour and weekly balances are both shown when reported. Its unused five-hour
+window can have 0% used with a null reset timestamp: the balance remains visible with
+“Reset time not reported,” not a made-up countdown. This does not override an exhausted weekly
+limit. Codex only shows its returned windows; a missing five-hour window is not added.
 Android receives the same sanitized readings through the gateway and advances countdowns from
 host time using elapsed time, not the phone's potentially different wall clock. The report and
 its monotonic receipt-time anchor are retained together across Activity recreation, so rotation
@@ -38,7 +42,8 @@ The Android Refresh button fetches the gateway's latest report; it does not bypa
 
 ## Honesty of the display
 
-- `fresh`: a successful reading younger than two polling intervals, before its earliest reset.
+- `fresh`: a successful reading younger than two polling intervals, before its earliest known reset.
+  A null reset timestamp neither forces immediate expiry nor disables the polling-age limit.
 - `stale`: an older reading, a reached reset, or a failed subsequent fetch. Last values remain
   visibly stale, with their original timestamp. They never acquire freshness from a failed probe.
 - `unknown`: no usable reading yet, including invalid OAuth credentials or missing/malformed data.

@@ -1,6 +1,7 @@
 // Anthropic/Codex usage readers adapted from Sarrius/pi-multi-account (MIT).
 // Pinned source and license: docs/THIRD-PARTY-NOTICES.md. No routing or auth mutation.
-export interface QuotaWindow { label: string; usedPercent: number; resetAt: number }
+/** null resetAt preserves a reported balance when the provider has no reset timestamp. */
+export interface QuotaWindow { label: string; usedPercent: number; resetAt: number | null }
 export interface UsageCredential { type?: unknown; access?: unknown; accountId?: unknown; expires?: unknown }
 export type UsageFamily = "anthropic" | "codex";
 
@@ -27,7 +28,8 @@ function epoch(value: unknown): number | undefined {
 function window(value: unknown, seconds: number): QuotaWindow | undefined {
 	const source = record(value);
 	const percent = number(source.used_percent ?? source.utilization);
-	const resetAt = epoch(source.reset_at ?? source.resets_at);
+	const resetValue = "reset_at" in source ? source.reset_at : source.resets_at;
+	const resetAt = resetValue === null ? null : epoch(resetValue);
 	if (percent === undefined || percent < 0 || resetAt === undefined) return undefined;
 	const duration = number(source.limit_window_seconds) ?? seconds;
 	if (duration <= 0) return undefined;

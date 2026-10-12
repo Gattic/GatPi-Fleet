@@ -118,7 +118,7 @@ export function quotaLines(ctx: ViewContext, width: number): string[] {
 			const fresh = account.status === "fresh";
 			const left = Math.round(100 - window.usedPercent);
 			const paint = fresh ? levelColor(window.usedPercent / 100) : theme.dim;
-			const reset = window.resetAt > ctx.now ? `↻ ${fmtDuration(window.resetAt - ctx.now)}` : "reset due";
+			const reset = window.resetAt === null ? "reset time not reported" : window.resetAt > ctx.now ? `↻ ${fmtDuration(window.resetAt - ctx.now)}` : "reset due";
 			return fit(`${field("QUOTA")}${provider} ${theme.muted(window.label)} ${gauge(left / 100, width >= 100 ? 10 : 6, paint)} ${paint(`${left}% left`)} ${theme.dim(reset)}${fresh ? "" : theme.waiting(" · stale")}`, width);
 		});
 	});

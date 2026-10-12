@@ -23,6 +23,28 @@ import org.junit.Test
 class UsageScreenTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun idleAnthropicFiveHourBalanceIsShownAlongsideWeeklyLimits() {
+        val at = 1_000_000_000_000L
+        val measure = UsageMeasure(emptyList(), emptyList(), emptyList())
+        val report = UsageReport(at, false, listOf(
+            QuotaAccount("anthropic", "fresh", at, at + 120_000, null,
+                listOf(QuotaWindow("5h", 0.0, null), QuotaWindow("7d", 100.0, at + 86_400_000))),
+            QuotaAccount("codex", "fresh", at, at + 120_000, null,
+                listOf(QuotaWindow("7d", 56.0, at + 86_400_000))),
+        ), emptyList(), UsageReport.RANGES.map { UsageRange(it, 1, 0.0, 0.0, 0.0, measure, measure) })
+        compose.runOnUiThread {
+            val vm = ViewModelProvider(compose.activity)[DashViewModel::class.java]
+            vm.usage.value = UsageSnapshot(report, SystemClock.elapsedRealtime())
+            vm.screen.value = Screen.Usage
+        }
+        compose.onNodeWithText("5h: 100% left").assertIsDisplayed()
+        compose.onNodeWithText("Reset time not reported").assertIsDisplayed()
+        compose.onNodeWithText("7d: 0% left").assertIsDisplayed()
+        compose.onNodeWithText("7d: 44% left").assertIsDisplayed()
+        compose.onNodeWithText("Stale — refresh to update").assertDoesNotExist()
+        compose.onNodeWithText("Reset due — refresh to update").assertDoesNotExist()
+    }
+
     @Test fun recreationDoesNotRenewFreshnessOrRewindResetCountdowns() {
         // Deliberately unlike the phone's wall clock: time must remain relative to the host.
         val at = 1_000_000_000_000L

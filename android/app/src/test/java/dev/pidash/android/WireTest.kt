@@ -22,8 +22,11 @@ class WireTest {
         val accounts = usage.quota!!
         assertEquals(listOf("anthropic", "codex"), accounts.map { it.provider })
         assertEquals(listOf("fresh", "stale"), accounts.map { it.status })
-        assertEquals(listOf(25.0, 57.0), accounts[0].windows.map { it.usedPercent })
+        assertEquals(listOf(0.0, 57.0), accounts[0].windows.map { it.usedPercent })
         assertEquals(listOf("5h", "7d"), accounts[0].windows.map { it.label })
+        assertNull(accounts[0].windows[0].resetAt)
+        assertNotNull(accounts[0].windows[1].resetAt)
+        assertEquals(listOf("7d"), accounts[1].windows.map { it.label })
         assertTrue(accounts[0].fresh(usage.at))
         assertFalse(accounts[0].fresh(accounts[0].freshUntil!!))
         assertFalse(accounts[1].fresh(usage.at))
@@ -50,7 +53,10 @@ class WireTest {
     @Test fun missingAndInvalidQuotaDataNeverLooksAvailable() {
         val json = JSONObject(javaClass.classLoader!!.getResource("usage.json")!!.readText())
         val first = json.getJSONArray("quota").getJSONObject(0)
-        first.getJSONArray("windows").getJSONObject(0).put("usedPercent", 101)
+        val window = first.getJSONArray("windows").getJSONObject(0)
+        window.put("usedPercent", 101)
+        assertThrows(IllegalArgumentException::class.java) { UsageReport.parse(json) }
+        window.put("usedPercent", 0).put("resetAt", -1)
         assertThrows(IllegalArgumentException::class.java) { UsageReport.parse(json) }
         first.put("windows", org.json.JSONArray())
         assertThrows(IllegalArgumentException::class.java) { UsageReport.parse(json) }

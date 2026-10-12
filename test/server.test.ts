@@ -457,7 +457,9 @@ test("the usage tab gets the dashboard's usage view as data", (t) => {
 	assert.equal(report.ranges[2].tokens.series.length, 30);
 	assert.deepEqual(report.ranges[2].tokens.series.slice(-2), [6e6, 2.1e6]);
 	assert.deepEqual(report.quota?.map(({ provider, status }) => ({ provider, status })), [{ provider: "anthropic", status: "fresh" }, { provider: "codex", status: "stale" }]);
-	assert.deepEqual(report.quota![0].windows.map((w) => w.usedPercent), [25, 57]);
+	assert.deepEqual(report.quota![0].windows.map((w) => w.usedPercent), [0, 57]);
+	assert.deepEqual(report.quota![0].windows[0], { label: "5h", usedPercent: 0, resetAt: null });
+	assert.deepEqual(report.quota![1].windows.map((w) => w.label), ["7d"]);
 	assert.equal(report.quota![1].message, "Usage endpoint HTTP 429");
 	assert.deepEqual(report.cooldowns, [{ provider: "anthropic", until: report.at + 3_600_000 }], "expired cooldowns are omitted, not converted to quota balances");
 });

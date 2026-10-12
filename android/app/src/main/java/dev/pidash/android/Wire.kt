@@ -91,7 +91,7 @@ data class UsageRange(val range: String, val bucketHours: Int, val cost: Double,
     }
 }
 /** Provider-reported subscription windows, separate from local account cooldowns. */
-data class QuotaWindow(val label: String, val usedPercent: Double, val resetAt: Long)
+data class QuotaWindow(val label: String, val usedPercent: Double, val resetAt: Long?)
 data class QuotaAccount(val provider: String, val status: String, val fetchedAt: Long?, val freshUntil: Long?, val message: String?, val windows: List<QuotaWindow>) {
     fun fresh(now: Long): Boolean = status == "fresh" && freshUntil != null && now < freshUntil
     companion object {
@@ -102,8 +102,8 @@ data class QuotaAccount(val provider: String, val status: String, val fetchedAt:
             val freshUntil = if (j.isNull("freshUntil")) null else j.getLong("freshUntil")
             val windows = j.getJSONArray("windows").objects().map {
                 val used = it.getDouble("usedPercent")
-                val reset = it.getLong("resetAt")
-                require(used.isFinite() && used in 0.0..100.0 && reset > 0) { "Invalid quota window" }
+                val reset = if (it.isNull("resetAt")) null else it.getLong("resetAt")
+                require(used.isFinite() && used in 0.0..100.0 && (reset == null || reset > 0)) { "Invalid quota window" }
                 QuotaWindow(it.getString("label"), used, reset)
             }
             if (status == "fresh" || status == "stale") require(fetchedAt != null && freshUntil != null && windows.isNotEmpty()) { "Missing quota reading" }

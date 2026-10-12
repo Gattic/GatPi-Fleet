@@ -54,7 +54,7 @@ export class QuotaMonitor {
 			const reading = this.readings.get(provider);
 			const supported = usageFamily(provider) !== undefined;
 			const fetchedAt = reading?.fetchedAt ?? null;
-			const freshUntil = fetchedAt === null ? null : Math.min(fetchedAt + 2 * refreshMs(provider), ...reading!.windows.map((w) => w.resetAt));
+			const freshUntil = fetchedAt === null ? null : Math.min(fetchedAt + 2 * refreshMs(provider), ...reading!.windows.flatMap(({ resetAt }) => resetAt === null ? [] : [resetAt]));
 			const error = reading?.error;
 			const status = !supported ? "unsupported" : freshUntil === null ? "unknown" : error || now >= freshUntil ? "stale" : "fresh";
 			return { provider, status, fetchedAt: reading?.fetchedAt ?? null, freshUntil,
@@ -80,7 +80,7 @@ export class QuotaMonitor {
 					if (this.controller.signal.aborted || this.logins.get(provider) !== login) return;
 					const fetchedAt = this.now();
 					this.readings.set(provider, { fetchedAt, windows });
-					login.nextAt = Math.min(fetchedAt + refreshMs(provider), ...windows.filter((w) => w.resetAt > fetchedAt).map((w) => w.resetAt));
+					login.nextAt = Math.min(fetchedAt + refreshMs(provider), ...windows.flatMap(({ resetAt }) => resetAt !== null && resetAt > fetchedAt ? [resetAt] : []));
 				} catch (error) {
 					if (!this.controller.signal.aborted && this.logins.get(provider) === login) {
 						const previous = this.readings.get(provider) ?? { fetchedAt: null, windows: [] };

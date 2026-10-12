@@ -18,6 +18,6 @@ class UsageSnapshotTest {
         val resumedAt = snapshot.hostTime(185_000)
         assertEquals(at + 180_000, resumedAt)
         assertFalse(account.fresh(resumedAt))
-        assertEquals(0L, account.windows.single().resetAt - resumedAt)
+        assertEquals(0L, account.windows.single().resetAt!! - resumedAt)
     }
 }
