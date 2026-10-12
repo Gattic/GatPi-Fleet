@@ -90,24 +90,42 @@ data class UsageRange(val range: String, val bucketHours: Int, val cost: Double,
         }
     }
 }
-/** A session's estimated part of a quota window. */
-data class QuotaShare(val label: String, val open: Boolean, val share: Double)
-/** A subscription quota window (e.g. 5h, wk) of one provider login; times are host epoch milliseconds. */
-data class Quota(val provider: String, val window: String, val usedPercent: Double, val resetAt: Long?, val exhaustedUntil: Long?, val shares: List<QuotaShare>)
-/** The host's usage view as of [at] (host epoch milliseconds); [indexing] while its first scan of session files runs. */
-data class UsageReport(val at: Long, val indexing: Boolean, val quota: List<Quota>, val ranges: List<UsageRange>) {
+/** Provider-reported subscription windows, separate from local account cooldowns. */
+data class QuotaWindow(val label: String, val usedPercent: Double, val resetAt: Long)
+data class QuotaAccount(val provider: String, val status: String, val fetchedAt: Long?, val freshUntil: Long?, val message: String?, val windows: List<QuotaWindow>) {
+    fun fresh(now: Long): Boolean = status == "fresh" && freshUntil != null && now < freshUntil
+    companion object {
+        fun parse(j: JSONObject): QuotaAccount {
+            val status = j.getString("status")
+            require(status in listOf("fresh", "stale", "unknown", "unsupported")) { "Unsupported quota status" }
+            val fetchedAt = if (j.isNull("fetchedAt")) null else j.getLong("fetchedAt")
+            val freshUntil = if (j.isNull("freshUntil")) null else j.getLong("freshUntil")
+            val windows = j.getJSONArray("windows").objects().map {
+                val used = it.getDouble("usedPercent")
+                val reset = it.getLong("resetAt")
+                require(used.isFinite() && used in 0.0..100.0 && reset > 0) { "Invalid quota window" }
+                QuotaWindow(it.getString("label"), used, reset)
+            }
+            if (status == "fresh" || status == "stale") require(fetchedAt != null && freshUntil != null && windows.isNotEmpty()) { "Missing quota reading" }
+            return QuotaAccount(j.getString("provider"), status, fetchedAt, freshUntil, j.optString("message").takeUnless { j.isNull("message") }, windows)
+        }
+    }
+}
+/** A local account cooldown, not a provider quota reset; [until] is host epoch milliseconds. */
+data class AccountCooldown(val provider: String, val until: Long)
+/** The host's usage view as of [at]; null cooldowns means unavailable, not an empty list. */
+data class UsageReport(val at: Long, val indexing: Boolean, val quota: List<QuotaAccount>?, val cooldowns: List<AccountCooldown>?, val ranges: List<UsageRange>) {
     fun range(id: String): UsageRange = ranges.first { it.range == id }
     companion object {
         val RANGES = listOf("today", "7d", "30d")
         fun parse(j: JSONObject): UsageReport {
             val ranges = j.getJSONArray("ranges").objects().map(UsageRange::parse)
             require(ranges.map { it.range } == RANGES) { "Unsupported usage ranges" }
-            return UsageReport(j.getLong("at"), j.getBoolean("indexing"),
-                j.getJSONArray("quota").objects().map { q ->
-                    Quota(q.getString("provider"), q.getString("window"), q.getDouble("usedPercent"), q.number("resetAt")?.toLong(), q.number("exhaustedUntil")?.toLong(),
-                        q.getJSONArray("shares").objects().map { QuotaShare(it.getString("label"), it.getBoolean("open"), it.getDouble("share")) })
-                },
-                ranges)
+            val quota = if (j.isNull("quota")) null else j.getJSONArray("quota").objects().map(QuotaAccount::parse)
+            val cooldowns = if (j.isNull("cooldowns")) null else j.getJSONArray("cooldowns").objects().map {
+                AccountCooldown(it.getString("provider"), it.getLong("until"))
+            }
+            return UsageReport(j.getLong("at"), j.getBoolean("indexing"), quota, cooldowns, ranges)
         }
     }
 }

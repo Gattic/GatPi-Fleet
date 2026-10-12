@@ -139,22 +139,6 @@ export function hbar(value: number, max: number, width: number, paint: Paint = t
 	return paint(bar) + " ".repeat(width - full - (part ? 1 : 0));
 }
 
-/** Thin segmented bar of shares (e.g. cost by session), each segment painted. */
-export function shareBar(parts: readonly { value: number; paint: Paint }[], width: number): string {
-	const total = parts.reduce((sum, part) => sum + part.value, 0);
-	if (total <= 0 || width <= 0) return theme.faint("━".repeat(Math.max(0, width)));
-	let out = "";
-	let used = 0;
-	let acc = 0;
-	for (const part of parts) {
-		acc += part.value;
-		const end = Math.round((acc / total) * width);
-		if (end > used) out += part.paint("━".repeat(end - used));
-		used = end;
-	}
-	return out + theme.faint("━".repeat(width - used));
-}
-
 /** Spread `values` over `width` columns, each value covering an equal run (for series that span the whole chart). */
 export function stretch(values: readonly number[], width: number): number[] {
 	if (!values.length || values.length >= width) return [...values];

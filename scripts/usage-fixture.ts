@@ -22,9 +22,9 @@ export function usageFixture() {
 			{ path: "/ended.jsonl", kind: "session", sessionId: "ended", cwd: "/home/user/dev/site", firstPrompt: "Fix the header", size: 1, mtimeMs: 1, offset: 1, hours: { [hour(NOW - 30 * HOUR)]: { "openai-codex/gpt-6": { tokens: 5e6, cost: 0, cacheRead: 0, prompt: 0 }, "openai-codex-account-2/gpt-6": { tokens: 1e6, cost: 0, cacheRead: 0, prompt: 0 } } } },
 		],
 	});
-	runtime.quota.windows = [
-		{ provider: "anthropic", providerLabel: "anthropic", label: "5h", usedPercent: 24, resetAt: NOW + 2 * HOUR, windowSeconds: 18_000, fetchedAt: NOW },
-		{ provider: "openai-codex", providerLabel: "codex", label: "wk", usedPercent: 100, resetAt: NOW + 72 * HOUR, windowSeconds: 604_800, fetchedAt: NOW, exhaustedUntil: NOW + HOUR },
-	];
+	runtime.quota.providers = ["anthropic", "openai-codex"];
+	runtime.quota.readings.set("anthropic", { fetchedAt: NOW, windows: [{ label: "5h", usedPercent: 25, resetAt: NOW + HOUR }, { label: "7d", usedPercent: 57, resetAt: NOW + 3 * 24 * HOUR }] });
+	runtime.quota.readings.set("openai-codex", { fetchedAt: NOW - 5 * 60_000, windows: [{ label: "7d", usedPercent: 7, resetAt: NOW + 2 * 24 * HOUR }], error: "Usage endpoint HTTP 429" });
+	runtime.quota.cooldowns = [{ provider: "anthropic", until: NOW + HOUR }, { provider: "openai-codex", until: NOW }];
 	return usageReport(runtime, NOW);
 }

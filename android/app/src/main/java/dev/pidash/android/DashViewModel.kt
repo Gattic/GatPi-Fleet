@@ -1,6 +1,7 @@
 package dev.pidash.android
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -29,8 +30,8 @@ class DashViewModel @JvmOverloads constructor(
     val projects = MutableStateFlow<Projects?>(null)
     val history = MutableStateFlow<List<History>>(emptyList())
     val project = MutableStateFlow<Project?>(null)
-    /** The host's usage report fetched for this visit to Usage; null until it arrives. */
-    val usage = MutableStateFlow<UsageReport?>(null)
+    /** The report and its receipt-time anchor survive Activity recreation together. */
+    val usage = MutableStateFlow<UsageSnapshot?>(null)
     val usageRange = MutableStateFlow(UsageReport.RANGES.first())
     val usageMetric = MutableStateFlow(Metric.Cost)
     val busy = MutableStateFlow(false)
@@ -96,7 +97,10 @@ class DashViewModel @JvmOverloads constructor(
         usage.value = null
         refreshUsage()
     }
-    fun refreshUsage() { run { usage.value = repository.usage() } }
+    fun refreshUsage() { run {
+        val report = repository.usage()
+        usage.value = UsageSnapshot(report, SystemClock.elapsedRealtime())
+    } }
     /** Expands one project's resumable history in place; selecting it again collapses it. */
     fun history(p: Project) {
         if (project.value == p) { project.value = null; return }

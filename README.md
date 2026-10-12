@@ -14,9 +14,10 @@ and on the other machines of your network (over ssh).
   systemd units, and detached processes that carry the session's `PI_SESSION_ID`. Running
   `bg_run` jobs and subagents are listed by name (BG).
 - **API usage**: tokens and API-equivalent $ per session (direct, nested tool LLM calls,
-  subagents), per-minute trends, subscription quota windows with an estimated per-session share,
-  and a usage view for today / 7 days / 30 days in $ or tokens. Sessions on models without a
-  price show tokens (`173Mt`) instead of an empty $.
+  subagents), per-minute trends, separate multi-login account cooldowns,
+  and a usage view for today / 7 days / 30 days in $ or tokens. Anthropic and Codex subscription
+  quotas show account bars, remaining percentages and provider reset countdowns; unavailable or stale
+  readings are labelled explicitly. Sessions on models without a price show tokens (`173Mt`) instead of an empty $.
 - **Conversation**: the last prompt, the recent tool calls with their arguments, the latest reply
   (previewed under the session list; whole, as Markdown, scrollable, or full screen), and the
   suggested next prompt from the GatPi-Harness prompt suggestions.
@@ -40,7 +41,7 @@ and on the other machines of your network (over ssh).
 - Remote hosts (optional): key-based ssh from this machine, and on the host GNU screen, pi, and
   Node ≥ 22.19 on its login PATH or under `~/.nvm` (see [Remote hosts](#remote-hosts)).
 - Optional: `nvidia-smi` for GPU stats, GatPi-Harness for roadmap progress and next-prompt
-  suggestions, the `pi-multi-account` failover state for quota gauges, `hermes` on PATH for the
+  suggestions, the harness's `multi-login` state for account cooldowns, `hermes` on PATH for the
   advisor's model-refined cards (local rule cards still work without it).
 
 ## Install
@@ -152,14 +153,14 @@ agent its environment can reach); restart it after changing the host list.
 
 What stays local: the usage view (also the phone's Usage tab, for the gateway's machine) and
 `today $` count this machine's session files (each remote session's own $ comes from its bridge,
-without its subagents), and quota gauges are this machine's logins.
+without its subagents), and account status uses this machine's logins.
 
 ## How it works
 
 ```
 pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.sock ──┐
 pi (in screen) ── bridge extension ── $XDG_RUNTIME_DIR/pi-dash/<pid>.sock ──┼── pi-dash
-/proc, cgroups, nvidia-smi, session files, provider-failover-state.json ────┤
+/proc, cgroups, nvidia-smi, session files, multi-login-state.json ─────────┤
                                                                             │
 remote host: bridges, /proc, screen, git ── pi-dash-relay ══ ssh stdio ═════┘
 ```
@@ -207,10 +208,13 @@ removed.
 The first start indexes recent session files in a background thread; on this machine that took
 about 17 s for 3.6 GB, and later scans take milliseconds.
 
-$ figures are pi's API-equivalent cost. With subscription logins, the quota windows are the
-limit that actually applies. Models without a price in pi report no cost: they count in tokens,
-and their quota share is estimated from tokens. LLM calls that extensions make outside the session
-transcript are not counted. That includes asks (`i`): each answer shows its own tokens, cache
+$ figures are pi's API-equivalent cost, not subscription balances. [Account quotas](docs/QUOTAS.md)
+come from read-only Anthropic/Codex usage endpoints using local Pi OAuth logins, including account aliases.
+Bars show the allowance **left**, with provider reset timers. Failed/old readings are explicitly stale;
+missing or unsupported data never becomes 100% available. The old `provider-failover-state.json` stays ignored.
+Account cooldowns come separately from `multi-login-state.json`: local failover timers, not provider resets.
+Quota probes never change logins, cooldowns or model selection. Models without a price count in tokens.
+LLM calls that extensions make outside the session transcript are not counted. That includes asks (`i`): each answer shows its own tokens, cache
 share and cost, but they are not added to the session's totals.
 
 ## Android and Even Realities G1

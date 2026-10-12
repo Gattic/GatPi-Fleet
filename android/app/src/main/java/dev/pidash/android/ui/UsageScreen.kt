@@ -1,33 +1,34 @@
 package dev.pidash.android.ui
 
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -37,27 +38,35 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.pidash.android.DashViewModel
 import dev.pidash.android.Metric
-import dev.pidash.android.Quota
 import dev.pidash.android.UsageItem
 import dev.pidash.android.UsageRange
 import dev.pidash.android.UsageReport
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-/** Colours of a quota window's largest sessions, as in the terminal's usage view. */
-private val SHARE_COLORS = listOf(Pi.Accent, Pi.Working, Pi.Waiting, Pi.Violet)
 private val RANGE_LABELS = mapOf("today" to "Today", "7d" to "7 days", "30d" to "30 days")
 
-/** The terminal dashboard's usage view: quota windows, then cost or tokens over a range by time, session and model. */
+/** Account quota availability and cooldowns, then session cost or tokens over time. */
 @Composable
 internal fun UsageScreen(vm: DashViewModel, fresh: Boolean) {
-    val report = vm.usage.collectAsStateWithLifecycle().value
+    val snapshot = vm.usage.collectAsStateWithLifecycle().value
+    val report = snapshot?.report
     val range by vm.usageRange.collectAsStateWithLifecycle()
     val metric by vm.usageMetric.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    // Only the ticker belongs to this composition; recreating it must not renew the cached report.
+    var now by remember(snapshot) { mutableLongStateOf(snapshot?.hostTime(SystemClock.elapsedRealtime()) ?: 0L) }
+    LaunchedEffect(snapshot) {
+        val received = snapshot ?: return@LaunchedEffect
+        while (true) {
+            now = received.hostTime(SystemClock.elapsedRealtime())
+            delay(1000)
+        }
+    }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -74,7 +83,8 @@ internal fun UsageScreen(vm: DashViewModel, fresh: Boolean) {
             return@LazyColumn
         }
         if (report.indexing) item { Hint("Indexing the host's session files; totals are still growing.") }
-        item { QuotaCard(report) }
+        item { QuotaCard(report, now) }
+        item { CooldownCard(report) }
         item { Selection(range, metric, onRange = { vm.usageRange.value = it }, onMetric = { vm.usageMetric.value = it }) }
         val selected = report.range(range)
         item { TotalCard(selected, metric) }
@@ -89,41 +99,45 @@ internal fun UsageScreen(vm: DashViewModel, fresh: Boolean) {
 }
 
 @Composable
-private fun QuotaCard(report: UsageReport) {
-    SectionCard("Quota") {
-        if (report.quota.isEmpty()) Hint("No subscription quota data on the host.", icon = null)
-        report.quota.forEach { QuotaWindow(it, report.at) }
+private fun QuotaCard(report: UsageReport, now: Long) {
+    SectionCard("Account quotas") {
+        val accounts = report.quota
+        when {
+            accounts == null -> Hint("Unknown — login list unavailable.", icon = null)
+            accounts.isEmpty() -> Hint("No logins", icon = null)
+            else -> accounts.forEach { account ->
+                val fresh = account.fresh(now)
+                Text(account.provider, style = MaterialTheme.typography.titleSmall)
+                if (account.windows.isEmpty()) Hint("${account.status} — ${account.message.orEmpty()}", icon = null)
+                else {
+                    if (!fresh) Hint("Stale — ${account.message ?: "refresh to update"}", icon = null)
+                    account.windows.forEach { window ->
+                        val left = (100 - window.usedPercent).roundToInt()
+                        val color = if (!fresh) MaterialTheme.colorScheme.onSurfaceVariant else if (left <= 10) MaterialTheme.colorScheme.error else if (left <= 30) Pi.Waiting else MaterialTheme.colorScheme.primary
+                        Text("${window.label}: $left% left", color = color)
+                        LinearProgressIndicator(progress = { ((100 - window.usedPercent) / 100).toFloat() }, modifier = Modifier.fillMaxWidth(), color = color)
+                        Text(if (window.resetAt > now) "Resets in ${duration(window.resetAt - now)}" else "Reset due — refresh to update", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("Updated ${duration((now - (account.fetchedAt ?: now)).coerceAtLeast(0))} ago", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        Hint("Provider-reported subscription usage, not a guarantee the next request will succeed.", icon = null)
     }
 }
 
 @Composable
-private fun QuotaWindow(quota: Quota, at: Long) {
-    val used = quota.usedPercent / 100
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(quota.provider, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(quota.window, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.weight(1f))
-            quota.resetAt?.let { Text("resets in ${duration(it - at)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            Text("${quota.usedPercent.roundToInt()}%", style = MaterialTheme.typography.labelLarge, color = levelColor(used))
-        }
-        Meter(used, levelColor(used))
-        quota.exhaustedUntil?.let { Text("Exhausted for ${duration(it - at)}", style = MaterialTheme.typography.bodySmall, color = Pi.Error) }
-        if (quota.shares.isNotEmpty()) {
-            Text("Share by session (est.)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))) {
-                quota.shares.forEachIndexed { index, share -> Box(Modifier.weight(share.share.toFloat()).fillMaxHeight().background(SHARE_COLORS[index])) }
-                val rest = 1 - quota.shares.sumOf { it.share }
-                if (rest > 0.001) Box(Modifier.weight(rest.toFloat()).fillMaxHeight().background(Pi.Dim))
-            }
-            quota.shares.forEachIndexed { index, share ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatusDot(SHARE_COLORS[index])
-                    Text(share.label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${(share.share * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+private fun CooldownCard(report: UsageReport) {
+    SectionCard("Account cooldowns") {
+        val cooldowns = report.cooldowns
+        when {
+            cooldowns == null -> Hint("Unknown — account state unavailable.", icon = null)
+            cooldowns.isEmpty() -> Hint("None recorded.", icon = null)
+            else -> cooldowns.forEach {
+                Text("${it.provider}: ${duration(it.until - report.at)} at last refresh", style = MaterialTheme.typography.bodyMedium, color = Pi.Waiting)
             }
         }
+        Hint("Local failover cooldowns, not provider quota reset times.", icon = null)
     }
 }
 

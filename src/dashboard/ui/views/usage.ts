@@ -1,13 +1,11 @@
-import { visibleWidth } from "@earendil-works/pi-tui";
 import { rowLabel } from "../../../manager/model/store.ts";
-import { bucketHours, cacheHit, quotaShares, rangeStart, rankedModels, rankedOwners, sessionTitle, USAGE_METRICS, USAGE_RANGES, type UsageMetric, type UsageRange } from "../../../manager/usage/report.ts";
+import { bucketHours, cacheHit, rangeStart, rankedModels, rankedOwners, sessionTitle, USAGE_METRICS, USAGE_RANGES, type UsageMetric, type UsageRange } from "../../../manager/usage/report.ts";
 import type { FileUsage } from "../../../manager/usage/types.ts";
-import { gauge, hbar, shareBar, stackedArea, stretch } from "../charts.ts";
-import { fit, fitRight, fmtCost, fmtDuration, fmtTokens } from "../format.ts";
-import { levelColor, type Paint, theme } from "../theme.ts";
-import { field, rule, titleBar, type ViewContext } from "./shared.ts";
+import { hbar, stackedArea, stretch } from "../charts.ts";
+import { fit, fitRight, fmtCost, fmtTokens } from "../format.ts";
+import { theme } from "../theme.ts";
+import { cooldownLine, quotaLines, rule, titleBar, type ViewContext } from "./shared.ts";
 
-const PALETTE: Paint[] = [theme.accent, theme.working, theme.waiting, theme.indirect, theme.error, theme.muted];
 const CHART_HEIGHT = 6;
 
 /** Open sessions by slot and row label. */
@@ -18,21 +16,12 @@ function openLabels(ctx: ViewContext): Map<string, string> {
 }
 
 /** An open session by its row label; an ended one by project and name (or first prompt), so sessions of one project stay apart. */
-function ownerLabel(open: Map<string, string>, owner: string, file: FileUsage, paint?: Paint): string {
+function ownerLabel(open: Map<string, string>, owner: string, file: FileUsage): string {
 	const label = open.get(owner);
-	if (label) return (paint ?? theme.text)(label);
+	if (label) return theme.text(label);
 	const { project, title } = sessionTitle(file);
-	if (paint) return paint(title ? `${project} › ${title}` : project);
 	return `${theme.muted(project)}${title ? theme.dim(` › ${title}`) : ""}`;
 }
-
-/** `text` cut to at most `max` columns, without padding. */
-function clip(text: string, max: number): string {
-	return fit(text, Math.min(max, visibleWidth(text)));
-}
-
-/** Share legend labels get an equal part of the row, but at least this many columns. */
-const MIN_LEGEND_LABEL = 12;
 
 function amount(metric: UsageMetric, value: number): string {
 	return metric === "cost" ? `$${fmtCost(value)}` : fmtTokens(value);
@@ -42,32 +31,7 @@ export function renderUsage(ctx: ViewContext, width: number, height: number, ran
 	const lines = [titleBar(ctx, width, "usage")];
 	const open = openLabels(ctx);
 
-	const quotaGauge = width >= 120 ? 22 : 12;
-	const providerWidth = Math.max(0, ...ctx.quota.windows.map((window) => visibleWidth(window.providerLabel))) + 1;
-	if (ctx.quota.windows.length) {
-		lines.push(fit(theme.dim(`${field("QUOTA")}${" ".repeat(providerWidth + 4)}${fit("used", quotaGauge + 7)}${fit("resets", 9)}share by session (est.)`), width));
-	} else {
-		lines.push(fit(`${field("QUOTA")}${theme.dim("no subscription quota data (provider-failover-state.json not found)")}`, width));
-	}
-	let previous: string | undefined;
-	for (const window of ctx.quota.windows) {
-		const shares = quotaShares(ctx.usage, window, ctx.now);
-		const top = shares.slice(0, 4);
-		const rest = shares.slice(4).reduce((sum, share) => sum + share.weight, 0);
-		const parts = top.map((share, index) => ({ value: share.weight, paint: PALETTE[index] }));
-		if (rest > 0) parts.push({ value: rest, paint: theme.dim });
-		const exhausted = window.exhaustedUntil && window.exhaustedUntil > ctx.now ? theme.error(`exhausted ${fmtDuration(window.exhaustedUntil - ctx.now)}  `) : "";
-		const reset = window.resetAt > ctx.now ? theme.dim(`↻ ${fmtDuration(window.resetAt - ctx.now)}`) : "";
-		const provider = window.provider !== previous ? theme.text(window.providerLabel) : "";
-		previous = window.provider;
-		const percent = levelColor(window.usedPercent / 100)(fitRight(`${Math.round(window.usedPercent)}%`, 4));
-		const head = `${fit(provider, providerWidth)}${fit(theme.muted(window.label), 4)}${gauge(window.usedPercent / 100, quotaGauge)} ${percent}  ${fit(reset, 9)}`;
-		// Exhaustion goes before the share estimate so narrow terminals still show it.
-		const start = `${" ".repeat(8)}${head}${exhausted}${shareBar(parts, 16)}  `;
-		const labelWidth = Math.max(MIN_LEGEND_LABEL, Math.floor((width - visibleWidth(start)) / Math.max(1, top.length)) - 2);
-		const legend = top.map((share, index) => clip(ownerLabel(open, share.owner, share.file, PALETTE[index]), labelWidth)).join("  ");
-		lines.push(fit(start + legend, width));
-	}
+	lines.push(...quotaLines(ctx, width), cooldownLine(ctx, width));
 
 	const since = rangeStart(range, ctx.now);
 	const total = ctx.usage.total(since);

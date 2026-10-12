@@ -19,11 +19,16 @@ class WireTest {
     @Test fun readsTheActualHostUsageFixture() {
         val usage = UsageReport.parse(JSONObject(javaClass.classLoader!!.getResource("usage.json")!!.readText()))
         assertFalse(usage.indexing)
-        val (anthropic, codex) = usage.quota
-        assertNull(anthropic.exhaustedUntil)
-        assertEquals(2 * 3_600_000L, anthropic.resetAt!! - usage.at)
-        assertEquals(listOf(QuotaShare("pi-dash", true, 1.0)), anthropic.shares)
-        assertNotNull(codex.exhaustedUntil)
+        val accounts = usage.quota!!
+        assertEquals(listOf("anthropic", "codex"), accounts.map { it.provider })
+        assertEquals(listOf("fresh", "stale"), accounts.map { it.status })
+        assertEquals(listOf(25.0, 57.0), accounts[0].windows.map { it.usedPercent })
+        assertEquals(listOf("5h", "7d"), accounts[0].windows.map { it.label })
+        assertTrue(accounts[0].fresh(usage.at))
+        assertFalse(accounts[0].fresh(accounts[0].freshUntil!!))
+        assertFalse(accounts[1].fresh(usage.at))
+        assertEquals("Usage endpoint HTTP 429", accounts[1].message)
+        assertEquals(listOf(AccountCooldown("anthropic", usage.at + 3_600_000L)), usage.cooldowns)
         val week = usage.range("7d")
         assertEquals(6, week.bucketHours)
         assertEquals(listOf(UsageItem("pi-dash", 3.25, open = true)), week.measure(Metric.Cost).sessions)
@@ -31,6 +36,30 @@ class WireTest {
         assertEquals(listOf(UsageItem("gpt-6", 6e6), UsageItem("claude-opus", 2.1e6)), week.measure(Metric.Tokens).models)
         assertEquals(8.1e6, week.total(Metric.Tokens), 0.0)
         assertEquals(3.0, usage.range("today").measure(Metric.Cost).series.last(), 0.0)
+    }
+    @Test fun unavailableAccountStateIsNotAnEmptyCooldownList() {
+        val json = JSONObject(javaClass.classLoader!!.getResource("usage.json")!!.readText())
+        json.put("quota", JSONObject.NULL)
+        json.put("cooldowns", JSONObject.NULL)
+        val unknown = UsageReport.parse(json)
+        assertNull(unknown.quota)
+        assertNull(unknown.cooldowns)
+        json.put("cooldowns", org.json.JSONArray())
+        assertEquals(emptyList<AccountCooldown>(), UsageReport.parse(json).cooldowns)
+    }
+    @Test fun missingAndInvalidQuotaDataNeverLooksAvailable() {
+        val json = JSONObject(javaClass.classLoader!!.getResource("usage.json")!!.readText())
+        val first = json.getJSONArray("quota").getJSONObject(0)
+        first.getJSONArray("windows").getJSONObject(0).put("usedPercent", 101)
+        assertThrows(IllegalArgumentException::class.java) { UsageReport.parse(json) }
+        first.put("windows", org.json.JSONArray())
+        assertThrows(IllegalArgumentException::class.java) { UsageReport.parse(json) }
+        first.put("status", "unknown").put("fetchedAt", JSONObject.NULL).put("freshUntil", JSONObject.NULL)
+        val unknown = UsageReport.parse(json).quota!!.first()
+        assertTrue(unknown.windows.isEmpty())
+        assertFalse(unknown.fresh(0))
+        json.put("quota", org.json.JSONArray())
+        assertEquals(emptyList<QuotaAccount>(), UsageReport.parse(json).quota)
     }
     @Test fun rejectsOutOfOrderFramesAndIncompatibleVersions() {
         val initial = fixture()

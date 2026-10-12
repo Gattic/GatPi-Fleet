@@ -1,13 +1,12 @@
 // The phone's usage tab: the dashboard's usage view, as data. Like the view, it counts this machine's session
 // files and logins only.
+import { providerLabel } from "../manager/collectors/quota.ts";
 import { rowLabel } from "../manager/model/store.ts";
 import type { ManagerRuntime } from "../manager/runtime.ts";
-import { bucketHours, cacheHit, quotaShares, rangeStart, rankedModels, rankedOwners, sessionTitle, USAGE_RANGES, type UsageMetric } from "../manager/usage/report.ts";
+import { bucketHours, cacheHit, rangeStart, rankedModels, rankedOwners, sessionTitle, USAGE_RANGES, type UsageMetric } from "../manager/usage/report.ts";
 import type { FileUsage } from "../manager/usage/types.ts";
 import { clean } from "./sessions.ts";
 
-/** A quota window names its largest sessions; the rest of the window is everyone else. */
-const QUOTA_SHARES = 4;
 const SESSIONS = 50;
 const MODELS = 5;
 
@@ -22,18 +21,8 @@ export function usageReport(runtime: ManagerRuntime, now = Date.now()) {
 	return {
 		at: now,
 		indexing: !index.scanned,
-		quota: runtime.quota.windows.map((window) => {
-			const shares = quotaShares(index, window, now);
-			const total = shares.reduce((sum, share) => sum + share.weight, 0);
-			return {
-				provider: clean(window.providerLabel, 100),
-				window: window.label,
-				usedPercent: window.usedPercent,
-				resetAt: window.resetAt > now ? window.resetAt : null,
-				exhaustedUntil: window.exhaustedUntil !== undefined && window.exhaustedUntil > now ? window.exhaustedUntil : null,
-				shares: shares.slice(0, QUOTA_SHARES).map((share) => ({ label: label(share.owner, share.file), open: open.has(share.owner), share: share.weight / total })),
-			};
-		}),
+		quota: runtime.quota.snapshot(now)?.map((account) => ({ ...account, provider: clean(providerLabel(account.provider), 100) })) ?? null,
+		cooldowns: runtime.quota.activeCooldowns(now)?.map(({ provider, until }) => ({ provider: clean(providerLabel(provider), 100), until })) ?? null,
 		ranges: USAGE_RANGES.map((range) => {
 			const since = rangeStart(range, now);
 			const hours = bucketHours(range);

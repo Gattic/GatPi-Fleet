@@ -241,8 +241,9 @@ session.
 Missing resource/context fields display as unknown rather than zero. Cost is
 pi's API-equivalent usage, not a provider subscription invoice.
 
-**Usage** is pi-dash's usage view: subscription quota windows with each session's
-estimated share, then cost or tokens for today, 7 days or 30 days, per hour/6 hours/day,
+**Usage** is pi-dash's usage view: Anthropic/Codex account quota bars, remaining percentages,
+provider reset countdowns and explicit stale/unknown states, plus separate local account cooldowns, then cost or tokens for today,
+7 days or 30 days, per hour/6 hours/day,
 by session and by model. Like that view, it counts only the gateway machine's own session
 files and logins, not its remote hosts'. It is fetched when you open the tab and with the
 refresh icon, both only while the connection is live; it does not update by itself, and

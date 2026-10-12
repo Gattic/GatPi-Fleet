@@ -1,6 +1,6 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { GpuMonitor } from "../../../manager/collectors/gpu.ts";
-import type { QuotaMonitor, QuotaWindow } from "../../../manager/collectors/quota.ts";
+import { providerLabel, type QuotaMonitor } from "../../../manager/collectors/quota.ts";
 import type { RemoteHost } from "../../../manager/remote/host.ts";
 import { PROTOCOL_VERSION } from "../../../protocol/index.ts";
 import { rowLabel, type SessionRow, type Store } from "../../../manager/model/store.ts";
@@ -108,33 +108,28 @@ export function titleBar(ctx: ViewContext, width: number, view: ViewName): strin
 	return background(left + " ".repeat(gap) + right, width, theme.bar);
 }
 
-function quotaWindowText(window: QuotaWindow, now: number, gaugeWidth: number, withProvider: boolean): string {
-	const exhausted = window.exhaustedUntil && window.exhaustedUntil > now;
-	const head = withProvider ? `${theme.text(window.providerLabel)} ` : "";
-	const reset = window.resetAt > now ? theme.dim(` ↻${fmtDuration(window.resetAt - now)}`) : "";
-	const tail = exhausted ? theme.error(` exhausted ${fmtDuration((window.exhaustedUntil ?? now) - now)}`) : reset;
-	const percent = levelColor(window.usedPercent / 100)(`${Math.round(window.usedPercent)}%`);
-	return `${head}${theme.muted(window.label)} ${gauge(window.usedPercent / 100, gaugeWidth)} ${percent}${tail}`;
+export function quotaLines(ctx: ViewContext, width: number): string[] {
+	const accounts = ctx.quota.snapshot(ctx.now);
+	if (!accounts?.length) return [fit(`${field("QUOTA")}${theme.dim(accounts === null ? "unknown · logins unavailable" : "no logins")}`, width)];
+	return accounts.flatMap((account) => {
+		const provider = theme.text(providerLabel(account.provider));
+		if (!account.windows.length) return [fit(`${field("QUOTA")}${provider} ${theme.muted(account.status)} · ${theme.dim(account.message ?? "")}`, width)];
+		return account.windows.map((window) => {
+			const fresh = account.status === "fresh";
+			const left = Math.round(100 - window.usedPercent);
+			const paint = fresh ? levelColor(window.usedPercent / 100) : theme.dim;
+			const reset = window.resetAt > ctx.now ? `↻ ${fmtDuration(window.resetAt - ctx.now)}` : "reset due";
+			return fit(`${field("QUOTA")}${provider} ${theme.muted(window.label)} ${gauge(left / 100, width >= 100 ? 10 : 6, paint)} ${paint(`${left}% left`)} ${theme.dim(reset)}${fresh ? "" : theme.waiting(" · stale")}`, width);
+		});
+	});
 }
 
-export function quotaLine(ctx: ViewContext, width: number): string | undefined {
-	const windows = ctx.quota.windows;
-	if (!windows.length) return undefined;
-	// The most-used windows matter most; on narrow terminals they are shown first.
-	const ordered = width >= 120 ? windows : [...windows].sort((a, b) => b.usedPercent - a.usedPercent);
-	let line = "";
-	// Shrink gauges until every window fits on one line.
-	for (const gaugeWidth of [12, 10, 8, 6, 4]) {
-		const parts: string[] = [];
-		let previous: string | undefined;
-		for (const window of ordered) {
-			parts.push(quotaWindowText(window, ctx.now, gaugeWidth, window.provider !== previous));
-			previous = window.provider;
-		}
-		line = `${field("QUOTA")}${parts.join("   ")}`;
-		if (visibleWidth(line) <= width) break;
-	}
-	return fit(line, width);
+export function cooldownLine(ctx: ViewContext, width: number): string {
+	const cooldowns = ctx.quota.activeCooldowns(ctx.now);
+	const text = cooldowns === null ? theme.muted("unknown (state unavailable)") : cooldowns.length
+		? cooldowns.map(({ provider, until }) => `${theme.text(providerLabel(provider))} ${theme.waiting(fmtDuration(until - ctx.now))}`).join("   ")
+		: theme.dim("none recorded");
+	return fit(`${theme.dim(" COOLDOWN ")}${text}`, width);
 }
 
 export function hostLine(ctx: ViewContext, width: number): string {

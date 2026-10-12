@@ -8,6 +8,7 @@ import {
 	background,
 	backgroundBadge,
 	backgroundLine,
+	cooldownLine,
 	cpuSeries,
 	field,
 	hostLine,
@@ -17,7 +18,7 @@ import {
 	MIN_MEM_SCALE,
 	minuteSeries,
 	planCell,
-	quotaLine,
+	quotaLines,
 	rowName,
 	rule,
 	saidPane,
@@ -171,8 +172,7 @@ function selectedSummary(row: SessionRow, ctx: ViewContext, width: number, maxLi
 
 export function renderOverview(ctx: ViewContext, width: number, height: number): string[] {
 	const lines = [titleBar(ctx, width, "overview")];
-	const quota = quotaLine(ctx, width);
-	if (quota) lines.push(quota);
+	lines.push(...quotaLines(ctx, width), cooldownLine(ctx, width));
 	lines.push(hostLine(ctx, width));
 	const hosts = hostsLine(ctx, width);
 	if (hosts) lines.push(hosts);

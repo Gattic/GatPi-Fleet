@@ -40,10 +40,20 @@ raw errors, transcripts and tools.
 Usage is computed like the dashboard's usage view (`u`), from the gateway machine's own
 session files and logins (not its remote hosts'). It is fetched, not streamed. `at` is the
 host time it was made, and `indexing` is true until the first scan of the session files
-ends. `quota` lists each subscription window: `provider`, `window` (`5h`, `wk`, …),
-`usedPercent`, `resetAt` and `exhaustedUntil` (host epoch ms, or null when past), and
-`shares`: up to four largest sessions (`label`, `open`) with their estimated `share` (0–1)
-of the usage counted in the window, weighted by cost, or by tokens when none has a price.
+ends. `quota` is an array of `{ provider, status, fetchedAt, freshUntil, message, windows }`,
+or null when login state cannot be read; an empty array means no logins. `provider` is a display
+label, never an email or credential. `status` is `fresh`, `stale`, `unknown`, or `unsupported`.
+`fetchedAt` and `freshUntil` are host epoch milliseconds (null before any reading); `message`
+is a sanitized diagnostic or null. Each window is `{ label, usedPercent, resetAt }`, with a
+0–100 percentage and host epoch reset time. Bars show `100 - usedPercent` **left**.
+Clients must stop presenting a fresh reading as current at `freshUntil`, even without another
+fetch. Reset expiry does not imply a refill. Stale readings retain their original timestamps;
+missing windows stay missing. See [quota collection](QUOTAS.md) for polling and auth boundaries.
+Legacy quota snapshots are not used.
+`cooldowns` separately lists active local failover timers `{ provider, until }` (host epoch ms),
+or is null if account state is unreadable. An empty list means no recorded cooldowns, **not**
+available quota. These timers are not provider reset times. Update the app and host together
+for this usage-response change.
 `ranges` has `today` (from the host's local midnight), `7d` and `30d` (the last 168 and 720
 whole hours, ending with the current one) in that order, each with `range`, `bucketHours`,
 `total` (`cost`, `tokens`, `cacheHit` 0–1), and per measure (`cost`, `tokens`): `series` per

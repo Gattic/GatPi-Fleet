@@ -63,7 +63,8 @@ function context(): ViewContext {
 	store.setState(104, state(104, { name: "a very long session name that needs truncation" }));
 	const usage = new UsageIndex({ sessionRoot: "", cachePath: "", retentionMs: 0, onUpdate: () => {} });
 	const quota = new QuotaMonitor("/nonexistent", "/nonexistent");
-	quota.windows = [{ provider: "anthropic", providerLabel: "anthropic", label: "5h", usedPercent: 24, resetAt: Date.now() + 3_600_000, windowSeconds: 18000, fetchedAt: Date.now() }];
+	quota.providers = ["anthropic"];
+	quota.cooldowns = [];
 	return { store, remotes: new Map(), usage, quota, gpu: new GpuMonitor(), now: Date.now(), spinner: "⠹", selected: store.ordered()[0] };
 }
 
@@ -86,9 +87,51 @@ test("views fit the terminal at 80, 100 and 140 columns and show each state", ()
 	assert.match(overview, /○ ready/);
 	assert.match(overview, /▰▰▰▰▱▱ 4\/6 Run tests/);
 	assert.match(overview, /PLAN {3}Ship it ▸ Verify ▸ Run tests/);
-	assert.match(overview, /anthropic 5h/);
+	assert.match(overview, /QUOTA +anthropic unknown/);
 	assert.match(overview, /CTX/);
 	assert.match(overview, /Run tests +83% /, "context fill sits beside the plan");
+});
+
+test("quota unknown and account cooldowns are separate at narrow and wide sizes", () => {
+	const ctx = context();
+	ctx.quota.cooldowns = [{ provider: "anthropic", until: ctx.now + 60_000 }];
+	for (const width of [80, 100, 140]) {
+		for (const render of [() => renderOverview(ctx, width, 30), () => renderUsage(ctx, width, 30, "today", "cost")]) {
+			const lines = render();
+			const quota = strip(lines.find((line) => strip(line).startsWith(" QUOTA"))!);
+			const cooldown = strip(lines.find((line) => strip(line).startsWith(" COOLDOWN"))!);
+			assert.match(quota, /unknown/);
+			assert.doesNotMatch(quota, /%|↻|exhausted/);
+			assert.match(cooldown, /anthropic 1m00s/);
+			for (const line of lines) assert.ok(visibleWidth(line) <= width);
+		}
+	}
+	ctx.now += 60_000;
+	assert.match(strip(renderUsage(ctx, 100, 30, "today", "cost").join("\n")), /COOLDOWN +none recorded/);
+	ctx.quota.cooldowns = null;
+	assert.match(strip(renderOverview(ctx, 100, 30).join("\n")), /COOLDOWN +unknown \(state unavailable\)/);
+});
+
+test("live quota bars, remaining percentages, both window timers and stale labels fit every width", () => {
+	const ctx = context();
+	ctx.quota.readings.set("anthropic", { fetchedAt: ctx.now, windows: [{ label: "5h", usedPercent: 25, resetAt: ctx.now + 60_000 }, { label: "7d", usedPercent: 90, resetAt: ctx.now + 86400_000 }] });
+	ctx.quota.providers!.push("openai-codex-account-2");
+	ctx.quota.readings.set("openai-codex-account-2", { fetchedAt: ctx.now, windows: [{ label: "30d", usedPercent: 7, resetAt: ctx.now + 86400_000 }] });
+	for (const width of [80, 100, 140]) {
+		for (const lines of [renderOverview(ctx, width, 30), renderUsage(ctx, width, 30, "today", "cost")]) {
+			const text = strip(lines.join("\n"));
+			assert.match(text, /anthropic 5h .+75% left.*↻ 1m00s/);
+			assert.match(text, /anthropic 7d .+10% left/);
+			assert.match(text, /codex#2 30d .+93% left/);
+			assert.match(text, /━/);
+			assert.doesNotMatch(text, /stale|unknown/);
+			for (const line of lines) assert.ok(visibleWidth(line) <= width);
+		}
+	}
+	ctx.now += 60_000;
+	const stale = strip(renderUsage(ctx, 80, 30, "today", "cost").join("\n"));
+	assert.match(stale, /75% left.*reset due.*stale/);
+	assert.doesNotMatch(stale, /100% left/, "reset is not assumed to refill quota");
 });
 
 test("a highlighted row keeps its background across truncated cells", () => {
@@ -212,7 +255,7 @@ test("sessions on models without a price show tokens instead of an empty cost", 
 	const ctx = context();
 	const hour = String(Math.floor(Date.now() / 3_600_000));
 	ctx.store.setState(102, state(102, { lastSettledAt: Date.now(), usage: { direct: { ...emptyUsage(), tokens: 172_600_000 }, indirect: emptyUsage() } }));
-	ctx.quota.windows.push({ provider: "openai-codex-account-2", providerLabel: "codex#2", label: "wk", usedPercent: 3, resetAt: Date.now() + 3_600_000, windowSeconds: 604800, fetchedAt: Date.now() });
+	ctx.quota.providers!.push("openai-codex-account-2");
 	ctx.usage.apply({
 		type: "update",
 		scanned: true,
@@ -231,7 +274,7 @@ test("sessions on models without a price show tokens instead of an empty cost", 
 	assert.match(detail, /total 173M tok/);
 
 	const cost = strip(renderUsage(ctx, 140, 30, "today", "cost").join("\n"));
-	assert.match(cost, /codex#2 +wk .* 2 project-102/, "the unpriced window's share is weighted by tokens");
+	assert.match(cost, /QUOTA +codex#2 unknown/, "unpriced usage must not imply a known subscription balance");
 	assert.doesNotMatch(cost, /^2 project-102 /m, "cost lists only priced sessions");
 	const tokens = strip(renderUsage(ctx, 140, 30, "today", "tokens").join("\n"));
 	assert.match(tokens, /TOKENS BY SESSION/);
@@ -239,7 +282,7 @@ test("sessions on models without a price show tokens instead of an empty cost", 
 	assert.match(tokens, /gpt-6 +█+ +71% +5\.0M/, "one model through two accounts is one row");
 });
 
-test("the usage view keeps providers and sessions apart", () => {
+test("the usage view keeps open and ended sessions apart", () => {
 	const ctx = context();
 	const hour = String(Math.floor(Date.now() / 3_600_000));
 	const bucket = (cost: number) => ({ tokens: cost * 1000, cost, cacheRead: 0, prompt: 0 });
@@ -254,8 +297,7 @@ test("the usage view keeps providers and sessions apart", () => {
 		],
 	});
 	const usage = strip(renderUsage(ctx, 140, 30, "today", "cost").join("\n"));
-	assert.match(usage, /anthropic 5h/);
-	assert.match(usage, /1 project-101 {2}project-101 › Fix the bug/, "the share legend tells the sessions apart");
+	assert.match(usage, /QUOTA +anthropic unknown/);
 	assert.match(usage, /^1 project-101 +█+ +3\.00/m);
 	assert.match(usage, /^project-101 › Fix the bug +█+[▏▎▍▌▋▊▉]? +2\.00/m);
 });

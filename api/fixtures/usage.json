@@ -4,31 +4,42 @@
   "quota": [
     {
       "provider": "anthropic",
-      "window": "5h",
-      "usedPercent": 24,
-      "resetAt": 1768485600000,
-      "exhaustedUntil": null,
-      "shares": [
+      "status": "fresh",
+      "fetchedAt": 1768478400000,
+      "freshUntil": 1768479600000,
+      "message": null,
+      "windows": [
         {
-          "label": "pi-dash",
-          "open": true,
-          "share": 1
+          "label": "5h",
+          "usedPercent": 25,
+          "resetAt": 1768482000000
+        },
+        {
+          "label": "7d",
+          "usedPercent": 57,
+          "resetAt": 1768737600000
         }
       ]
     },
     {
       "provider": "codex",
-      "window": "wk",
-      "usedPercent": 100,
-      "resetAt": 1768737600000,
-      "exhaustedUntil": 1768482000000,
-      "shares": [
+      "status": "stale",
+      "fetchedAt": 1768478100000,
+      "freshUntil": 1768478220000,
+      "message": "Usage endpoint HTTP 429",
+      "windows": [
         {
-          "label": "site › Fix the header",
-          "open": false,
-          "share": 1
+          "label": "7d",
+          "usedPercent": 7,
+          "resetAt": 1768651200000
         }
       ]
+    }
+  ],
+  "cooldowns": [
+    {
+      "provider": "anthropic",
+      "until": 1768482000000
     }
   ],
   "ranges": [

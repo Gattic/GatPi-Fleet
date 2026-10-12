@@ -696,7 +696,7 @@ export class Help implements Component {
 			["COLUMNS", `${theme.text("CTX")} ${theme.muted("context used")}   ${theme.text("$")} ${theme.muted("API-equivalent cost, or tokens (173Mt) for unpriced models")}`],
 			["", `${theme.text("BG")} ${theme.muted("background work:")} ${theme.text("j")} ${theme.muted("bg_run jobs,")} ${theme.text("s")} ${theme.muted("subagents")}`],
 			["HOSTS", `${theme.text("name@host")} ${theme.muted("runs on a remote host (pi-dash-host add HOST)")}   ${theme.working("●")} ${theme.dim("online")}  ${theme.dim("… connecting")}  ${theme.error("✖")} ${theme.dim("offline")}`],
-			["NOTES", theme.muted("$ is pi's API-equivalent cost; quota % is the subscription limit that actually applies.")],
+			["NOTES", theme.muted("$ is API-equivalent cost; quota bars show allowance left. Stale readings are labelled; cooldowns are separate local timers.")],
 			["", theme.muted("Not tracked: LLM calls extensions make outside the session transcript.")],
 		];
 		for (const [section, text] of legend) body.push(`${gutter(section, GUTTER)}${text}`);

@@ -1,6 +1,5 @@
 // Usage aggregates shown by the dashboard's usage view and served to the phone by the gateway.
 import { basename } from "node:path";
-import type { QuotaWindow } from "../collectors/quota.ts";
 import type { FileUsage, UsageBucket } from "./types.ts";
 import type { UsageIndex } from "./usage-index.ts";
 
@@ -61,17 +60,6 @@ export function rankedModels(index: UsageIndex, sinceMs: number, metric: UsageMe
 		models.set(model, (models.get(model) ?? 0) + usage[metric]);
 	}
 	return [...models.entries()].filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]).map(([model, value]) => ({ model, value }));
-}
-
-/**
- * Each session's part of a quota window, largest first, weighted by cost; providers whose usage in the window has no
- * price are weighted by tokens instead.
- */
-export function quotaShares(index: UsageIndex, window: QuotaWindow, now: number): { owner: string; file: FileUsage; weight: number }[] {
-	const since = Math.max(window.resetAt - window.windowSeconds * 1000, now - window.windowSeconds * 1000);
-	const entries = [...index.byOwner(since, window.provider).entries()];
-	const metric: UsageMetric = entries.some(([, entry]) => entry.usage.cost > 0) ? "cost" : "tokens";
-	return entries.map(([owner, entry]) => ({ owner, file: entry.file, weight: entry.usage[metric] })).filter((share) => share.weight > 0).sort((a, b) => b.weight - a.weight);
 }
 
 /** How a session that is no longer open is named: by project and its name (or first prompt), so sessions of one project stay apart. */

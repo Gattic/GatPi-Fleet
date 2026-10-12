@@ -63,7 +63,7 @@ export class ManagerRuntime {
 			]),
 		);
 		this.network = new Network(this.hub, remotes);
-		this.quota = new QuotaMonitor(join(agent, "provider-failover-state.json"), join(agent, "auth.json"));
+		this.quota = new QuotaMonitor(join(agent, "multi-login-state.json"), join(agent, "auth.json"));
 		this.usage = new UsageIndex({ sessionRoot: this.sessionRoot, cachePath: join(this.cacheDir, options.cacheName ?? "usage-index.json"), retentionMs: 30 * 86_400_000, onUpdate: () => this.changed() });
 	}
 
@@ -96,7 +96,7 @@ export class ManagerRuntime {
 			this.store.applySample(this.sampler.sample(this.store.targets(), this.gpu.latest), this.gpu.latest, Date.now());
 			for (const remote of this.network.remotes.values()) this.sampleRemote(remote);
 		};
-		const slow = () => { this.quota.poll(); void this.gpu.poll(); };
+		const slow = () => { void this.quota.refresh().then(() => this.changed()); void this.gpu.poll(); };
 		// Usage comes from this machine's session files; remote sessions report theirs through their bridges.
 		const usage = () => this.usage.scan([...new Set([...this.usage.cwds(), ...hostRows(this.store.ordered(), undefined).flatMap((row) => rowCwd(row) ?? [])])]);
 		for (const remote of this.network.remotes.values()) remote.start();
@@ -117,7 +117,7 @@ export class ManagerRuntime {
 		this.listeners.clear();
 		this.hub.close();
 		for (const remote of this.network.remotes.values()) remote.close();
-		await this.usage.close();
+		await Promise.all([this.usage.close(), this.quota.close()]);
 	}
 
 	private sampleRemote(remote: RemoteHost): void {
