@@ -143,6 +143,18 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 		assert.equal((await get("/api/v1/sessions", launch)).status, 202);
 		assert.equal((await until(() => frames.find((f) => f.receipt?.requestId === launch.requestId && f.receipt.state === "failed"))).receipt.error, error);
 	}
+	// A new session screen refuses (a setgid screen run with NoNewPrivileges) tells the phone screen's reason.
+	const bin = join(dir, "bin"); mkdirSync(bin);
+	writeFileSync(join(bin, "screen"), "#!/bin/sh\necho \"Directory '/run/screen' must have mode 777.\"\nexit 1\n", { mode: 0o700 });
+	const path = process.env.PATH;
+	// Only the stub, so a regression here cannot start a real screen and pi.
+	process.env.PATH = bin;
+	try {
+		const refused = { requestId: randomUUID(), epoch: info.epoch, projectId: ref(project) };
+		assert.equal((await get("/api/v1/sessions", refused)).status, 202);
+		const receipt = (await until(() => frames.find((f) => f.receipt?.requestId === refused.requestId && f.receipt.state !== "received"))).receipt;
+		assert.deepEqual([receipt.state, receipt.error], ["failed", "screen could not start pi: Directory '/run/screen' must have mode 777."]);
+	} finally { process.env.PATH = path; }
 	// Like the dashboard's new-session picker: any open session's project, with no allowlist.
 	const elsewhere = join(dir, "elsewhere"); mkdirSync(elsewhere);
 	runtime.store.setState(12345, { ...state, pid: 12345, cwd: elsewhere });

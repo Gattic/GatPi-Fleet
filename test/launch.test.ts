@@ -28,13 +28,14 @@ test("launch reservations exclude another controller, including session symlink 
 	assert.equal(JSON.parse(readFileSync(join(runtime, "launches", reservations[0]), "utf8")).screen, name);
 });
 
-test("a failed screen launch releases its reservation", (t) => {
+test("a failed screen launch releases its reservation and reports screen's reason on one line", (t) => {
 	const root = mkdtempSync(join(tmpdir(), "pi-dash-launch-fail-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
-	writeFileSync(join(root, "screen"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+	// What a setgid screen prints, on stdout, when it runs without that privilege; other reasons come on stderr.
+	writeFileSync(join(root, "screen"), "#!/bin/sh\necho \"Directory '/run/screen' must have mode 777.\"\necho 'Second line.' >&2\nexit 1\n", { mode: 0o700 });
 	const path = process.env.PATH; process.env.PATH = root;
 	t.after(() => { process.env.PATH = path; });
 	const file = join(root, "session.jsonl"); writeFileSync(file, "");
-	assert.throws(() => launchSession({ cwd: root, label: "test", sessionFile: file }, [], root));
+	assert.throws(() => launchSession({ cwd: root, label: "test", sessionFile: file }, [], root), { message: "screen could not start pi: Directory '/run/screen' must have mode 777. Second line." });
 	assert.deepEqual(readdirSync(join(root, "launches")), []);
 });

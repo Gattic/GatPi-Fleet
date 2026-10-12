@@ -57,10 +57,14 @@ export function launchSession(options: LaunchOptions, rows: readonly SessionRow[
 	delete env.TMUX;
 	delete env.TMUX_PANE;
 	try {
-		execFileSync("screen", ["-c", SCREENRC, "-dmS", name, "-t", options.label, "sh", "-c", 'cd -- "$1" || exit; cleanup="$2"; shift 2; pi "$@"; code=$?; if [ -n "$cleanup" ]; then rm -f -- "$cleanup"; fi; exit "$code"', "pi-dash", cwd, reservation ?? "", ...(file ? ["--session", file] : [])], { stdio: "ignore", env });
+		execFileSync("screen", ["-c", SCREENRC, "-dmS", name, "-t", options.label, "sh", "-c", 'cd -- "$1" || exit; cleanup="$2"; shift 2; pi "$@"; code=$?; if [ -n "$cleanup" ]; then rm -f -- "$cleanup"; fi; exit "$code"', "pi-dash", cwd, reservation ?? "", ...(file ? ["--session", file] : [])], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", env });
 	} catch (error) {
 		if (reservation) unlinkSync(reservation);
-		throw error;
+		// screen says why it did not start (on stdout, e.g. about /run/screen); the failed command line does not.
+		// One line: the dashboard shows it in its one-line footer.
+		const { stdout, stderr } = error as { stdout?: string | null; stderr?: string | null };
+		const reason = `${stdout ?? ""} ${stderr ?? ""}`.replace(/\s+/g, " ").trim();
+		throw reason ? new Error(`screen could not start pi: ${reason}`) : error;
 	}
 	return name;
 }
