@@ -14,7 +14,9 @@ RestartSec=5
 UMask=0077
 # Screen/pi sessions launched through the gateway must survive a gateway stop.
 KillMode=process
-NoNewPrivileges=true
+# No NoNewPrivileges: screen is setgid on many distributions, and without that privilege it
+# cannot use /run/screen, so no session starts. Launched pi sessions also need the same
+# privileges (sudo, for example) as sessions started in a terminal.
 
 [Install]
 WantedBy=default.target

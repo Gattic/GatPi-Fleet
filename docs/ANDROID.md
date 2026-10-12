@@ -108,6 +108,10 @@ The unit deliberately uses `KillMode=process`: screen/pi sessions launched throu
 it must outlive a gateway stop/restart. The gateway shuts down its own subscriptions
 and worker threads; stopping it is not a command to close pi sessions.
 
+Do not add `NoNewPrivileges=true`. Where screen is setgid (Fedora, for example), it
+then fails with `Directory '/run/screen' must have mode 777.` and no session starts;
+launched pi sessions would also lose privileges such as sudo.
+
 #### Everyday start/stop
 
 After installing the unit, run these helpers from the checkout:
