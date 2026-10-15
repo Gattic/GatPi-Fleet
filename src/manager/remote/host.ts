@@ -7,6 +7,7 @@ import { encodeRelay, type GpuSummary, parseRelayMessage, RELAY_VERSION, type Re
 import { UncertainCommandError } from "../collectors/bridges.ts";
 import type { HostSample, Sample, SampleTarget } from "../collectors/procs.ts";
 import { relayCommand } from "./hosts.ts";
+import type { RecoveryRecord } from "../recovery.ts";
 
 export interface RemoteEvents {
 	onState(pid: number, state: SessionState): void;
@@ -59,6 +60,7 @@ function lastLine(text: string): string | undefined {
 
 export class RemoteHost {
 	readonly name: string;
+	interrupted: RecoveryRecord[] = [];
 	status: HostStatus = { kind: "connecting", since: Date.now() };
 	/** From the latest sample. */
 	vitals?: { host: HostSample; gpu?: GpuSummary };
@@ -101,6 +103,7 @@ export class RemoteHost {
 	async sample(targets: SampleTarget[]): Promise<Sample> {
 		const wire = await this.request("sample", { targets });
 		this.vitals = { host: wire.host, gpu: wire.gpu };
+		this.interrupted = wire.interrupted;
 		return { resources: new Map(wire.resources), piProcesses: wire.piProcesses, host: wire.host };
 	}
 
@@ -109,7 +112,7 @@ export class RemoteHost {
 		if (!child || this.status.kind !== "online") return Promise.reject(new Error(`${this.name} is ${this.status.kind}`));
 		const id = this.nextId++;
 		// A lost acknowledgement for a mutation is unknown, not a safe-to-retry failure.
-		const command = op === "command" || op === "launch" || (op === "git" &&
+		const command = op === "command" || op === "launch" || op === "recover" || op === "dismissRecovery" || (op === "git" &&
 			["pull", "push", "pushSetUpstream", "switchBranch"].includes((params as RelayOps["git"]["params"]).method));
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -223,6 +226,7 @@ export class RemoteHost {
 		const wasOnline = this.status.kind === "online";
 		this.status = { kind: "offline", since: Date.now(), error };
 		this.vitals = undefined;
+		this.interrupted = [];
 		this.states.clear();
 		this.failPending();
 		if (wasOnline) this.events.onLost();

@@ -1,11 +1,12 @@
 // All manager-created sessions use the same cross-process launch reservation.
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { closeSync, mkdirSync, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { socketDir } from "../../protocol/index.ts";
 import { rowCwd, type SessionRow } from "../model/store.ts";
+import { sessionFileKey } from "../recovery.ts";
 
 const SCREENRC = fileURLToPath(new URL("../../../config/screenrc", import.meta.url));
 
@@ -17,9 +18,13 @@ export function screenNames(): Set<string> {
 }
 
 export function resumeBlocked(rows: readonly SessionRow[], cwd: string, file: string): string | undefined {
+	// Remote paths belong to that host, not this controller's filesystem. Its relay uses local
+	// rows and performs the canonical check; controller-side remote checks are lexical only.
+	const localKey = rows.some((row) => row.host === undefined) ? sessionFileKey(file) : undefined;
 	for (const row of rows) {
 		if (row.exitedAt !== undefined) continue;
-		if (row.bridge?.sessionFile === file) return "That session is already open; select its running session instead";
+		const openFile = row.bridge?.sessionFile;
+		if (openFile && (row.host === undefined ? sessionFileKey(openFile) === localKey : openFile === file)) return "That session is already open; select its running session instead";
 		if (rowCwd(row) === cwd && (!row.bridge || !row.connected)) return "A process in this project has no current bridge; its session file ownership is unknown. Reload or close it locally before resuming";
 	}
 	return undefined;
@@ -51,15 +56,16 @@ export function launchSession(options: LaunchOptions, rows: readonly SessionRow[
 			throw error;
 		}
 		try { writeFileSync(fd, JSON.stringify({ screen: name, at: Date.now() })); }
+		catch (error) { rmSync(reservation, { force: true }); throw error; }
 		finally { closeSync(fd); }
 	}
 	const env = { ...process.env };
 	delete env.TMUX;
 	delete env.TMUX_PANE;
 	try {
-		execFileSync("screen", ["-c", SCREENRC, "-dmS", name, "-t", options.label, "sh", "-c", 'cd -- "$1" || exit; cleanup="$2"; shift 2; pi "$@"; code=$?; if [ -n "$cleanup" ]; then rm -f -- "$cleanup"; fi; exit "$code"', "pi-dash", cwd, reservation ?? "", ...(file ? ["--session", file] : [])], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", env });
+		execFileSync("screen", ["-c", SCREENRC, "-dmS", name, "-t", options.label, "sh", "-c", 'cleanup="$2"; trap \'if [ -n "$cleanup" ]; then rm -f -- "$cleanup"; fi\' EXIT; cd -- "$1" || exit; shift 2; pi "$@"', "pi-dash", cwd, reservation ?? "", ...(file ? ["--session", file] : [])], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", env });
 	} catch (error) {
-		if (reservation) unlinkSync(reservation);
+		if (reservation) rmSync(reservation, { force: true });
 		// screen says why it did not start (on stdout, e.g. about /run/screen); the failed command line does not.
 		// One line: the dashboard shows it in its one-line footer.
 		const { stdout, stderr } = error as { stdout?: string | null; stderr?: string | null };

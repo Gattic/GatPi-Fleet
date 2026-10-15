@@ -1,6 +1,6 @@
 // pi-dash-relay and RemoteHost end to end, with the relay as a local child process in place of ssh.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import { type HostStatus, RemoteHost, type RemoteEvents } from "../src/manager/r
 import { loadHosts, saveHosts, shellQuote, sshCommand } from "../src/manager/remote/hosts.ts";
 import { type ClientMessage, emptyUsage, encodeMessage, LineDecoder, PROTOCOL_VERSION, type SessionState, socketPath } from "../src/protocol/index.ts";
 import { type GitMethod, RELAY_VERSION } from "../src/relay/protocol.ts";
+import { RecoveryJournal } from "../src/manager/recovery.ts";
 
 const RELAY = fileURLToPath(new URL("../src/relay/main.ts", import.meta.url));
 
@@ -51,7 +52,7 @@ test("a remote host's bridges, samples, listings and commands go through the rel
 	writeFileSync(join(sessionDir, "a.jsonl"), `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: project })}\n`);
 
 	// A bridge of this (live) process on the "remote" host.
-	const state: SessionState = { pid: process.pid, cwd: project, sessionId: "session", instanceId: "one", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: ["p/m"], asks: [], prompts: [], lastSaid: "hello" };
+	const state: SessionState = { pid: process.pid, cwd: project, sessionFile: join(sessionDir, "a.jsonl"), sessionId: "session", instanceId: "one", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: ["p/m"], asks: [], prompts: [], lastSaid: "hello" };
 	const received: ClientMessage[] = [];
 	let bridgeSocket: Socket | undefined;
 	const bridge: Server = createServer((socket) => {
@@ -73,7 +74,9 @@ test("a remote host's bridges, samples, listings and commands go through the rel
 	t.after(() => bridge.close());
 
 	const { states, log, events } = recorder();
-	const remote = new RemoteHost("box", events, ["env", `XDG_RUNTIME_DIR=${runtime}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
+	const bin = join(root, "bin"); mkdirSync(bin);
+	writeFileSync(join(bin, "screen"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+	const remote = new RemoteHost("box", events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${runtime}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
 	t.after(() => remote.close());
 	remote.start();
 	await until(() => remote.status.kind === "online" && states.length);
@@ -98,6 +101,11 @@ test("a remote host's bridges, samples, listings and commands go through the rel
 	assert.ok(sample.host.memTotal > 0);
 	assert.ok(remote.vitals);
 
+	const journal = new RecoveryJournal(agent, () => "old-boot:1");
+	journal.track({ ...state, instanceId: "crashed-before-update" });
+	await assert.rejects(remote.request("recover", { instanceId: "crashed-before-update" }), /already open/, "host must reject a live bridge even if it predates recovery tracking");
+	await assert.rejects(remote.request("launch", { cwd: project, label: "duplicate", sessionFile: state.sessionFile }), /already open/);
+
 	assert.deepEqual((await remote.request("projects", { live: [] })).map((entry) => entry.cwd), [project]);
 	assert.deepEqual((await remote.request("sessions", { cwd: project })).map((entry) => entry.sessionId), ["a"]);
 	await assert.rejects(remote.request("git", { method: "status", args: [root] }), /not a git repository/, "git runs on the relay's host");
@@ -108,6 +116,37 @@ test("a remote host's bridges, samples, listings and commands go through the rel
 	bridgeSocket!.destroy();
 	await until(() => log.includes(`disconnect ${process.pid} alive`));
 	assert.equal(remote.isConnected(process.pid), false);
+	const otherFile = join(sessionDir, "other.jsonl");
+	writeFileSync(otherFile, "saved transcript");
+	journal.track({ ...state, sessionFile: otherFile, instanceId: "other-crash" });
+	await assert.rejects(remote.request("recover", { instanceId: "other-crash" }), /no current bridge/, "a disconnected live owner makes project ownership unknown");
+});
+
+test("remote recovery discovers persisted records at relay startup and revalidates resume/dismiss requests", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-remote-recovery-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const agent = join(root, "agent");
+	const file = join(root, "session.jsonl");
+	writeFileSync(file, "saved transcript");
+	const journal = new RecoveryJournal(agent, () => "previous-boot:1");
+	journal.track({ pid: process.pid, instanceId: "killed", sessionId: "saved", sessionFile: file, cwd: root });
+	const bin = join(root, "bin"); mkdirSync(bin);
+	const capture = join(root, "arguments");
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\nprintf '%s\\n' "$@" > '${capture}'\n`, { mode: 0o700 });
+	const remote = new RemoteHost("box", recorder().events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${join(root, "run")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
+	t.after(() => remote.close());
+	remote.start();
+	await until(() => remote.status.kind === "online");
+	await remote.sample([]);
+	assert.equal(remote.interrupted[0].sessionId, "saved");
+	await remote.request("recover", { instanceId: "killed" });
+	assert.deepEqual(readFileSync(capture, "utf8").trim().split("\n").slice(-2), ["--session", file]);
+	await assert.rejects(remote.request("recover", { instanceId: "killed" }), /launch is reserved/);
+	await remote.request("dismissRecovery", { instanceId: "killed" });
+	await remote.sample([]);
+	assert.deepEqual(remote.interrupted, []);
+	assert.equal(readFileSync(file, "utf8"), "saved transcript");
+	await assert.rejects(remote.request("recover", { instanceId: "killed" }), /recovery changed/);
 });
 
 const HELLO = { type: "hello", version: RELAY_VERSION, bridge: PROTOCOL_VERSION, hostname: "box" };

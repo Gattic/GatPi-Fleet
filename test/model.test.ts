@@ -170,13 +170,13 @@ test("an exited session dismissed in the dashboard or the gateway leaves both, a
 	}
 	const keys = (runtime: ManagerRuntime) => [...runtime.store.rows.keys()].sort();
 
-	assert.throws(() => dashboard.dismiss(dashboard.store.rows.get("20")!), /still running/);
-	dashboard.dismiss(dashboard.store.rows.get("10")!);
+	await assert.rejects(dashboard.dismiss(dashboard.store.rows.get("20")!), /still running/);
+	await dashboard.dismiss(dashboard.store.rows.get("10")!);
 	assert.deepEqual(keys(dashboard), ["20", "box03:10"]);
 	gateway.releaseDismissed();
 	assert.deepEqual(keys(gateway), ["20", "box03:10"], "the same pid on another host is another session");
 
-	gateway.dismiss(gateway.store.rows.get("box03:10")!);
+	await gateway.dismiss(gateway.store.rows.get("box03:10")!);
 	dashboard.releaseDismissed();
 	assert.deepEqual(keys(dashboard), ["20"]);
 

@@ -15,11 +15,12 @@ import type { QuotaMonitor } from "../../manager/collectors/quota.ts";
 import { isAlert } from "../../manager/model/status.ts";
 import { hostRows, openCwds, rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../../manager/model/store.ts";
 import type { Network } from "../../manager/network.ts";
+import type { InterruptedSession } from "../../manager/recovery.ts";
 import { RemoteGit } from "../../manager/remote/git.ts";
 import { USAGE_RANGES, type UsageMetric, type UsageRange } from "../../manager/usage/report.ts";
 import type { UsageIndex } from "../../manager/usage/usage-index.ts";
 import type { RelayOp, RelayOps } from "../../relay/protocol.ts";
-import { fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
+import { fit, fmtCost, fmtDuration, fmtTokens, shortPath } from "./format.ts";
 import { AskView, Composer, Confirm, Help, HermesAdviceView, Peek, Picker, Reader, TextPrompt } from "./overlays.ts";
 import { TextPane } from "./text-pane.ts";
 import { keyHints, theme } from "./theme.ts";
@@ -40,7 +41,10 @@ export interface Services {
 	advisor: HermesAdvisorClient;
 	git: GitService;
 	/** Removes an exited session's row, also from the gateway (and so the phone). */
-	dismiss: (row: SessionRow) => void;
+	dismiss: (row: SessionRow) => Promise<void>;
+	interruptedSessions: () => InterruptedSession[];
+	resumeInterrupted: (entry: InterruptedSession) => Promise<string>;
+	dismissInterrupted: (entry: InterruptedSession) => Promise<void>;
 	sessionRoot: string;
 	/** Private runtime directory for transient files (peek captures). */
 	runtimeDir: string;
@@ -53,7 +57,7 @@ const GIT_MESSAGE_LIMIT = 500;
 
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
 	detail: [["Esc", "back"], ["Tab", "next ◆"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["?", "help"]],
 };
@@ -145,7 +149,10 @@ export class App implements Component {
 		};
 		const detail = this.view === "detail" ? renderDetail(ctx, width, height, this.said) : undefined;
 		this.saidArea = detail?.said;
-		const body = detail ? detail.lines : this.view === "usage" ? renderUsage(ctx, width, height, this.range, this.metric) : renderOverview(ctx, width, height);
+		const interrupted = this.services.interruptedSessions().length;
+		const banner = this.view === "overview" && interrupted > 0;
+		const body = detail ? detail.lines : this.view === "usage" ? renderUsage(ctx, width, height, this.range, this.metric) : renderOverview(ctx, width, height - Number(banner));
+		if (banner) body.splice(1, 0, fit(theme.waiting(` ! ${interrupted} interrupted session${interrupted === 1 ? "" : "s"} · e to review / resume`), width));
 		while (body.length < height - 1) body.push("");
 		const lines = [...body, this.footer(width, now)];
 		// Dialogs sit on a dimmed copy of the view.
@@ -178,6 +185,7 @@ export class App implements Component {
 		if (matchesKey(data, Key.ctrl("c")) || data === "q") return this.requestQuit();
 		if (data === "?") return this.showHelp();
 		if (data === "H") return this.openHermes();
+		if (data === "e") return this.pickInterrupted();
 		if (/^[1-9]$/.test(data)) {
 			this.select(store.bySlot(Number(data)));
 		} else if (matchesKey(data, Key.tab)) {
@@ -278,12 +286,18 @@ export class App implements Component {
 						this.send(row, { kind: "rename", name }, `renamed to ${name}`);
 					}, () => this.closeOverlay()),
 				);
-			case "r":
-				return this.pickSession(row);
-			case "d":
+			case "r": {
+				const interrupted = this.recoveryFor(row);
+				return interrupted ? this.confirmRecovery(interrupted) : this.pickSession(row);
+			}
+			case "d": {
 				if (row.exitedAt === undefined) return this.notify("Only exited sessions can be dismissed", true);
-				this.services.dismiss(row);
+				this.services.dismiss(row).then(
+					() => this.notify("Exited session dismissed; saved conversation kept"),
+					(error: Error) => this.notify(`dismiss failed: ${error.message}`, true),
+				);
 				return;
+			}
 			case "M":
 				return this.pickModel(row);
 			case "T":
@@ -884,6 +898,56 @@ export class App implements Component {
 				},
 				onCancel: () => this.closeOverlay(),
 			}),
+		);
+	}
+
+	private recoveryFor(row: SessionRow): InterruptedSession | undefined {
+		return this.services.interruptedSessions().find((entry) => entry.host === row.host && entry.instanceId === row.bridge?.instanceId);
+	}
+
+	private pickInterrupted(): void {
+		const entries = this.services.interruptedSessions();
+		if (!entries.length) return this.notify("No interrupted sessions recorded on connected hosts");
+		this.show(new Picker({
+			title: "Interrupted sessions · no graceful shutdown recorded",
+			items: entries.map((entry, index) => ({ value: String(index), label: `${entry.name || basename(entry.cwd)} · ${entry.sessionId}`, description: this.projectPath(entry.host, entry.cwd) })),
+			onSelect: (item) => {
+				const entry = entries[Number(item.value)];
+				this.show(new Picker({
+					title: `${entry.name || basename(entry.cwd)} · ${this.projectPath(entry.host, entry.cwd)}`,
+					items: [
+						{ value: "resume", label: "Resume interrupted session", description: `pi --session ${entry.sessionFile}` },
+						{ value: "dismiss", label: "Dismiss recovery suggestion", description: "Keeps the saved conversation" },
+					],
+					onSelect: (action) => {
+						this.closeOverlay();
+						if (action.value === "resume") this.confirmRecovery(entry);
+						else this.confirm("Dismiss recovery", `Dismiss ${entry.name || entry.sessionId}? The saved conversation is not deleted.`, () => this.dismissRecovery(entry));
+					},
+					onCancel: () => this.closeOverlay(),
+				}));
+			},
+			onCancel: () => this.closeOverlay(),
+		}));
+	}
+
+	private confirmRecovery(entry: InterruptedSession): void {
+		this.confirm("Resume interrupted session", `No graceful shutdown was recorded for ${entry.name || entry.sessionId} in ${this.projectPath(entry.host, entry.cwd)}. Resume with pi --session ${entry.sessionFile}?`, () => {
+			const rows = hostRows(this.services.store.ordered(), entry.host);
+			const blocked = resumeBlocked(rows, entry.cwd, entry.sessionFile);
+			if (blocked) return this.notify(blocked, true);
+			this.services.resumeInterrupted(entry).then((name) => {
+				const replaces = rows.find((row) => row.exitedAt !== undefined && row.bridge?.instanceId === entry.instanceId);
+				this.services.store.expectLaunch(name, replaces?.slot, replaces?.key, entry.host);
+				this.notify(`started ${name}; recovery clears when pi reconnects (a to attach)`);
+			}, (error: Error) => this.notify(`recovery failed: ${error.message}`, true));
+		});
+	}
+
+	private dismissRecovery(entry: InterruptedSession): void {
+		this.services.dismissInterrupted(entry).then(
+			() => this.notify("Recovery suggestion dismissed; saved conversation kept"),
+			(error: Error) => this.notify(`dismiss failed: ${error.message}`, true),
 		);
 	}
 

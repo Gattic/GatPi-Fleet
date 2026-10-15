@@ -8,14 +8,18 @@ import { type TestContext, test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import piDashBridge from "../src/bridge/index.ts";
 import { LineDecoder, MAX_PROMPTS, socketPath, type BridgeMessage, type SessionState } from "../src/protocol/index.ts";
+import { RecoveryJournal } from "../src/manager/recovery.ts";
 
 type Handler = (event: unknown, ctx?: ExtensionContext) => void;
 
 // Drive the extension's registered events and observe its public socket snapshots.
-function startBridge(t: TestContext, entries: unknown[] = []): { handlers: Map<string, Handler>; snapshot: () => Promise<SessionState> } {
+function startBridge(t: TestContext, entries: unknown[] = []) {
 	const root = mkdtempSync(join(tmpdir(), "pi-dash-events-"));
 	const previousRuntime = process.env.XDG_RUNTIME_DIR;
+	const previousAgent = process.env.PI_CODING_AGENT_DIR;
 	process.env.XDG_RUNTIME_DIR = root;
+	process.env.PI_CODING_AGENT_DIR = root;
+	const session = { id: "test", file: undefined as string | undefined };
 	const handlers = new Map<string, Handler>();
 	const pi = {
 		on: (name: string, handler: Handler) => handlers.set(name, handler),
@@ -26,13 +30,15 @@ function startBridge(t: TestContext, entries: unknown[] = []): { handlers: Map<s
 		mode: "tui", cwd: root, isIdle: () => true, scopedModels: [],
 		modelRegistry: { getAvailable: () => [] },
 		getContextUsage: () => undefined,
-		sessionManager: { getEntries: () => entries, getSessionId: () => "test", getSessionFile: () => undefined },
+		sessionManager: { getEntries: () => entries, getSessionId: () => session.id, getSessionFile: () => session.file },
 	} as unknown as ExtensionContext;
 	piDashBridge(pi);
 	t.after(() => {
 		handlers.get("session_shutdown")?.({ reason: "quit" });
 		if (previousRuntime === undefined) delete process.env.XDG_RUNTIME_DIR;
 		else process.env.XDG_RUNTIME_DIR = previousRuntime;
+		if (previousAgent === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgent;
 		rmSync(root, { recursive: true, force: true });
 	});
 	handlers.get("session_start")!({}, ctx);
@@ -54,8 +60,34 @@ function startBridge(t: TestContext, entries: unknown[] = []): { handlers: Map<s
 			await closed;
 		}
 	}
-	return { handlers, snapshot };
+	return { handlers, snapshot, root, session, ctx };
 }
+
+test("bridge tracks file/name, retains reload recovery until replacement, and clears intentional session exits", async (t) => {
+	const { handlers, snapshot, root, session, ctx } = startBridge(t);
+	const journal = new RecoveryJournal(root, () => undefined); // inspect the records as if the owner died
+	assert.deepEqual(journal.list(), [], "an ephemeral session is not recoverable");
+	for (const reason of ["reload", "new", "resume", "fork", "quit"]) {
+		session.file = join(root, `${reason}.jsonl`);
+		handlers.get("message_end")!({ message: { role: "user", content: "first prompt" } });
+		handlers.get("session_info_changed")!({ name: `work-${reason}` });
+		const state = await snapshot();
+		assert.equal(state.sessionFile, session.file);
+		assert.equal(journal.list()[0].name, `work-${reason}`);
+		assert.equal(journal.list()[0].sessionId, session.id);
+		handlers.get("session_shutdown")!({ reason });
+		if (reason === "reload") {
+			assert.equal(journal.list()[0]?.instanceId, state.instanceId, "a crash before replacement startup must remain recoverable");
+			assert.deepEqual(new RecoveryJournal(root).list(), [], "reload of a living process is not an interruption");
+		} else assert.deepEqual(journal.list(), []);
+		if (reason !== "quit") {
+			if (reason !== "reload") session.id = `after-${reason}`;
+			handlers.get("session_start")!({}, ctx);
+			assert.equal(journal.list().length, 1);
+			assert.notEqual(journal.list()[0].instanceId, state.instanceId, "replacement retires the reload marker");
+		}
+	}
+});
 
 test("bridge counts tool progress and raw provider events as activity", async (t) => {
 	let now = Date.now();

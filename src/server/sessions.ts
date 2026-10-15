@@ -144,7 +144,7 @@ export class Sessions {
 			}
 			screen = launchSession(options, rows, this.runtime.runtimeDir);
 		} else {
-			// The relay does not know which session files its host's pi processes hold: check here, like the dashboard.
+			// Give immediate feedback from this snapshot; the relay rechecks ownership on the host before launching.
 			const blocked = file === undefined ? undefined : resumeBlocked(rows, project.path, file);
 			if (blocked) throw new ApiError(409, blocked);
 			screen = await this.runtime.network.remote(host).request("launch", options);

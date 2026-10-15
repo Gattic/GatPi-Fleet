@@ -7,6 +7,8 @@ and on the other machines of your network (over ssh).
   error / rate limited, stalled, exited. When a session starts needing you, its row is highlighted,
   and `Tab` jumps to the session that has waited longest. An activity lane shows the last hour,
   even right after pi-dash starts.
+- **Crash recovery**: interrupted sessions survive dashboard restarts. Press `e` to find them across
+  projects and connected hosts, then confirm a resume of the exact saved conversation.
 - **Plan progress**: the active roadmap step and a progress bar (from the GatPi-Harness roadmap), and
   how full each session's context window is (CTX).
 - **Resources**: CPU, memory and GPU memory per session, split into the pi process itself (▓) and
@@ -82,7 +84,8 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `v` | peek: live read-only mirror of the session's screen (catches dialogs that only show in pi) |
 | `a` | attach with `screen -rx`; the session stays visible in its original terminal too. `Ctrl-a d` returns |
 | `n` | new session: pick a recent project or type a directory path |
-| `r` | resume a session of the selected project (also how you restart an exited row) |
+| `r` | resume the selected interrupted session (asks first), otherwise pick a session of its project |
+| `e` | find interrupted sessions across projects and connected hosts; resume or dismiss a suggestion |
 | `c` / `C` | close / close and start a fresh session in the same project and slot |
 | `R` | rename the session |
 | `d` | dismiss an exited row (here, in the gateway and on the phone; dismissing it on the phone removes it here too) |
@@ -114,6 +117,44 @@ Slash commands only work inside pi: attach (`a`) to use them.
 pi-dash takes mouse input for clicks and the wheel. Dragging selects text and copies it with
 OSC 52; where the terminal does not support that, hold `Shift` while dragging to use the
 terminal's own selection.
+
+## Recover interrupted sessions
+
+The overview shows an **interrupted sessions** banner when a tracked pi process has ended without
+its bridge recording a graceful shutdown. Press `e`, select the session (name, ID and project),
+choose **Resume**, and confirm. pi-dash starts `pi --session <saved-file>` in that project's directory
+inside a new detached screen. Select the new row and press `a` to attach. On an existing interrupted
+row, `r` goes straight to the confirmation and reuses its slot. Nothing resumes automatically.
+
+The bridge writes private, small lifecycle records under
+`$PI_CODING_AGENT_DIR/pi-dash/recovery/` (normally `~/.pi/agent/pi-dash/recovery/`). It records the
+session ID, exact file (including custom session directories), project, name and process identity;
+no conversation text is copied. This works even if pi-dash was closed when pi died, or pi-dash itself
+was killed. Linux boot IDs and process start times distinguish a dead session from a reused PID.
+An SSH disconnect or an unknown process identity is not treated as a crash. Offline hosts' recovery
+suggestions become available once their relay reconnects and checks the host's processes.
+
+Graceful quit, `/new`, `/resume` and `/fork` retire the old bridge's record. `/reload` keeps the record
+until the replacement bridge starts, so a crash during reload remains recoverable without flagging
+a live process. A newly started bridge retires dead predecessors of that saved session, including
+after a manual resume or through a symlink alias. A launch
+failure keeps the suggestion; starting screen alone does not clear it. Choose **Dismiss** in the
+recovery menu to remove a suggestion without deleting the saved conversation. Unresolved records
+stay until resumed or dismissed; resolved records are removed rather than accumulating history.
+Dismissing an exited row also clears its recovery suggestion, including from the gateway. Dismissing
+an interrupted remote row requires that host to be reachable so the dismissal can be saved there;
+a known graceful exit can still be dismissed offline. Remote launches recheck process ownership on
+the host, rather than trusting a potentially stale dashboard snapshot.
+Existing duplicate-session checks and shared launch reservations still apply. Failed reservation
+writes and project-directory failures release the reservation created by that attempt. If an entire screen
+and its cleanup shell were killed, a stale reservation can require local inspection before removal;
+pi-dash reports its path instead of risking two writers to the same conversation.
+
+“Interrupted” means **no graceful shutdown was recorded**, not proven OOM. Pi resumes the persisted
+conversation, not lost in-memory output or previously running tools. `--no-session` runs cannot be
+recovered. Tracking starts when this bridge version is loaded: **restart pi-dash and `/reload` your
+currently running pi sessions after this update**. Earlier crashes cannot be reconstructed reliably.
+For remote hosts, run `pi-dash-host add HOST` to update the relay, then `/reload` their pi sessions.
 
 ## Remote hosts
 

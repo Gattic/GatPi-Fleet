@@ -13,7 +13,8 @@ import { listProjects, listSessions } from "../manager/actions/sessions.ts";
 import { BridgeHub, pidAlive, UncertainCommandError } from "../manager/collectors/bridges.ts";
 import { GpuMonitor } from "../manager/collectors/gpu.ts";
 import { ProcSampler } from "../manager/collectors/procs.ts";
-import { agentDir } from "../manager/runtime.ts";
+import { Store } from "../manager/model/store.ts";
+import { agentDir, RecoveryJournal } from "../manager/recovery.ts";
 import { diffState, LineDecoder, PROTOCOL_VERSION, type SessionState, socketDir } from "../protocol/index.ts";
 import { encodeRelay, GIT_METHODS, RELAY_VERSION, type RelayMessage, type RelayOp, type RelayOps, type RelayRequest } from "./protocol.ts";
 
@@ -23,19 +24,29 @@ function serve(): void {
 	const dir = socketDir();
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const sessionRoot = join(agentDir(), "sessions");
+	const recovery = new RecoveryJournal();
 	const write = (message: RelayMessage) => process.stdout.write(encodeRelay(message));
 	// The state last forwarded per bridge: later states go out as patches against it.
 	const forwarded = new Map<number, SessionState>();
+	const store = new Store(() => {});
 	const hub = new BridgeHub(dir, {
 		onState: (pid, state) => {
+			store.setState(pid, state);
 			const previous = forwarded.get(pid);
 			forwarded.set(pid, state);
 			write(previous ? { type: "patch", pid, changes: diffState(previous, state) } : { type: "snapshot", pid, state });
 		},
-		onBye: (pid, reason) => write({ type: "bye", pid, reason }),
+		onBye: (pid, reason) => {
+			store.bye(pid, reason);
+			if (reason === "quit") store.dismiss(String(pid));
+			write({ type: "bye", pid, reason });
+		},
 		onDisconnect: (pid) => {
 			forwarded.delete(pid);
-			write({ type: "disconnect", pid, alive: pidAlive(pid) });
+			const alive = pidAlive(pid);
+			store.disconnect(pid, alive);
+			if (!alive) store.dismiss(String(pid));
+			write({ type: "disconnect", pid, alive });
 		},
 		onIncompatible: (pid, version) => write({ type: "incompatible", pid, version }),
 	});
@@ -43,6 +54,15 @@ function serve(): void {
 	const gpu = new GpuMonitor();
 	const git = new GitCli();
 	const peeks = new Set<string>();
+	const launchRows = () => {
+		// Controller snapshots can lag. Recheck ownership on the host performing the mutation,
+		// including processes whose bridge predates lifecycle tracking or is disconnected.
+		hub.scan();
+		store.applySample(sampler.sample(store.targets(), gpu.latest), gpu.latest, Date.now());
+		// Unlike a dashboard, the relay needs only current owners, not an ever-growing exit history.
+		for (const row of store.rows.values()) if (row.exitedAt !== undefined) store.dismiss(row.key);
+		return store.ordered();
+	};
 
 	const handlers: Handlers = {
 		command: async ({ target, command }) => {
@@ -52,7 +72,7 @@ function serve(): void {
 		sample: ({ targets }) => {
 			const sample = sampler.sample(targets, gpu.latest);
 			const latest = gpu.latest;
-			return { resources: [...sample.resources], piProcesses: sample.piProcesses, host: sample.host, gpu: latest && { utilization: latest.utilization, memUsed: latest.memUsed, memTotal: latest.memTotal } };
+			return { resources: [...sample.resources], piProcesses: sample.piProcesses, interrupted: recovery.list(), host: sample.host, gpu: latest && { utilization: latest.utilization, memUsed: latest.memUsed, memTotal: latest.memTotal } };
 		},
 		peek: ({ pid, sty, window }) => {
 			// The pid names a file in the private runtime directory.
@@ -68,9 +88,12 @@ function serve(): void {
 		},
 		projects: ({ live }) => listProjects(sessionRoot, live),
 		sessions: ({ cwd }) => listSessions(sessionRoot, cwd),
-		// pi-dash checked this host's sessions with resumeBlocked before asking; the launch
-		// reservation still keeps two controllers from resuming the same file.
-		launch: ({ cwd, label, sessionFile }) => launchSession({ cwd: cwd.replace(/^~(?=\/|$)/, homedir()), label, sessionFile }, [], dir),
+		launch: ({ cwd, label, sessionFile }) => launchSession({ cwd: cwd.replace(/^~(?=\/|$)/, homedir()), label, sessionFile }, sessionFile ? launchRows() : [], dir),
+		recover: ({ instanceId }) => {
+			const record = recovery.interrupted(instanceId);
+			return launchSession({ cwd: record.cwd, label: record.name ?? "recovered", sessionFile: record.sessionFile }, launchRows(), dir);
+		},
+		dismissRecovery: ({ instanceId }) => { recovery.dismiss(instanceId); return null; },
 		git: ({ method, args }) => {
 			if (!GIT_METHODS.includes(method)) throw new Error(`unknown git operation ${String(method)}`);
 			return (git[method] as (...args: unknown[]) => Promise<unknown>).apply(git, args);

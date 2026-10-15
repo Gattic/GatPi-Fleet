@@ -35,6 +35,7 @@ import {
 	usageTokens,
 } from "../protocol/index.ts";
 import { answerOf, buildAskContext, cacheBeforeQuestion, textOf } from "./ask.ts";
+import { RecoveryJournal } from "../manager/recovery.ts";
 
 const FLUSH_INTERVAL_MS = 250;
 const HEARTBEAT_MS = 10_000;
@@ -233,6 +234,19 @@ let askSeq = 0;
 export default function piDashBridge(pi: ExtensionAPI): void {
 	let ctx: ExtensionContext | undefined;
 	let state: SessionState | undefined;
+	const recovery = new RecoveryJournal();
+	let recoveryStartedAt = 0;
+	let recoveryMetadata: string | undefined;
+
+	function trackRecovery(): void {
+		if (!state || !ctx) return;
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		if (sessionFile !== state.sessionFile) set({ sessionFile });
+		const metadata = JSON.stringify([state.sessionFile, state.name]);
+		if (metadata === recoveryMetadata) return;
+		recovery.track(state, recoveryStartedAt);
+		recoveryMetadata = metadata;
+	}
 	// The roadmap and prompt suggestions may publish before this extension's session_start runs.
 	let plan: PlanSnapshot | undefined;
 	let suggestion: string | undefined;
@@ -553,14 +567,24 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		if (context.mode !== "tui") return;
 		ctx = context;
 		state = initialState(pi, context, { plan, suggestion });
+		recoveryStartedAt = Date.now();
+		recoveryMetadata = undefined;
 		startServer();
+		trackRecovery();
 	});
 
 	pi.on("session_shutdown", (event) => {
-		if (state) stopServer(event.reason);
+		if (!state) return;
+		// Reload closes the extension, not the conversation. Keep recovery until its replacement
+		// records ownership, so a fatal error or OOM during reload cannot erase the current session.
+		try { if (event.reason !== "reload") recovery.close(state.instanceId); }
+		finally { stopServer(event.reason); }
 	});
 
-	pi.on("session_info_changed", (event) => set({ name: event.name }));
+	pi.on("session_info_changed", (event) => {
+		set({ name: event.name });
+		trackRecovery();
+	});
 	pi.on("model_select", (event) => set({ model: modelName(event.model) }));
 	pi.on("thinking_level_select", (event) => set({ thinking: event.level }));
 
@@ -613,6 +637,7 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 	});
 
 	pi.on("message_end", (event) => {
+		trackRecovery();
 		touch();
 		partial = undefined;
 		const message = event.message;

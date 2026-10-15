@@ -11,6 +11,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { readHardcopy, requestHardcopy } from "../../src/manager/actions/peek.ts";
 import { BridgeHub } from "../../src/manager/collectors/bridges.ts";
+import { RecoveryJournal } from "../../src/manager/recovery.ts";
 import { pidFromSocketName, type SessionState } from "../../src/protocol/index.ts";
 
 const repo = fileURLToPath(new URL("../..", import.meta.url));
@@ -136,6 +137,16 @@ test("a prompt from the dashboard runs a turn: working → tool → idle with us
 	assert.ok(state.tools.at(-1)?.endedAt);
 	assert.ok((state.context?.percent ?? 0) > 0);
 	assert.deepEqual(state.timeline.map((entry) => entry.state), ["idle", "working", "waiting"]);
+});
+
+test("interactive pi persists its exact identity and custom session directory for crash recovery", () => {
+	const journal = new RecoveryJournal(join(root, "agent"), () => undefined);
+	const record = journal.list()[0];
+	assert.equal(record.sessionId, current().sessionId);
+	assert.equal(record.instanceId, current().instanceId);
+	assert.equal(record.sessionFile, current().sessionFile);
+	assert.equal(record.cwd, join(root, "project"));
+	assert.equal(new RecoveryJournal(join(root, "agent")).list().length, 0, "a live process is not interrupted");
 });
 
 test("a multi-line reply arrives whole", async () => {
@@ -301,12 +312,15 @@ test("/new replaces the session: bye, then a fresh snapshot on the same pid", as
 	assert.equal(current().usage.direct.tokens, 0);
 	assert.deepEqual(current().asks, [], "asks belong to the session they were asked in");
 	assert.equal(current().plan?.title, "E2E plan", "plan is republished for the new session");
+	const records = new RecoveryJournal(join(root, "agent"), () => undefined).list();
+	assert.ok(records.every((record) => record.sessionId === current().sessionId), "the old session's recovery record was retired");
 });
 
 test("shutdown closes pi, removes the socket and ends its screen", async () => {
 	await hub.send(current(), { kind: "shutdown" });
 	await waitFor("bye quit", () => byes.includes("quit"));
 	await waitFor("socket removed", () => !existsSync(join(sockets, `${pid}.sock`)));
+	assert.deepEqual(new RecoveryJournal(join(root, "agent"), () => undefined).list(), [], "graceful shutdown leaves no recovery suggestion");
 	await waitFor("screen gone", () => {
 		try {
 			execFileSync("screen", ["-ls", screenName], { stdio: "ignore" });

@@ -14,6 +14,7 @@ import type { Network } from "../src/manager/network.ts";
 import type { RemoteHost } from "../src/manager/remote/host.ts";
 import type { RelayOp, RelayOps } from "../src/relay/protocol.ts";
 import { ManagerRuntime } from "../src/manager/runtime.ts";
+import type { InterruptedSession } from "../src/manager/recovery.ts";
 import { Sessions } from "../src/server/sessions.ts";
 import { App } from "../src/dashboard/ui/app.ts";
 import { COMMIT_REVIEW_PROMPT } from "../src/manager/actions/git.ts";
@@ -104,6 +105,10 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 		recordFeedback: async (event: HermesFeedbackEvent) => void feedback.push(event),
 	};
 	let quits = 0;
+	const interrupted: InterruptedSession[] = [];
+	const resumed: InterruptedSession[] = [];
+	const dismissed: InterruptedSession[] = [];
+	let recoveryError: Error | undefined;
 	const app = new App({
 		tui,
 		store,
@@ -113,7 +118,17 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 		gpu: new GpuMonitor(),
 		advisor: advisorService,
 		git,
-		dismiss: (row) => store.dismiss(row.key),
+		dismiss: async (row) => { store.dismiss(row.key); },
+		interruptedSessions: () => interrupted,
+		resumeInterrupted: async (entry) => {
+			if (recoveryError) throw recoveryError;
+			resumed.push(entry);
+			return "pi-recovered";
+		},
+		dismissInterrupted: async (entry) => {
+			dismissed.push(entry);
+			interrupted.splice(interrupted.indexOf(entry), 1);
+		},
 		sessionRoot,
 		runtimeDir: "/nonexistent",
 		quit: () => quits++,
@@ -121,6 +136,8 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 	return {
 		app,
 		store,
+		interrupted, resumed, dismissed,
+		failRecovery: (error: Error) => { recoveryError = error; },
 		sent,
 		quits: () => quits,
 		feedback,
@@ -134,6 +151,58 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 		dialog: () => (overlays.length ? strip(overlays.at(-1)!.render(80).join("\n")) : undefined),
 	};
 }
+
+const interruptedSession: InterruptedSession = {
+	version: 1, pid: 42, instanceId: "crashed-run", processIdentity: "boot:123", sessionId: "saved-id",
+	sessionFile: "/custom/saved.jsonl", cwd: "/projects/work", name: "Recover this work", startedAt: 100,
+};
+
+test("interrupted sessions are suggested even with no live rows; resume is explicit and failure keeps the suggestion", async () => {
+	const ui = harness("/nonexistent");
+	ui.interrupted.push({ ...interruptedSession });
+	assert.match(strip(ui.app.render(120).join("\n")), /1 interrupted session.*e to review/);
+	ui.press("e");
+	assert.match(ui.dialog() ?? "", /Recover this work.*saved-id/);
+	ui.press("\r", "\r");
+	assert.match(ui.dialog() ?? "", /pi --session \/custom\/saved.jsonl/);
+	assert.deepEqual(ui.resumed, [], "opening the suggestion does not launch");
+	ui.press("n");
+	assert.deepEqual(ui.resumed, []);
+	ui.failRecovery(new Error("saved file missing"));
+	ui.press("e", "\r", "\r", "y");
+	await eventually(() => assert.match(strip(ui.app.render(120).join("\n")), /recovery failed: saved file missing/));
+	assert.equal(ui.interrupted.length, 1);
+});
+
+test("interrupted resume targets its exact record and replaces the exited slot after confirmation", async () => {
+	const ui = harness("/nonexistent");
+	const entry = { ...interruptedSession, host: "box" };
+	ui.interrupted.push(entry);
+	const state: SessionState = { ...entry, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
+	ui.store.setState(entry.pid, state, "box");
+	ui.store.disconnect(entry.pid, false, "box");
+	ui.press("r");
+	assert.match(ui.dialog() ?? "", /box:\/projects\/work/);
+	ui.press("y");
+	await eventually(() => assert.deepEqual(ui.resumed, [entry]));
+	await new Promise((resolve) => setImmediate(resolve));
+	ui.store.setState(43, { ...state, pid: 43, instanceId: "new-run", sty: "100.pi-recovered" }, "box");
+	assert.equal(ui.store.bySlot(1)?.pid, 43);
+	assert.equal(ui.store.rows.has("box:42"), false);
+});
+
+test("recovery actions reject newly live ownership and dismissal leaves saved conversations alone", async () => {
+	const ui = harness("/nonexistent");
+	ui.interrupted.push({ ...interruptedSession });
+	ui.press("e", "\r", "\r");
+	ui.store.setState(43, { ...interruptedSession, pid: 43, instanceId: "new-run", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	ui.press("y");
+	assert.deepEqual(ui.resumed, []);
+	assert.match(strip(ui.app.render(120).join("\n")), /already open/);
+	ui.press("e", "\r", "\x1b[B", "\r", "y");
+	await eventually(() => assert.equal(ui.dismissed.length, 1));
+	assert.equal(ui.interrupted.length, 0);
+});
 
 test("quit asks first while a close-and-restart is waiting for its session to exit", () => {
 	const ui = harness("/nonexistent");

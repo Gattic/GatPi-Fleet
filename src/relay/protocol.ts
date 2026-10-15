@@ -2,13 +2,14 @@
 // stdin/stdout of the ssh session that runs the relay. The relay forwards that host's bridges
 // (states as snapshots and patches) and answers requests.
 import type { GitService } from "../manager/actions/git.ts";
+import type { RecoveryRecord } from "../manager/recovery.ts";
 import type { LaunchOptions } from "../manager/actions/launch.ts";
 import type { Project, SessionSummary } from "../manager/actions/sessions.ts";
 import type { HostSample, PiProcess, ResourceSample, SampleTarget } from "../manager/collectors/procs.ts";
 import type { Command, SessionIdentity, SessionPatch, SessionState } from "../protocol/index.ts";
 
 /** Bumped on any change to these messages; the bridge protocol version is checked separately. */
-export const RELAY_VERSION = 1;
+export const RELAY_VERSION = 2;
 
 export interface GpuSummary {
 	utilization: number;
@@ -20,6 +21,7 @@ export interface GpuSummary {
 export interface WireSample {
 	resources: [string, ResourceSample][];
 	piProcesses: PiProcess[];
+	interrupted: RecoveryRecord[];
 	host: HostSample;
 	gpu?: GpuSummary;
 }
@@ -37,6 +39,9 @@ export interface RelayOps {
 	sessions: { params: { cwd: string }; result: SessionSummary[] };
 	/** The new screen's name. A leading `~` in cwd is the relay host's home. */
 	launch: { params: LaunchOptions; result: string };
+	/** Revalidate the host's lifecycle record before launching or dismissing it. */
+	recover: { params: { instanceId: string }; result: string };
+	dismissRecovery: { params: { instanceId: string }; result: null };
 	git: { params: { method: GitMethod; args: unknown[] }; result: unknown };
 }
 

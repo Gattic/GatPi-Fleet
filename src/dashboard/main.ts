@@ -37,7 +37,12 @@ function main(): void {
 		tui.stop({ preserveScreen: true });
 		void runtime.close().then(() => process.exit(0));
 	};
-	const app = new App({ tui, ...runtime, dismiss: (row) => runtime.dismiss(row), advisor, git: new GitCli(), quit });
+	const app = new App({
+		tui, ...runtime, dismiss: (row) => runtime.dismiss(row), advisor, git: new GitCli(), quit,
+		interruptedSessions: () => runtime.interruptedSessions(),
+		resumeInterrupted: (entry) => runtime.resumeInterrupted(entry),
+		dismissInterrupted: (entry) => runtime.dismissInterrupted(entry),
+	});
 	runtime.subscribe(() => {
 		app.onTick();
 		if (!app.isAttached) tui.requestRender();

@@ -660,7 +660,8 @@ const HELP: [string, [string, string][]][] = [
 		"MANAGE",
 		[
 			["n", "new session in a project (on this machine or a remote host)"],
-			["r", "resume a session of the selected project"],
+			["r", "resume interrupted session / pick from the selected project"],
+			["e", "find interrupted sessions across projects; resume or dismiss"],
 			["c / C", "close session / close and start a new one"],
 			["d", "dismiss an exited session"],
 		],
