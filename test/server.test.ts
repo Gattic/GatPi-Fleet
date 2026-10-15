@@ -16,9 +16,10 @@ import { sessionDirName } from "../src/manager/actions/sessions.ts";
 import { emptyUsage, encodeMessage, LineDecoder, PROTOCOL_VERSION, socketPath, type ClientMessage, type SessionState } from "../src/protocol/index.ts";
 import { DeviceStore } from "../src/server/auth.ts";
 import { loadConfig } from "../src/server/config.ts";
-import { CommandRequestSchema, LaunchRequestSchema, SubscriptionSchema } from "../src/server/contract.ts";
+import { CommandRequestSchema, GitRequestSchema, LaunchRequestSchema, SubscriptionSchema } from "../src/server/contract.ts";
 import { Gateway } from "../src/server/gateway.ts";
 import { Receipts } from "../src/server/receipts.ts";
+import { SessionGit } from "../src/server/git.ts";
 import { clean, ref, sessionRef, Sessions, summary } from "../src/server/sessions.ts";
 import { usageFixture } from "../scripts/usage-fixture.ts";
 
@@ -228,6 +229,14 @@ test("the gateway lists, drives and dismisses the sessions of remote hosts", asy
 	assert.equal(remote.label, "remote-project@box");
 	assert.notEqual(remote.id, ref(`${process.pid}:a:${state.instanceId}`), "the same pid on this machine would be another session");
 
+	// Git follows the same remote session, not a directory on the gateway's own host.
+	execFileSync("git", ["-C", project, "init", "-b", "remote-main"], { stdio: "ignore" });
+	const git = new SessionGit(sessions);
+	assert.equal((await git.menu(remote.id)).head, "remote-main");
+	assert.equal((await git.menu(remote.id)).location, `box:${project}`);
+	assert.match((await git.status(remote.id)).text!, /On branch remote-main/);
+	assert.deepEqual(await git.branches(remote.id), { branches: [] });
+
 	// Commands reach the bridge through the host's relay.
 	const epoch = randomUUID();
 	await sessions.command(remote.id, { requestId: randomUUID(), epoch, revision: remote.revision, command: { kind: "prompt", text: "hi" } });
@@ -430,7 +439,7 @@ test("mobile contract fixtures and projections keep missing metrics missing and 
 	assert.equal(fixture.version, 1);
 	assert.deepEqual(fixture.sessions[0], summary(row));
 	const schemas = JSON.parse(readFileSync(new URL("../api/requests.schema.json", import.meta.url), "utf8"));
-	assert.deepEqual(schemas, JSON.parse(JSON.stringify({ command: CommandRequestSchema, launch: LaunchRequestSchema, subscribe: SubscriptionSchema })));
+	assert.deepEqual(schemas, JSON.parse(JSON.stringify({ command: CommandRequestSchema, git: GitRequestSchema, launch: LaunchRequestSchema, subscribe: SubscriptionSchema })));
 });
 
 test("the usage tab gets the dashboard's usage view as data", (t) => {

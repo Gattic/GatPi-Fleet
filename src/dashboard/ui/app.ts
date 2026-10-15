@@ -4,7 +4,7 @@ import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import { type Component, Key, matchesKey, type OverlayHandle, type OverlayOptions, type SelectItem, stripTerminalSequences, type TUI, type TuiMouseEvent, type TuiMouseEventResult, visibleWidth } from "@earendil-works/pi-tui";
 import { type Command, THINKING_LEVELS, type DeliverAs } from "../../protocol/index.ts";
-import { gitDirtySummary, gitHeadLabel, type GitBranch, type GitOperationResult, type GitService, type GitSummary, isGitSummaryClean } from "../../manager/actions/git.ts";
+import { COMMIT_REVIEW_PROMPT, gitDirtySummary, gitHeadLabel, type GitBranch, type GitOperationResult, type GitService, type GitSummary, isGitSummaryClean } from "../../manager/actions/git.ts";
 import { attachSession } from "../actions/screen.ts";
 import { launchSession, resumeBlocked } from "../../manager/actions/launch.ts";
 import { readHardcopy, requestHardcopy } from "../../manager/actions/peek.ts";
@@ -51,7 +51,6 @@ const FLASH_MS = 5000;
 const PEEK_REFRESH_MS = 1000;
 const GIT_MESSAGE_LIMIT = 500;
 
-export const COMMIT_REVIEW_PROMPT = "Review the current git changes. If everything looks good, create a focused commit with an appropriate message; otherwise explain what needs attention. Do not push.";
 
 const KEYS: Record<ViewName, [string, string][]> = {
 	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],

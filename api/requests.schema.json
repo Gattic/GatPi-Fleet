@@ -224,6 +224,80 @@
     },
     "additionalProperties": false
   },
+  "git": {
+    "type": "object",
+    "required": [
+      "requestId",
+      "epoch",
+      "revision",
+      "action"
+    ],
+    "properties": {
+      "requestId": {
+        "type": "string",
+        "pattern": "^[a-f0-9-]{36}$"
+      },
+      "epoch": {
+        "type": "string",
+        "pattern": "^[a-f0-9-]{36}$"
+      },
+      "revision": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{32}$"
+      },
+      "action": {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "pull"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "push"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "branch"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "switch"
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
   "launch": {
     "type": "object",
     "required": [

@@ -187,6 +187,19 @@ test("a relay that stops answering loses its link", async (t) => {
 	assert.deepEqual(log, ["lost"]);
 });
 
+test("lost or timed-out git mutation replies are unknown, while git reads are failures", async (t) => {
+	for (const timeout of [false, true]) {
+		const remote = new RemoteHost("box", recorder().events, fakeRelay([HELLO], timeout ? 5000 : 300));
+		t.after(() => remote.close()); remote.start();
+		await until(() => remote.status.kind === "online");
+		const mutations = ["pull", "push", "pushSetUpstream", "switchBranch"] as const;
+		await Promise.all([
+			...mutations.map((method) => assert.rejects(remote.request("git", { method, args: ["/project"] }, timeout ? 100 : 5000), UncertainCommandError)),
+			assert.rejects(remote.request("git", { method: "status", args: ["/project"] }, 5000), (e: Error) => !(e instanceof UncertainCommandError)),
+		]);
+	}
+});
+
 test("a relay that never greets is dropped and tried again", (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const silent = new RemoteHost("box", recorder().events, fakeRelay([], 60_000));

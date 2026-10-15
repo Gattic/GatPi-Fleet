@@ -91,7 +91,7 @@ fun DashScreen(vm: DashViewModel = viewModel()) {
             }
         }
     }
-    confirmation?.let { ConfirmationDialog(it, canConfirm = it.dismissReceipt || state.fresh, onConfirm = vm::confirmed, onCancel = { vm.confirmation.value = null }) }
+    confirmation?.let { ConfirmationDialog(it, canConfirm = it.dismissReceipt || (state.fresh && (it.git == null || (actionsEnabled && it.git.menu.epoch == state.epoch && it.git.session.id == state.selected))), onConfirm = vm::confirmed, onCancel = { vm.confirmation.value = null }) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -13,6 +13,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.After
@@ -35,10 +36,11 @@ import java.util.concurrent.Executors
  * (paired first) and its VPN address. Every connection must start with the LAN and fall back to the VPN.
  */
 class GatewayRepositoryTest {
-    private val cert = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+    private val cert = HeldCertificate.Builder().addSubjectAlternativeName("127.0.0.1").build()
     private val tls = HandshakeCertificates.Builder().heldCertificate(cert).build()
-    // The address OkHttp tries for "localhost"; with retries off it tries no other.
-    private val localhost = InetAddress.getByName("localhost")
+    // Bind and request one literal address. After a dropped response OkHttp postpones that route;
+    // "localhost" would then choose ::1, where this IPv4-only test server is not listening.
+    private val localhost = InetAddress.getByName("127.0.0.1")
     private val snapshot = javaClass.classLoader!!.getResource("snapshot.json")!!.readText()
     // The app's main thread: the repository is used from one thread.
     private val main: ExecutorCoroutineDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
@@ -134,7 +136,40 @@ class GatewayRepositoryTest {
         assertNull("the launch receipt came back", app.pending())
     }
 
-    private fun originAt(port: Int) = "https://localhost:$port"
+    @Test fun gitUsesTheSelectedSessionAndConfirmedRevisionWithoutReplayingUncertainPosts() {
+        val gateway = Gateway()
+        val app = App(gateway.url).open()
+        waitFor(10.0, "online") { app.onlineThrough(gateway) }
+        val session = app.session()
+        app.select(session.id)
+        val menu = app.git(session)
+        assertEquals("main", menu.branch)
+        assertEquals("feature", app.gitBranches(session).single().name)
+        assertEquals("On branch main", app.gitStatus(session))
+        val confirmation = GitConfirmation(session, menu, "switch", "feature")
+        app.gitAction(confirmation)
+        assertNull(app.pending())
+        val posted = gateway.gitPosts.single()
+        assertEquals(menu.revision, posted.getString("revision"))
+        assertEquals(menu.epoch, posted.getString("epoch"))
+        assertEquals("feature", posted.getJSONObject("action").getString("branch"))
+        app.select(null)
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { app.gitAction(confirmation) }
+        app.select(session.id)
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { app.gitAction(confirmation.copy(menu = menu.copy(epoch = "old"))) }
+        assertEquals(1, gateway.gitPosts.size)
+        gateway.loseGitReply = true
+        app.gitAction(confirmation)
+        assertTrue(app.pending() != null)
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { app.gitAction(confirmation) }
+        app.leave(); app.open()
+        waitFor(10.0, "reconnected") { app.onlineThrough(gateway) }
+        app.reconcile()
+        assertTrue(app.pending() != null)
+        assertEquals("an uncertain POST is never automatically retried", 2, gateway.gitPosts.size)
+    }
+
+    private fun originAt(port: Int) = "https://127.0.0.1:$port"
 
     /** A port nothing listens on yet: connecting is refused. */
     private fun freePort() = ServerSocket(0, 1, localhost).use { it.localPort }
@@ -169,6 +204,13 @@ class GatewayRepositoryTest {
         fun projects() = onMain { repository.projects() }
         fun launch(project: Project) = onMain { repository.launch(project, null) }
         fun pending() = repository.pending.value
+        fun session() = repository.state.value.sessions.single()
+        fun select(id: String?) = onMain { repository.select(id) }
+        fun git(session: Session) = onMain { repository.git(session) }
+        fun gitBranches(session: Session) = onMain { repository.gitBranches(session) }
+        fun gitStatus(session: Session) = onMain { repository.gitStatus(session) }
+        fun gitAction(confirmation: GitConfirmation) = onMain { repository.gitAction(confirmation) }
+        fun reconcile() = onMain { repository.reconcile() }
         /** The address of the current or latest connection attempt. */
         fun origin() = onMain { repository.host() }
         /** State and address are read together on the main thread: a stream ending in between cannot pass for the next. */
@@ -187,6 +229,8 @@ class GatewayRepositoryTest {
         val server = MockWebServer()
         /** Method and path of every request, in order. */
         val requests = CopyOnWriteArrayList<String>()
+        val gitPosts = CopyOnWriteArrayList<JSONObject>()
+        var loseGitReply = false
         private val streams = ConcurrentHashMap.newKeySet<WebSocket>()
         private var closed = false
         private val stream = object : WebSocketListener() {
@@ -204,6 +248,16 @@ class GatewayRepositoryTest {
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     requests += "${request.method} ${request.path}"
+                    val path = request.path!!
+                    if (path.endsWith("/git")) {
+                        if (request.method == "GET") return MockResponse().setBody(javaClass.classLoader!!.getResource("git.json")!!.readText())
+                        val body = JSONObject(request.body.readUtf8()); gitPosts += body
+                        if (loseGitReply) return MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)
+                        return MockResponse().setBody(JSONObject().put("requestId", body.getString("requestId")).put("state", "accepted").toString())
+                    }
+                    if (path.endsWith("/git/branches")) return MockResponse().setBody("""{"branches":[{"name":"feature","current":false,"upstream":null}]}""")
+                    if (path.endsWith("/git/status")) return MockResponse().setBody("""{"text":"On branch main"}""")
+                    if (path.startsWith("/api/v1/commands/")) return MockResponse().setBody("""{"state":"unknown"}""")
                     return when (request.path) {
                         "/api/v1/events" -> MockResponse().withWebSocketUpgrade(stream)
                         "/api/v1/info" -> MockResponse().setBody("""{"version":1}""")

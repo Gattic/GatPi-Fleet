@@ -18,9 +18,12 @@ Errors use HTTP status plus `{ "error": "description" }`.
 
 | Method/path | Response |
 |---|---|
-| `GET /api/v1/info` | `version`, `epoch`, host `label`, `capabilities` (`sessions`, `commands`, `launch`, `usage`, `g1-display`) |
+| `GET /api/v1/info` | `version`, `epoch`, host `label`, `capabilities` (`sessions`, `commands`, `launch`, `usage`, `git`, `g1-display`) |
 | `GET /api/v1/sessions` | `sessions` overview array (epoch is supplied by info/the stream) |
 | `GET /api/v1/sessions/:id` | Selected detail object |
+| `GET /api/v1/sessions/:id/git` | Git menu: `epoch`, `revision`, `location`, `head`, nullable `branch`/`upstream`/`pushRemote`, `ahead`/`behind`, `tree`, working-session `warning`, editable `commitPrompt`, and `actions` (`kind`, `label`, nullable `blocked`/`description`) |
+| `GET /api/v1/sessions/:id/git/branches` | `branches`: up to 1,000 local branches (`name`, `current`, nullable `upstream`) |
+| `GET /api/v1/sessions/:id/git/status` | `text`: control-stripped `git status` output, capped at 32,000 characters |
 | `GET /api/v1/projects` | `projects`: opaque `id`, `host` (remote host name, or null for the gateway's machine), `label`, `path`; per host (the gateway's machine, then `hosts.json` order) open projects first, then most recently active. `unreachable`: `host`, `error` for each remote host that did not answer |
 | `GET /api/v1/projects/:id/sessions` | `sessions`: opaque `id`, title, lastActive, blocked reason or null |
 | `GET /api/v1/usage` | The dashboard's usage view as data (below) |
@@ -130,6 +133,26 @@ picker on each host: every directory with pi session history plus the directorie
 of open sessions. A remote launch whose answer is lost has an unknown outcome. Current
 ownership checks and shared exclusive resume reservations apply; arbitrary
 paths/launch arguments are not accepted.
+
+`POST /api/v1/sessions/:id/git` runs a confirmed git action on that session's host:
+`{requestId, epoch, revision, action}`. Use the **git menu's** revision (not the session
+revision). Actions are `{kind: "pull"}`, `{kind: "push"}`, or
+`{kind: "switch", branch: "existing-local-branch"}`. No paths, shell commands, force
+flags or arbitrary remotes are accepted. The gateway re-reads git and checks the
+menu fingerprint (including HEAD's commit ID) and current session before dispatch; changed state requires refresh
+and a new confirmation. This is not a filesystem lock against external git users.
+Pull is `--ff-only` and requires a branch/upstream. Push requires a branch and uses
+its upstream, or offers `push -u REMOTE HEAD` only with exactly one remote. Switch
+requires a clean tree and another existing local branch. Ahead/behind is based on
+local remote-tracking refs; reading/refreshing the menu does not fetch. Review/commit
+only pre-fills the phone's prompt editor with the TUI's prompt (including “Do not push”);
+it uses the existing prompt endpoint only when the operator presses Send.
+
+Git mutations share the same receipts, rate limits, audit, epoch checks and no-replay
+policy as session commands. An accepted git receipt means the git process completed;
+refresh the menu/status to inspect its result. An interrupted git mutation (timeout or
+output limit), or a lost remote mutation acknowledgement, is unknown, not a safe-to-retry failure. Git queries remain available while a receipt
+is pending so the operator can inspect before dismissing it.
 
 A mutation returns a receipt:
 `{requestId, state, at, error?}`. States are `received`, `accepted`, `failed`,

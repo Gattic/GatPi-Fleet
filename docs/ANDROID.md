@@ -194,6 +194,25 @@ phone, revoke on the host. To rotate a certificate/token, initialize a new
 private configuration directory, switch the service to it, and re-pair devices;
 do not disable hostname or certificate checking. There is no insecure recovery.
 
+### Git menu
+
+Open a session, then **Git → Open git menu**. Like the TUI's `g` menu, it shows
+branch/upstream, ahead/behind and working-tree counts, with **Update (pull --ff-only)**,
+**Send (push)**, **Switch branch**, **View status**, **Ask AI to review/commit**, and
+**Refresh git**. Git runs on the session's host, including remote hosts. Update the
+app and gateway together to use these new endpoints.
+
+Pull, push and branch switches require confirmation. Detached HEAD, missing upstream
+and dirty-tree guards match the TUI; a sole remote can be offered as a new upstream.
+Working-session warnings remind you to let active tools finish. Review/commit prepares
+an editable draft in **Prompt** below; nothing is sent automatically and the prompt
+explicitly forbids pushing. While working it defaults to follow-up delivery.
+
+Git actions are disabled offline or while a prior action is pending. Read-only Git
+inspection remains available online with a pending receipt. Refresh after an operation;
+refresh reads local remote-tracking refs, not a network fetch. For an uncertain receipt,
+inspect Git on the host before dismissing it; never blindly resend.
+
 ## 2. Build and install Android
 
 Pinned toolchain: Gradle 8.10.2, AGP 8.7.3, Kotlin 2.0.21, Compose BOM 2024.12.01,
@@ -362,7 +381,7 @@ a partial failure is not treated as both arms healthy.
   Emulator fixtures must be stopped and removed after successful smoke tests.
 
 Host gates: `npm run check`, `npm test`, `npm run test:e2e`.
-`npm run api:generate` regenerates the request schema and shared snapshot and usage
+`npm run api:generate` regenerates the request schema and shared snapshot, usage and git
 fixtures; Kotlin tests consume those actual fixtures. See [API](API.md) and
 [acceptance procedure](ANDROID-ACCEPTANCE.md) for the remaining gates.
 

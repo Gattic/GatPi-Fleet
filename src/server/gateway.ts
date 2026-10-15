@@ -8,11 +8,12 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { ManagerRuntime } from "../manager/runtime.ts";
 import { DeviceStore } from "./auth.ts";
 import { Audit } from "./audit.ts";
-import { API_VERSION, ApiError, MAX_BODY, MAX_FRAME, commandRequest, launchRequest, parseJson, subscription } from "./contract.ts";
+import { API_VERSION, ApiError, MAX_BODY, MAX_FRAME, commandRequest, gitRequest, launchRequest, parseJson, subscription } from "./contract.ts";
 import type { ServerConfig } from "./config.ts";
 import { Receipts, type Receipt } from "./receipts.ts";
 import { Sessions } from "./sessions.ts";
 import { usageReport } from "./usage.ts";
+import { SessionGit } from "./git.ts";
 
 interface Peer { ws: WebSocket; authorization: string; device: string; seq: number; selected: string | null; overview: string; detail: string; alive: boolean }
 
@@ -56,6 +57,7 @@ export class Gateway {
 	private starting?: Promise<void>;
 	private closed = false;
 	readonly sessions: Sessions;
+	private readonly git: SessionGit;
 	readonly devices: DeviceStore;
 	private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: 4096, perMessageDeflate: false });
 	private readonly peers = new Set<Peer>();
@@ -70,6 +72,7 @@ export class Gateway {
 	constructor(config: ServerConfig, runtime: ManagerRuntime) {
 		this.config = config;
 		this.sessions = new Sessions(runtime);
+		this.git = new SessionGit(this.sessions);
 		this.devices = new DeviceStore(config.devices);
 		this.audit = new Audit(config.auditDir);
 		this.receipts = new Receipts((device, receipt) => this.receiptChanged(device, receipt));
@@ -134,8 +137,11 @@ export class Gateway {
 		const path = url.pathname;
 		if (req.method === "GET") {
 			let result: unknown;
-			if (path === "/api/v1/info") result = { version: API_VERSION, epoch: this.epoch, label: this.config.label, capabilities: ["sessions", "commands", "launch", "usage", "g1-display"] };
+			if (path === "/api/v1/info") result = { version: API_VERSION, epoch: this.epoch, label: this.config.label, capabilities: ["sessions", "commands", "launch", "usage", "git", "g1-display"] };
 			else if (path === "/api/v1/sessions") result = { sessions: this.sessions.overview() };
+			else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}\/git$/.test(path)) result = { epoch: this.epoch, ...await this.git.menu(path.split("/")[4]) };
+			else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}\/git\/branches$/.test(path)) result = await this.git.branches(path.split("/")[4]);
+			else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}\/git\/status$/.test(path)) result = await this.git.status(path.split("/")[4]);
 			else if (path === "/api/v1/usage") result = usageReport(this.sessions.runtime);
 			else if (path === "/api/v1/projects") result = await this.sessions.projects();
 			else if (/^\/api\/v1\/projects\/[a-f0-9]{32}\/sessions$/.test(path)) result = { sessions: await this.sessions.history(path.split("/")[4]) };
@@ -155,6 +161,12 @@ export class Gateway {
 			if (input.epoch !== this.epoch) throw new ApiError(409, "Gateway restarted; refresh, do not replay old actions");
 			this.audit.write(device.id, input.projectId, input.sessionRef ? "resume" : "new", "received");
 			receipt = this.receipts.submit(device.id, input.requestId, { path, input }, () => this.sessions.launch(input));
+		} else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}\/git$/.test(path)) {
+			if (!gitRequest.Check(input)) throw new ApiError(400, "Invalid git request");
+			if (input.epoch !== this.epoch) throw new ApiError(409, "Gateway restarted; refresh, do not replay old actions");
+			const id = path.split("/")[4];
+			this.audit.write(device.id, id, `git:${input.action.kind}`, "received");
+			receipt = this.receipts.submit(device.id, input.requestId, { path, input }, () => this.git.action(id, input));
 		} else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}\/commands$/.test(path)) {
 			if (!commandRequest.Check(input)) throw new ApiError(400, "Invalid command request");
 			if (input.epoch !== this.epoch) throw new ApiError(409, "Gateway restarted; refresh, do not replay old actions");

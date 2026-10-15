@@ -194,6 +194,14 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Se
         val pair = pair ?: error("Pair with the host first")
         return gatewayJson(client ?: error("No gateway client"), origin ?: error("No gateway origin"), pair.token, path)
     }
+    suspend fun git(session: Session): GitMenu = GitMenu.parse(read("/api/v1/sessions/${session.id}/git"))
+    suspend fun gitBranches(session: Session): List<GitBranch> = read("/api/v1/sessions/${session.id}/git/branches").getJSONArray("branches").objects()
+        .map { GitBranch(it.getString("name"), it.getBoolean("current"), it.text("upstream")) }
+    suspend fun gitStatus(session: Session): String = read("/api/v1/sessions/${session.id}/git/status").getString("text")
+    suspend fun gitAction(confirmation: GitConfirmation) {
+        require(confirmation.session.id == mutable.value.selected && confirmation.menu.epoch == mutable.value.epoch) { "Selection or gateway changed; reopen Git and review the action again" }
+        submit("/api/v1/sessions/${confirmation.session.id}/git", JSONObject().put("revision", confirmation.menu.revision).put("action", confirmation.action()), "Git ${confirmation.kind} · ${confirmation.session.label}")
+    }
     suspend fun projects(): Projects = Projects.parse(read("/api/v1/projects"))
     suspend fun usage(): UsageReport = UsageReport.parse(read("/api/v1/usage"))
     suspend fun history(project: Project): List<History> = read("/api/v1/projects/${project.id}/sessions").getJSONArray("sessions").objects().map { History(it.getString("id"), it.getString("title"), it.text("blocked")) }
@@ -233,7 +241,7 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Se
         val pending = mutablePending.value ?: return
         if (receipt.optString("requestId") != pending.id) return
         when (receipt.getString("state")) {
-            "accepted" -> { clearPending(); message("Accepted: ${pending.description}. Completion is shown in session state.") }
+            "accepted" -> { clearPending(); message(if (pending.description.startsWith("Git ")) "Completed: ${pending.description}. Refresh Git to inspect the result." else "Accepted: ${pending.description}. Completion is shown in session state.") }
             "failed" -> { clearPending(); message("Failed: ${receipt.optString("error", "Rejected by host")}") }
             "unknown" -> message("Outcome unknown: ${pending.description}. Inspect the session before dismissing.")
             "received" -> message("Gateway received ${pending.description}; awaiting acknowledgement")

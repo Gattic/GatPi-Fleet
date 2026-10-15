@@ -1,0 +1,34 @@
+{
+  "epoch": "00000000-0000-4000-8000-000000000000",
+  "revision": "daa09af0c03397073de5ae5a06e80432",
+  "location": "box:/project",
+  "head": "main",
+  "branch": "main",
+  "upstream": "origin/main",
+  "pushRemote": null,
+  "ahead": 2,
+  "behind": 1,
+  "tree": "1 staged, 2 changed, 3 untracked",
+  "warning": "\n\nproject@box is working in this project. Let active tools finish before changing repository files or branches.",
+  "commitPrompt": "Review the current git changes. If everything looks good, create a focused commit with an appropriate message; otherwise explain what needs attention. Do not push.",
+  "actions": [
+    {
+      "kind": "pull",
+      "label": "Update (pull --ff-only)",
+      "blocked": null,
+      "description": "Run git pull --ff-only in box:/project on main?\n\nWorking tree is 1 staged, 2 changed, 3 untracked; git may refuse if local changes overlap.\n\nproject@box is working in this project. Let active tools finish before changing repository files or branches."
+    },
+    {
+      "kind": "push",
+      "label": "Send (push)",
+      "blocked": null,
+      "description": "Run git push in box:/project and publish main (2 ahead) to origin/main?\n\nmain is behind origin/main by 1; push may be rejected until you pull."
+    },
+    {
+      "kind": "switch",
+      "label": "Switch branch",
+      "blocked": "Working tree has changes; ask the agent to review, commit, or stash first",
+      "description": null
+    }
+  ]
+}

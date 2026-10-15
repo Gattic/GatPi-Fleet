@@ -15,7 +15,8 @@ import type { RemoteHost } from "../src/manager/remote/host.ts";
 import type { RelayOp, RelayOps } from "../src/relay/protocol.ts";
 import { ManagerRuntime } from "../src/manager/runtime.ts";
 import { Sessions } from "../src/server/sessions.ts";
-import { App, COMMIT_REVIEW_PROMPT } from "../src/dashboard/ui/app.ts";
+import { App } from "../src/dashboard/ui/app.ts";
+import { COMMIT_REVIEW_PROMPT } from "../src/manager/actions/git.ts";
 import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 import { type Command, emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
@@ -365,7 +366,7 @@ test("Git push offers upstream creation when one remote is available", async () 
 });
 
 test("Git blocks pull and push from detached HEAD", async () => {
-	const git = gitStub(cleanGitSummary({ branch: undefined, detachedOid: "abcdef1234567890", upstream: undefined }));
+	const git = gitStub(cleanGitSummary({ branch: undefined, headOid: "abcdef1234567890", upstream: undefined }));
 	const ui = harness("/nonexistent", undefined, git.service);
 	ui.store.setState(101, session({}));
 

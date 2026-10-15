@@ -81,6 +81,7 @@ internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean
     val can = { kind: String -> enabled && session.commands.containsKey(kind) && session.commands[kind] == null }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OverviewCard(session, can("dismiss")) { vm.dismiss(session) }
+        GitCard(vm, session, state.fresh, enabled, can("prompt"))
         detail.error?.let { Notice(it, Pi.Error) }
         ExchangeCard(detail)
         PromptCard(vm, session, detail.suggestion, detail.prompts, can("prompt"))

@@ -11,7 +11,7 @@ import org.json.JSONObject
 
 enum class Screen { Sessions, Session, Projects, Usage, Glasses, Pairing }
 
-data class Confirmation(val title: String, val description: String, val target: Session? = null, val command: JSONObject? = null, val project: Project? = null, val history: History? = null, val dismissReceipt: Boolean = false)
+data class Confirmation(val title: String, val description: String, val target: Session? = null, val command: JSONObject? = null, val project: Project? = null, val history: History? = null, val dismissReceipt: Boolean = false, val git: GitConfirmation? = null)
 
 /** [drafts] are kept in the app's encrypted vault for the selected session; tests pass their own. */
 class DashViewModel @JvmOverloads constructor(
@@ -34,13 +34,15 @@ class DashViewModel @JvmOverloads constructor(
     val usage = MutableStateFlow<UsageSnapshot?>(null)
     val usageRange = MutableStateFlow(UsageReport.RANGES.first())
     val usageMetric = MutableStateFlow(Metric.Cost)
+    val git = MutableStateFlow<GitView?>(null)
+    private var gitVisit = 0
     val busy = MutableStateFlow(false)
     init {
         try { drafts.restore() } catch (_: Exception) { repository.message("Saved drafts unavailable; credentials may need re-pairing") }
     }
-    fun select(session: Session) { repository.select(session.id); drafts.open(); ask.value = ""; screen.value = Screen.Session }
+    fun select(session: Session) { closeGit(); repository.select(session.id); drafts.open(); ask.value = ""; screen.value = Screen.Session }
     /** Leaves session detail (or any other screen) for the overview, ending the detail subscription. */
-    fun back() { screen.value = Screen.Sessions; repository.select(null) }
+    fun back() { closeGit(); screen.value = Screen.Sessions; repository.select(null) }
     fun resetDrafts() { drafts.clear(); ask.value = "" }
     fun run(action: suspend () -> Unit) {
         if (busy.value) return
@@ -77,10 +79,49 @@ class DashViewModel @JvmOverloads constructor(
         run {
             when {
                 c.dismissReceipt -> { repository.clearPending(); repository.message("Receipt dismissed after manual inspection; no command was replayed") }
+                c.git != null -> { closeGit(); repository.gitAction(c.git) }
                 c.target != null && c.command != null -> repository.command(c.target, c.command)
                 c.project != null -> repository.launch(c.project, c.history)
             }
         }
+    }
+    fun closeGit() { gitVisit++; git.value = null; if (confirmation.value?.git != null) confirmation.value = null }
+    fun openGit(session: Session) {
+        if (busy.value) return
+        closeGit()
+        git.value = GitView(session.id)
+        gitRead(session) { it.copy(menu = repository.git(session)) }
+    }
+    private fun gitRead(session: Session, read: suspend (GitView) -> GitView) {
+        val visit = gitVisit
+        val epoch = repository.state.value.epoch
+        run {
+            val current = git.value ?: return@run
+            val result = try { read(current).copy(error = null) } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                current.copy(error = e.message ?: "Git operation failed")
+            }
+            // A late response must not reopen a menu or populate a different session/gateway.
+            if (visit == gitVisit && repository.state.value.selected == session.id && repository.state.value.epoch == epoch) git.value = result
+        }
+    }
+    fun gitBranches(session: Session) = gitRead(session) { it.copy(branches = repository.gitBranches(session), status = null) }
+    fun gitStatus(session: Session) = gitRead(session) { it.copy(status = repository.gitStatus(session), branches = null) }
+    fun confirmGit(session: Session, kind: String, branch: String? = null) {
+        val view = git.value?.takeIf { it.sessionId == session.id } ?: return
+        val menu = view.menu ?: return
+        val action = menu.actions.single { it.kind == kind }
+        if (action.blocked != null) { repository.message(action.blocked); return }
+        if (kind == "switch" && view.branches?.none { it.name == branch && !it.current } != false) return
+        val text = if (kind == "switch") "Switch ${session.label} in ${menu.location} from ${menu.head} to $branch?${menu.warning}" else action.description!!
+        confirmation.value = Confirmation("Git · ${action.label}", text, git = GitConfirmation(session, menu, kind, branch))
+    }
+    fun gitCommitPrompt(session: Session) {
+        val menu = git.value?.takeIf { it.sessionId == session.id }?.menu ?: return
+        drafts.edit(menu.commitPrompt)
+        delivery.value = if (session.running) "followUp" else "steer"
+        closeGit()
+        repository.message("Review the draft in Prompt below, then Send prompt. Nothing has been sent.")
     }
     fun openProjects() {
         screen.value = Screen.Projects

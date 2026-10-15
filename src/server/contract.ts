@@ -24,6 +24,12 @@ export const CommandSchema = Type.Union([
 ]);
 export const CommandRequestSchema = object({ requestId: RequestId, epoch: RequestId, revision: Reference, command: CommandSchema });
 export const LaunchRequestSchema = object({ requestId: RequestId, epoch: RequestId, projectId: Reference, sessionRef: Type.Optional(Reference) });
+export const GitRequestSchema = object({ requestId: RequestId, epoch: RequestId, revision: Reference, action: Type.Union([
+	object({ kind: Type.Literal("pull") }), object({ kind: Type.Literal("push") }),
+	object({ kind: Type.Literal("switch"), branch: text(300) }),
+]) });
+export type GitRequest = Static<typeof GitRequestSchema>;
+export const gitRequest = Schema.Compile(GitRequestSchema);
 export const SubscriptionSchema = object({ type: Type.Literal("subscribe"), sessionId: Type.Union([Reference, Type.Null()]) });
 export type CommandRequest = Static<typeof CommandRequestSchema>;
 export type LaunchRequest = Static<typeof LaunchRequestSchema>;

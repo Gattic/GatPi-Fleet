@@ -1,5 +1,8 @@
 // Git integration for the dashboard's project-management shortcuts.
 import { type ExecFileException, execFile } from "node:child_process";
+import { UncertainCommandError } from "../collectors/bridges.ts";
+
+export const COMMIT_REVIEW_PROMPT = "Review the current git changes. If everything looks good, create a focused commit with an appropriate message; otherwise explain what needs attention. Do not push.";
 
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_NETWORK_TIMEOUT_MS = 120_000;
@@ -9,7 +12,8 @@ export interface GitSummary {
 	cwd: string;
 	root: string;
 	branch?: string;
-	detachedOid?: string;
+	/** HEAD commit for named and detached branches; absent before the first commit. */
+	headOid?: string;
 	upstream?: string;
 	ahead: number;
 	behind: number;
@@ -53,7 +57,7 @@ export function isGitSummaryClean(summary: GitSummary): boolean {
 }
 
 export function gitHeadLabel(summary: GitSummary): string {
-	return summary.branch ?? (summary.detachedOid ? `detached ${summary.detachedOid.slice(0, 12)}` : "unknown HEAD");
+	return summary.branch ?? (summary.headOid ? `detached ${summary.headOid.slice(0, 12)}` : "unknown HEAD");
 }
 
 export function gitDirtySummary(summary: GitSummary): string {
@@ -78,20 +82,15 @@ export function parseGitStatus(output: string, options: ParseStatusOptions): Git
 		conflicted: 0,
 		remotes: options.remotes,
 	};
-	let oid: string | undefined;
-	let detached = false;
 	for (const line of output.split(/\r?\n/)) {
 		if (!line) continue;
 		if (line.startsWith("# ")) {
 			if (line.startsWith("# branch.oid ")) {
-				oid = line.slice("# branch.oid ".length).trim();
-				if (detached && oid !== "(initial)") summary.detachedOid = oid;
+				const oid = line.slice("# branch.oid ".length).trim();
+				summary.headOid = oid !== "(initial)" ? oid : undefined;
 			} else if (line.startsWith("# branch.head ")) {
 				const head = line.slice("# branch.head ".length).trim();
-				if (head === "(detached)") {
-					detached = true;
-					summary.detachedOid = oid && oid !== "(initial)" ? oid : undefined;
-				} else summary.branch = head;
+				if (head !== "(detached)") summary.branch = head;
 			} else if (line.startsWith("# branch.upstream ")) {
 				summary.upstream = line.slice("# branch.upstream ".length).trim();
 			} else {
@@ -153,8 +152,12 @@ function runGit(cwd: string, args: readonly string[], timeoutMs: number): Promis
 				timeout: timeoutMs,
 			},
 			(error, stdout, stderr) => {
-				if (error) reject(new Error(failureMessage(args[0], error, stdout, stderr, timeoutMs)));
-				else resolve({ stdout, stderr });
+				if (error) {
+					const message = failureMessage(args[0], error, stdout, stderr, timeoutMs);
+					const interrupted = error.killed || error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+					const mutation = ["pull", "push", "switch"].includes(args[0]);
+					reject(interrupted && mutation ? new UncertainCommandError(`${message}; execution outcome is unknown`) : new Error(message));
+				} else resolve({ stdout, stderr });
 			},
 		);
 	});

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { GitCli, gitDirtySummary, gitHeadLabel, isGitSummaryClean, parseGitStatus } from "../src/manager/actions/git.ts";
+import { UncertainCommandError } from "../src/manager/collectors/bridges.ts";
 
 test("parseGitStatus reads branch, divergence, and working tree counts", () => {
 	const summary = parseGitStatus(
@@ -21,6 +22,7 @@ u UU N... 100644 100644 100644 100644 a b c conflicted.ts
 	);
 
 	assert.equal(summary.branch, "main");
+	assert.equal(summary.headOid, "abcdef1234567890");
 	assert.equal(summary.upstream, "origin/main");
 	assert.equal(summary.ahead, 2);
 	assert.equal(summary.behind, 1);
@@ -42,7 +44,7 @@ test("parseGitStatus handles clean detached HEAD", () => {
 	);
 
 	assert.equal(summary.branch, undefined);
-	assert.equal(summary.detachedOid, "abcdef1234567890");
+	assert.equal(summary.headOid, "abcdef1234567890");
 	assert.equal(isGitSummaryClean(summary), true);
 	assert.equal(gitDirtySummary(summary), "clean");
 	assert.equal(gitHeadLabel(summary), "detached abcdef123456");
@@ -57,8 +59,15 @@ test("parseGitStatus keeps detached HEAD oid even if status headers arrive out o
 	);
 
 	assert.equal(summary.branch, undefined);
-	assert.equal(summary.detachedOid, "fedcba9876543210");
+	assert.equal(summary.headOid, "fedcba9876543210");
 	assert.equal(gitHeadLabel(summary), "detached fedcba987654");
+});
+
+test("parseGitStatus keeps an unborn branch without a commit identity", () => {
+	const summary = parseGitStatus("# branch.oid (initial)\n# branch.head main\n", { cwd: "/repo", root: "/repo", remotes: [] });
+	assert.equal(summary.branch, "main");
+	assert.equal(summary.headOid, undefined);
+	assert.equal(gitHeadLabel(summary), "main");
 });
 
 test("GitCli refuses to switch branches when the worktree became dirty", async (t) => {
@@ -101,4 +110,5 @@ test("GitCli reports why git failed: git's own error, a timeout, or too much out
 
 	fakeGit("exec head -c 600000 /dev/zero");
 	await assert.rejects(new GitCli().status(bin), { message: "git status printed more than 512 KB of output; run it in a terminal" });
+	await assert.rejects(new GitCli().push(bin), (error: Error) => error instanceof UncertainCommandError && /execution outcome is unknown/.test(error.message));
 });
