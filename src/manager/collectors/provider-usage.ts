@@ -47,13 +47,33 @@ export function parseUsage(family: UsageFamily, body: unknown): QuotaWindow[] {
 	].filter((entry): entry is QuotaWindow => entry !== undefined);
 }
 
-export class UsageFetchError extends Error {}
+export class UsageFetchError extends Error {
+	readonly retryAt: number | undefined;
+	constructor(message: string, retryAt?: number) { super(message); this.retryAt = retryAt; }
+}
+
+/** A local rejection proves that no provider request was attempted. */
+export class UsageCredentialError extends UsageFetchError {}
+
+/** Pi owns token refresh; local auth failures must not consume a provider poll reservation. */
+export function assertUsageCredential(credential: UsageCredential, now: number): asserts credential is UsageCredential & { type: "oauth"; access: string } {
+	if (credential.type !== "oauth" || typeof credential.access !== "string" || !credential.access) throw new UsageCredentialError("OAuth login required");
+	if (typeof credential.expires === "number" && credential.expires <= now) throw new UsageCredentialError("OAuth refresh required in Pi");
+}
+
+function retryAfter(value: string | null, now: number): number | undefined {
+	if (value === null) return undefined;
+	const text = value.trim();
+	const at = /^\d+$/.test(text) ? now + Number(text) * 1000
+		: /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(text) ? Date.parse(text) : NaN;
+	return Number.isSafeInteger(at) && at > now && at <= 8_640_000_000_000_000 ? at : undefined;
+}
 
 /** The only credential-bearing boundary: fixed HTTPS GETs, no redirects, bodies or raw errors exposed. */
-export async function fetchProviderUsage(provider: string, credential: UsageCredential, signal: AbortSignal, fetchImpl: typeof fetch = fetch): Promise<QuotaWindow[]> {
+export async function fetchProviderUsage(provider: string, credential: UsageCredential, signal: AbortSignal, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): Promise<QuotaWindow[]> {
 	const family = usageFamily(provider);
 	if (!family) throw new UsageFetchError("Quota endpoint not supported");
-	if (credential.type !== "oauth" || typeof credential.access !== "string" || !credential.access) throw new UsageFetchError("OAuth login required");
+	assertUsageCredential(credential, now());
 	const headers: Record<string, string> = { Authorization: `Bearer ${credential.access}`, Accept: "application/json" };
 	const url = family === "codex" ? "https://chatgpt.com/backend-api/wham/usage" : "https://api.anthropic.com/api/oauth/usage";
 	if (family === "anthropic") headers["anthropic-beta"] = "oauth-2025-04-20";
@@ -61,8 +81,12 @@ export async function fetchProviderUsage(provider: string, credential: UsageCred
 	try {
 		const response = await fetchImpl(url, { method: "GET", headers, redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
 		if (!response.ok) {
-			await response.body?.cancel();
-			throw new UsageFetchError(response.status === 401 || response.status === 403 ? `HTTP ${response.status}: refresh login in Pi` : `Usage endpoint HTTP ${response.status}`);
+			const retryAt = retryAfter(response.headers.get("Retry-After"), now());
+			const failure = new UsageFetchError(response.status === 401 || response.status === 403 ? `HTTP ${response.status}: refresh login in Pi` : `Usage endpoint HTTP ${response.status}`, retryAt);
+			// Discarding the body must not replace the authoritative HTTP failure/cooldown.
+			try { await response.body?.cancel(); }
+			catch { throw failure; }
+			throw failure;
 		}
 		const reader = response.body?.getReader();
 		if (!reader) throw new UsageFetchError("Usage response is empty");

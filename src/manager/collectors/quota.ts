@@ -1,7 +1,8 @@
 // Provider-reported quotas and local failover cooldowns are independent sources.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { fetchProviderUsage, usageFamily, type QuotaWindow, type UsageCredential } from "./provider-usage.ts";
+import { assertUsageCredential, fetchProviderUsage, UsageCredentialError, UsageFetchError, usageFamily, type QuotaWindow, type UsageCredential } from "./provider-usage.ts";
+import { SharedUsageState } from "./quota-state.ts";
 
 export interface QuotaReading { fetchedAt: number | null; windows: QuotaWindow[]; error?: string }
 export interface QuotaAccount {
@@ -40,12 +41,14 @@ export class QuotaMonitor {
 	private readonly controller = new AbortController();
 	private readonly fetchImpl: typeof fetch;
 	private readonly now: () => number;
+	private readonly shared: SharedUsageState;
 
 	constructor(file: string, authFile: string, options: { fetch?: typeof fetch; now?: () => number } = {}) {
 		this.file = file;
 		this.authFile = authFile;
 		this.fetchImpl = options.fetch ?? fetch;
 		this.now = options.now ?? Date.now;
+		this.shared = new SharedUsageState(authFile);
 	}
 
 	/** No credential material, provider body, email or account ID crosses this boundary. */
@@ -63,31 +66,73 @@ export class QuotaMonitor {
 		}) ?? null;
 	}
 
-	/** One in-flight GET per login; ordinary polling cannot bypass provider rate limits. */
+	/** Anthropic reservations/readings survive controllers; Codex retains its local interval. */
 	async refresh(): Promise<void> {
 		if (this.controller.signal.aborted) return;
 		this.poll();
 		await Promise.all([...this.logins].map(async ([provider, login]) => {
-			if (!usageFamily(provider)) return;
+			const family = usageFamily(provider);
+			if (!family) return;
 			if (login.pending) return login.pending;
-			if (this.now() < login.nextAt) return;
-			login.nextAt = this.now() + refreshMs(provider);
+			const now = this.now();
+			try { assertUsageCredential(login.credential, now); }
+			catch (error) {
+				const previous = this.readings.get(provider) ?? { fetchedAt: null, windows: [] };
+				this.readings.set(provider, { ...previous, error: (error as UsageFetchError).message });
+				return;
+			}
+			let reservation: string | undefined;
+			try {
+				if (family === "anthropic") {
+					const shared = this.shared.read(provider);
+					if (shared?.credentialKey === login.key && shared.reading) this.readings.set(provider, shared.reading);
+					if (now < Math.max(login.nextAt, shared?.nextAt ?? 0, shared?.pendingUntil ?? 0)) return;
+					const claim = this.shared.claim(provider, login.key, now, refreshMs(provider));
+					if (claim.state.credentialKey === login.key && claim.state.reading) this.readings.set(provider, claim.state.reading);
+					if (!claim.claimed) return;
+					reservation = claim.state.reservation;
+				} else if (now < login.nextAt) return;
+			} catch {
+				// Never probe without coordinating: a broken shared store must not multiply requests.
+				const previous = this.readings.get(provider) ?? { fetchedAt: null, windows: [] };
+				this.readings.set(provider, { ...previous, error: "Shared usage state unavailable" });
+				return;
+			}
+			login.nextAt = now + refreshMs(provider);
 			login.pending = (async () => {
+				let reading: QuotaReading;
+				let localAuthFailure = false;
+				let retryAt: number | undefined;
 				try {
-					const windows = await fetchProviderUsage(provider, login.credential, this.controller.signal, this.fetchImpl);
-					// A removed/replaced login must never receive a late result from its predecessor.
-					this.poll();
-					if (this.controller.signal.aborted || this.logins.get(provider) !== login) return;
+					const windows = await fetchProviderUsage(provider, login.credential, this.controller.signal, this.fetchImpl, this.now);
 					const fetchedAt = this.now();
-					this.readings.set(provider, { fetchedAt, windows });
+					reading = { fetchedAt, windows };
 					login.nextAt = Math.min(fetchedAt + refreshMs(provider), ...windows.flatMap(({ resetAt }) => resetAt !== null && resetAt > fetchedAt ? [resetAt] : []));
 				} catch (error) {
-					if (!this.controller.signal.aborted && this.logins.get(provider) === login) {
-						const previous = this.readings.get(provider) ?? { fetchedAt: null, windows: [] };
-						this.readings.set(provider, { ...previous, error: (error as Error).message });
-					}
-				} finally { login.pending = undefined; }
-			})();
+					const previous = this.readings.get(provider) ?? { fetchedAt: null, windows: [] };
+					reading = { ...previous, error: (error as Error).message };
+					localAuthFailure = error instanceof UsageCredentialError;
+					retryAt = error instanceof UsageFetchError ? error.retryAt : undefined;
+					if (localAuthFailure) login.nextAt = 0;
+					else if (retryAt !== undefined) login.nextAt = Math.max(login.nextAt, retryAt);
+				}
+				if (reservation !== undefined) {
+					try {
+						if (localAuthFailure) this.shared.cancel(provider, reservation);
+						else if (retryAt !== undefined) this.shared.backoff(provider, retryAt);
+					} catch { reading = { ...reading, error: "Shared usage state unavailable" }; }
+				}
+				if (this.controller.signal.aborted) return;
+				if (reservation !== undefined && !localAuthFailure) {
+					try {
+						if (!this.shared.complete(provider, reservation, login.nextAt, reading)) { login.nextAt = 0; return; }
+					} catch { reading = { ...reading, error: "Shared usage state unavailable" }; }
+				}
+				// A removed/replaced login must never receive its predecessor's reading.
+				// Its provider cooldown still applies, including after a token refresh.
+				this.poll();
+				if (this.logins.get(provider) === login) this.readings.set(provider, reading);
+			})().finally(() => { login.pending = undefined; });
 			return login.pending;
 		}));
 	}
