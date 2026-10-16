@@ -9,7 +9,7 @@ No prior G1 proof-of-concept results count as acceptance of this app.
 
 ## 1. Host setup
 
-Requirements: Linux, Node >=22.19, GNU screen, OpenSSL, pi >=0.84 and this
+Requirements: Linux, Node >=22.19, GNU screen, OpenSSL, `flock` (util-linux), pi >=0.84 and this
 repository's bridge. Use the same unprivileged Linux account as your pi sessions.
 
 ```sh

@@ -38,7 +38,8 @@ and on the other machines of your network (over ssh).
 
 ## Requirements
 
-- Linux (`/proc`, cgroup v2), Node ≥ 22.19 (runs the TypeScript sources directly), GNU screen.
+- Linux (`/proc`, cgroup v2), Node ≥ 22.19 (runs the TypeScript sources directly), GNU screen,
+  `flock` (util-linux) for shared Anthropic usage polling.
 - pi ≥ 1.0 with the bridge extension installed (below).
 - Remote hosts (optional): key-based ssh from this machine, and on the host GNU screen, pi, and
   Node ≥ 22.19 on its login PATH or under `~/.nvm` (see [Remote hosts](#remote-hosts)).
@@ -237,7 +238,9 @@ remote host: bridges, /proc, screen, git ── pi-dash-relay ══ ssh stdio �
   pi's extension event bus. The suggested next prompt comes the same way from the GatPi-Harness
   prompt-suggestions extension (`prompt-suggestion:changed`).
 
-Files written: the usage index cache at `~/.cache/pi-dash/usage-index.json` (derived, keeps
+Files written: shared Anthropic usage readings and polling deadlines in `~/.pi/agent/pi-dash/quota/`
+(private state/lock files per account, no credentials; see [Account quotas](docs/QUOTAS.md)),
+the usage index cache at `~/.cache/pi-dash/usage-index.json` (derived, keeps
 30 days, about 200 KB), Hermes advisor feedback at
 `~/.cache/pi-dash/hermes-advisor-events.jsonl`, and short-lived peek captures and sockets in
 `$XDG_RUNTIME_DIR/pi-dash/` (on remote hosts too; the relay removes its captures when it ends).

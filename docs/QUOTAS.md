@@ -30,15 +30,39 @@ proxies and persistent quota cache are not copied.
 - Credentials are read locally from Pi's `auth.json`, never sent to Android or exported in reports.
   API keys and other provider families are not sent to these endpoints. Responses expose only
   normalized windows, timestamps and sanitized diagnostics, not email, account IDs or raw bodies.
-- The collector does **not** refresh or rewrite OAuth credentials. Pi remains their owner. An
-  expired/rejected login displays an explicit error; Pi's next login/token refresh is detected
-  automatically. Merely reloading the dashboard is not a login repair.
+- The collector does **not** refresh or rewrite OAuth credentials. Pi remains their owner. A
+  known stored OAuth expiry at or before the current time stops usage probes locally with
+  “OAuth refresh required in Pi.” Invalid/expired local credentials do not reserve provider polls
+  or overwrite an existing server cooldown. Pi's next login/token refresh is detected automatically.
+  Pi model requests can refresh OAuth themselves, so successful model inference does not prove
+  the previous stored access token was still valid. Conversely, a usage-endpoint 429 is not proof
+  of token expiry or model-quota exhaustion: inference and quota reads are separate endpoints.
+  Merely reloading the dashboard is not a login repair.
 
-Each dashboard/gateway process collects independently, with one in-flight request per account.
-Codex refreshes at most once a minute; Anthropic at most once every ten minutes, matching the
-upstream minimum. A known window reset permits a fresh probe at that boundary. Failed probes
-wait for the same interval; they are not retried immediately. Closing the manager cancels requests.
-The Android Refresh button fetches the gateway's latest report; it does not bypass these limits.
+Anthropic polling is shared by dashboard and gateway processes using the same Pi agent directory.
+Each account has a private state file and OS lock under `<agent>/pi-dash/quota/` (normally
+`~/.pi/agent/pi-dash/quota/`). Linux `flock` from util-linux must be on PATH. An atomic reservation
+allows only one controller to fetch; all controllers import the same sanitized reading, with its
+original timestamp. The store contains only normalized windows, sanitized errors, polling deadlines,
+a reservation ID and a one-way credential fingerprint, never tokens, account IDs or raw responses.
+State files are atomically replaced, not accumulated. In-flight leases are separate from completed
+poll schedules and server backoff deadlines. If credentials expire after preflight but before
+transport, only that request's lease is cancelled, even if its controller closes; a valid refreshed
+login is not forced to wait for a probe that never happened. Cancellation cannot release another
+owner's lease or erase a server deadline. Unavailable/malformed state blocks that account's probes
+with an explicit diagnostic rather than bypassing coordination. OS locks release on process exit;
+a crashed request's lease expires normally.
+
+Codex still polls independently per process, at most once a minute; Anthropic at most once every
+ten minutes across controllers. A known window reset permits a fresh probe at that boundary.
+Failed probes retain the ordinary interval. A valid `Retry-After` (delay seconds or an HTTP date)
+can extend it, never shorten it. Discarding an error response body cannot erase its HTTP status or
+retry deadline, even if body cleanup fails. Anthropic deadlines survive controller restarts, token
+replacement and logout/login. A late response cannot replace newer readings or shorten a cooldown,
+but its valid `Retry-After` can extend the current deadline, even if its owner is superseded or
+closed. Current completions and lease cancellation preserve any such extension. These usage
+endpoint deadlines are separate from inference-account cooldowns. Closing a manager cancels its
+requests. The Android Refresh button fetches the gateway's latest report; it does not bypass limits.
 
 ## Honesty of the display
 
@@ -49,13 +73,15 @@ The Android Refresh button fetches the gateway's latest report; it does not bypa
 - `unknown`: no usable reading yet, including invalid OAuth credentials or missing/malformed data.
 - `unsupported`: no implemented quota endpoint for that provider.
 
-Logout, credential replacement and unreadable auth immediately discard cached readings. A late
-response from a replaced account is discarded. Percentages do not promise that an inference will
-succeed; a passed reset never fabricates a replenished quota.
+Logout, credential replacement and unreadable auth immediately discard displayed readings. Shared
+readings are imported only when their credential fingerprint matches; a replaced account never
+receives its predecessor's balance. Provider polling deadlines remain in force. Percentages do not
+promise that an inference will succeed; a passed reset never fabricates a replenished quota.
 
 `multi-login-state.json` supplies **separate local account cooldowns**. Quota probes do not change
 these timers, switch models, or command pi sessions. The obsolete `provider-failover-state.json`
 is never read, even if someone updates its timestamp.
 
-Deploy the updated gateway and Android APK together for the changed Usage response. Existing pi
-sessions do not need reloading: collection belongs to pi-dash, not its per-session bridge.
+Deploy the updated gateway and Android APK together for the changed Usage response. After a
+collector update, restart the TUI and gateway together so they use the same coordination protocol.
+Existing pi sessions do not need reloading: collection belongs to pi-dash, not its per-session bridge.
