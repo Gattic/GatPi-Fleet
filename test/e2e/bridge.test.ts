@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { readHardcopy, requestHardcopy } from "../../src/manager/actions/peek.ts";
+import { screenConfig } from "../../src/manager/actions/screen-config.ts";
 import { BridgeHub } from "../../src/manager/collectors/bridges.ts";
 import { RecoveryJournal } from "../../src/manager/recovery.ts";
 import { pidFromSocketName, type SessionState } from "../../src/protocol/index.ts";
@@ -69,8 +70,9 @@ before(async () => {
 		"--session-dir",
 		join(root, "sessions"),
 	];
-	execFileSync("screen", ["-c", join(repo, "config/screenrc"), "-dmS", screenName, "sh", "-c", 'cd "$1" && shift && exec "$@"', "e2e", join(root, "project"), ...pi], {
-		env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent"), XDG_RUNTIME_DIR: runtime },
+	const { path: screenrc, env } = screenConfig({ ...process.env, XDG_CONFIG_HOME: join(root, "config") });
+	execFileSync("screen", ["-c", screenrc, "-dmS", screenName, "sh", "-c", 'cd "$1" && shift && exec "$@"', "e2e", join(root, "project"), ...pi], {
+		env: { ...env, PI_CODING_AGENT_DIR: join(root, "agent"), XDG_RUNTIME_DIR: runtime },
 	});
 	pid = await waitFor("bridge socket", () => {
 		const name = existsSync(sockets) ? readdirSync(sockets).find((entry) => entry.endsWith(".sock")) : undefined;

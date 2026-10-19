@@ -3,12 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { closeSync, mkdirSync, openSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { socketDir } from "../../protocol/index.ts";
 import { rowCwd, type SessionRow } from "../model/store.ts";
 import { sessionFileKey } from "../recovery.ts";
-
-const SCREENRC = fileURLToPath(new URL("../../../config/screenrc", import.meta.url));
+import { screenConfig } from "./screen-config.ts";
 
 export function screenNames(): Set<string> {
 	let output: string;
@@ -40,6 +38,7 @@ export function launchSession(options: LaunchOptions, rows: readonly SessionRow[
 		const reason = resumeBlocked(rows, cwd, file);
 		if (reason) throw new Error(reason);
 	}
+	const { path: screenrc, env } = screenConfig();
 	const slug = options.label.replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 24) || "session";
 	const name = `pi-${slug}-${randomUUID().slice(0, 8)}`;
 	let reservation: string | undefined;
@@ -59,11 +58,10 @@ export function launchSession(options: LaunchOptions, rows: readonly SessionRow[
 		catch (error) { rmSync(reservation, { force: true }); throw error; }
 		finally { closeSync(fd); }
 	}
-	const env = { ...process.env };
 	delete env.TMUX;
 	delete env.TMUX_PANE;
 	try {
-		execFileSync("screen", ["-c", SCREENRC, "-dmS", name, "-t", options.label, "sh", "-c", 'cleanup="$2"; trap \'if [ -n "$cleanup" ]; then rm -f -- "$cleanup"; fi\' EXIT; cd -- "$1" || exit; shift 2; pi "$@"', "pi-dash", cwd, reservation ?? "", ...(file ? ["--session", file] : [])], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", env });
+		execFileSync("screen", ["-c", screenrc, "-dmS", name, "-t", options.label, "sh", "-c", 'cleanup="$2"; trap \'if [ -n "$cleanup" ]; then rm -f -- "$cleanup"; fi\' EXIT; cd -- "$1" || exit; shift 2; pi "$@"', "pi-dash", cwd, reservation ?? "", ...(file ? ["--session", file] : [])], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", env });
 	} catch (error) {
 		if (reservation) rmSync(reservation, { force: true });
 		// screen says why it did not start (on stdout, e.g. about /run/screen); the failed command line does not.

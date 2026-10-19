@@ -4,8 +4,23 @@ import { syncBuiltinESMExports } from "node:module";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import { launchSession } from "../src/manager/actions/launch.ts";
+
+const screenVersion = 'if [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\n';
+
+let config: string;
+let previousConfig: string | undefined;
+beforeEach(() => {
+	config = mkdtempSync(join(tmpdir(), "pi-dash-launch-config-"));
+	previousConfig = process.env.XDG_CONFIG_HOME;
+	process.env.XDG_CONFIG_HOME = config;
+});
+afterEach(() => {
+	if (previousConfig === undefined) delete process.env.XDG_CONFIG_HOME;
+	else process.env.XDG_CONFIG_HOME = previousConfig;
+	rmSync(config, { recursive: true, force: true });
+});
 
 async function until(check: () => boolean): Promise<void> {
 	const deadline = Date.now() + 3000;
@@ -37,7 +52,7 @@ test("a detached launch whose project disappears still releases its reservation"
 	const file = join(root, "session.jsonl"); writeFileSync(file, "");
 	const done = join(root, "done");
 	const bin = join(root, "bin"); mkdirSync(bin);
-	writeFileSync(join(bin, "screen"), `#!/bin/sh\nshift 6\nrmdir '${cwd}'\n( "$@"; touch '${done}' ) </dev/null >/dev/null 2>&1 &\nexit 0\n`, { mode: 0o700 });
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\n${screenVersion}shift 6\nrmdir '${cwd}'\n( "$@"; touch '${done}' ) </dev/null >/dev/null 2>&1 &\nexit 0\n`, { mode: 0o700 });
 	const path = process.env.PATH; process.env.PATH = `${bin}:${path}`;
 	t.after(() => { process.env.PATH = path; });
 	launchSession({ cwd, label: "test", sessionFile: file }, [], root);
@@ -50,7 +65,7 @@ test("launch reservations exclude another controller, including session symlink 
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	const bin = join(root, "bin"); mkdirSync(bin);
 	const record = join(root, "arguments");
-	writeFileSync(join(bin, "screen"), '#!/bin/sh\nprintf "%s\\n" "$@" > "$PI_TEST_SCREEN_ARGUMENTS"\n', { mode: 0o700 });
+	writeFileSync(join(bin, "screen"), '#!/bin/sh\n' + screenVersion + 'printf "%s\\n" "$@" > "$PI_TEST_SCREEN_ARGUMENTS"\n', { mode: 0o700 });
 	const path = process.env.PATH;
 	process.env.PATH = `${bin}:${path}`; process.env.PI_TEST_SCREEN_ARGUMENTS = record;
 	t.after(() => { process.env.PATH = path; delete process.env.PI_TEST_SCREEN_ARGUMENTS; });
@@ -77,7 +92,7 @@ test("a failed screen launch releases its reservation and reports screen's reaso
 	const root = mkdtempSync(join(tmpdir(), "pi-dash-launch-fail-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	// What a setgid screen prints, on stdout, when it runs without that privilege; other reasons come on stderr.
-	writeFileSync(join(root, "screen"), "#!/bin/sh\necho \"Directory '/run/screen' must have mode 777.\"\necho 'Second line.' >&2\nexit 1\n", { mode: 0o700 });
+	writeFileSync(join(root, "screen"), "#!/bin/sh\n" + screenVersion + "echo \"Directory '/run/screen' must have mode 777.\"\necho 'Second line.' >&2\nexit 1\n", { mode: 0o700 });
 	const path = process.env.PATH; process.env.PATH = root;
 	t.after(() => { process.env.PATH = path; });
 	const file = join(root, "session.jsonl"); writeFileSync(file, "");

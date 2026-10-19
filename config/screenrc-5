@@ -1,0 +1,5 @@
+# GNU Screen 5 uses foreground;background color numbers and supports truecolor.
+source "$PI_DASH_SCREENRC_COMMON"
+caption always "%{=b 15;4}%n %t %h %=%l %H %c%{-}"
+hardstatus alwayslastline "%{= 7;0}%-Lw%{=b 15;4}%n %f* %t%{-}%{= 7;0}%+Lw%<%{-}"
+truecolor on

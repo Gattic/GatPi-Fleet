@@ -1,0 +1,4 @@
+# GNU Screen 4 uses background/foreground color letters, not Screen 5's numbers.
+source "$PI_DASH_SCREENRC_COMMON"
+caption always "%{=b bW}%n %t %h %=%l %H %c%{-}"
+hardstatus alwayslastline "%{= kw}%-Lw%{=b bW}%n %f* %t%{-}%{= kw}%+Lw%<%{-}"

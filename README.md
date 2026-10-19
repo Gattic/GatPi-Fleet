@@ -104,9 +104,58 @@ history. All manager-created resumes use a shared exclusive reservation; resolve
 ownership locally instead of overriding it. Quit asks while a close-and-restart is still waiting for its session to exit, because only a
 running pi-dash starts the replacement.
 
-Sessions started from the dashboard run pi in a detached screen named `pi-<project>` using
-[`config/screenrc`](config/screenrc) (your usual settings, but only one window). When pi exits,
-its screen ends. Existing screens you started yourself are picked up as they are.
+Sessions started from the dashboard run pi in a detached screen named `pi-<project>-<id>`.
+When pi exits, its screen ends. Existing screens you started yourself are picked up as they are.
+
+### Screen settings and colors
+
+Configuration is selected **on the machine starting the session**, including remote relays:
+
+1. Use `$XDG_CONFIG_HOME/pi-dash/screenrc` (normally `~/.config/pi-dash/screenrc`) if present.
+   This host-owned file replaces the bundled defaults and survives `pi-dash-host add` updates.
+   An unreadable, broken-symlink or non-file override fails the launch instead of silently falling back.
+2. Otherwise detect `screen --version` and use [`config/screenrc-4`](config/screenrc-4) for
+   Screen 4 or [`config/screenrc-5`](config/screenrc-5) for Screen 5. Both source the shared
+   [`config/screenrc`](config/screenrc) settings via an absolute include path supplied by the
+   launcher (`PI_DASH_SCREENRC_COMMON`), avoiding relative-include crashes in some Screen 5 builds.
+   Screen 4 uses letter-based caption/status
+   colors; Screen 5 uses numeric colors and enables truecolor. Other versions fail explicitly.
+
+The defaults use `defbce off` so windows retain `TERM=screen-256color`. With BCE forced on,
+Screen 4 can advertise `screen-256color-bce`; Ubuntu/Mint's `*-256color` Bash prompt check
+then fails and `user@hostname` loses its green color. This is handled in Screen's configuration,
+without changing the host's `.bashrc` or falsely advertising terminal capabilities.
+
+To customize a host, create its override directory and copy the **settings only** from that
+host's working screenrc into `screenrc`:
+
+```sh
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/pi-dash"
+# Edit ${XDG_CONFIG_HOME:-$HOME/.config}/pi-dash/screenrc on the target host.
+```
+
+Do not copy `screen`, `chdir`, or `select` commands from `~/.screenrc` or `~/.screenrc-empty`:
+those files may create workspace windows or select a different working directory. The override
+is a normal Screen config, not a filtered file; keep it settings-only, using syntax supported
+by the host's installed Screen. For Screen 4, for example:
+
+```text
+startup_message off
+altscreen on
+autodetach on
+defscrollback 100000
+term screen-256color
+defbce off
+vbell off
+caption always "%{= bb}%{+b w}%n %t %h %=%l %H %c"
+hardstatus alwayslastline "%-Lw%{= BW}%50>%n%f* %t%{-}%+Lw%<"
+```
+
+Do not use `truecolor on` or Screen 5's `15;4` color syntax on Screen 4. Pi-dash does not load
+`~/.screenrc` or `~/.screenrc-empty` implicitly. To deploy a manager update, run
+`pi-dash-host add HOST` from this checkout, then restart the local dashboard (and gateway, if
+used) to reconnect with the new relay. Newly launched sessions use the selected config;
+existing Screen processes retain their settings and need not be closed or reloaded.
 
 `Stalled` is a tentative tool-only warning after three minutes without Pi events and with little
 local CPU activity. A quiet tool waiting on a network or user dialog can trigger it; it is not proof

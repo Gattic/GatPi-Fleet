@@ -1,5 +1,6 @@
-# screenrc for pi sessions launched by pi-dash: one window running pi,
-# no extra windows. Settings mirror ~/.screenrc-empty.
+# Shared settings sourced by screenrc-4 and screenrc-5; no extra windows.
+# Host-specific settings belong in $XDG_CONFIG_HOME/pi-dash/screenrc
+# (normally ~/.config/pi-dash/screenrc).
 defdynamictitle off
 startup_message off
 altscreen on
@@ -10,15 +11,12 @@ bell_msg "Bell in %n (%t)"
 vbell on
 vbell_msg "Bell in %n (%t)"
 
-caption always "%{=b 15;4}%n %t %h %=%l %H %c%{-}"
-hardstatus alwayslastline "%{= 7;0}%-Lw%{=b 15;4}%n %f* %t%{-}%{= 7;0}%+Lw%<%{-}"
-
 activity "Activity in %t(%n)"
 activity_timeout 2
 
 term screen-256color
-truecolor on
-defbce on
+# Keep the terminal name matched by Ubuntu/Mint's *-256color prompt detection.
+defbce off
 attrcolor b ".I"
 msgwait 1
 defautonuke off

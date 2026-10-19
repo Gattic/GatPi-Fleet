@@ -226,12 +226,19 @@ test("manager recovery launches the exact persisted file and retains it on faile
 	const bin = join(root, "bin"); mkdirSync(bin);
 	const capture = join(root, "arguments");
 	const path = process.env.PATH;
+	const config = process.env.XDG_CONFIG_HOME;
 	process.env.PATH = `${bin}:${path}`;
-	t.after(() => { process.env.PATH = path; });
-	writeFileSync(join(bin, "screen"), '#!/bin/sh\necho "screen unavailable" >&2\nexit 1\n', { mode: 0o700 });
+	process.env.XDG_CONFIG_HOME = join(root, "config");
+	t.after(() => {
+		process.env.PATH = path;
+		if (config === undefined) delete process.env.XDG_CONFIG_HOME;
+		else process.env.XDG_CONFIG_HOME = config;
+	});
+	const version = 'if [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\n';
+	writeFileSync(join(bin, "screen"), '#!/bin/sh\n' + version + 'echo "screen unavailable" >&2\nexit 1\n', { mode: 0o700 });
 	await assert.rejects(runtime.resumeInterrupted(entry), /screen unavailable/);
 	assert.equal(runtime.recovery.list().length, 1);
-	writeFileSync(join(bin, "screen"), `#!/bin/sh\nprintf '%s\\n' "$@" > '${capture}'\n`, { mode: 0o700 });
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\n${version}printf '%s\\n' "$@" > '${capture}'\n`, { mode: 0o700 });
 	await runtime.resumeInterrupted(entry);
 	assert.deepEqual(readFileSync(capture, "utf8").trim().split("\n").slice(-2), ["--session", state.sessionFile]);
 	assert.equal(runtime.recovery.list().length, 1, "screen starting is not proof pi resumed");

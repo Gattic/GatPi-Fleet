@@ -75,8 +75,8 @@ test("a remote host's bridges, samples, listings and commands go through the rel
 
 	const { states, log, events } = recorder();
 	const bin = join(root, "bin"); mkdirSync(bin);
-	writeFileSync(join(bin, "screen"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-	const remote = new RemoteHost("box", events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${runtime}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
+	writeFileSync(join(bin, "screen"), '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; fi\nexit 0\n', { mode: 0o700 });
+	const remote = new RemoteHost("box", events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${runtime}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
 	t.after(() => remote.close());
 	remote.start();
 	await until(() => remote.status.kind === "online" && states.length);
@@ -132,8 +132,8 @@ test("remote recovery discovers persisted records at relay startup and revalidat
 	journal.track({ pid: process.pid, instanceId: "killed", sessionId: "saved", sessionFile: file, cwd: root });
 	const bin = join(root, "bin"); mkdirSync(bin);
 	const capture = join(root, "arguments");
-	writeFileSync(join(bin, "screen"), `#!/bin/sh\nprintf '%s\\n' "$@" > '${capture}'\n`, { mode: 0o700 });
-	const remote = new RemoteHost("box", recorder().events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${join(root, "run")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\nprintf '%s\\n' "$@" > '${capture}'\n`, { mode: 0o700 });
+	const remote = new RemoteHost("box", recorder().events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${join(root, "run")}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
 	t.after(() => remote.close());
 	remote.start();
 	await until(() => remote.status.kind === "online");
