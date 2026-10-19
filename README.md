@@ -325,10 +325,22 @@ Physical phone/G1 acceptance is still required before relying on screen-off moni
 ```sh
 npm run check      # tsc (strict, type stripping compatible)
 npm test           # unit, attribution (real processes / systemd units) and render tests
-npm run test:e2e   # real interactive pi in a detached screen with a local scripted model
+npm run test:e2e   # real interactive pi in a detached screen with a local scripted model; real pi-dash TUI quota renewal
 ```
 
-The e2e test needs `pi` and `screen` on PATH. It uses an isolated agent directory, does not
+The pi e2e test needs `pi` and `screen` on PATH. It uses an isolated agent directory, does not
 call any network or API, and cleans up after itself. `npm run` puts `node_modules/.bin` first on
 PATH, so `npm run test:e2e` runs the dev dependency's pi; `node --test 'test/e2e/*.test.ts'` runs
 the pi you have installed.
+
+`test/e2e/quota-renewal.test.ts` runs the real TUI in tmux against synthetic credentials: an expired
+OAuth login is renewed through pi, shutdown waits for a renewal in flight (`q` and SIGTERM), and a
+failing renewal is spaced and sanitized. It is Linux only and needs `tmux` and unprivileged user and
+network namespaces (`unshare -r -n`, util-linux 2.23 or newer; some hardened distributions disable
+them), and fails with that message when they are missing. It is offline by construction: a temporary
+HOME and agent directory, an in-process stub for Anthropic's token and usage endpoints, and no network
+at all inside the namespace. Its negative controls run mutants of the working tree and must fail exactly
+the checks they target, so a check that cannot fail is itself a failure; a mutation target that no longer
+matches the code fails loudly and needs updating. A run takes about 40 s. Interrupting it (Ctrl-C, SIGTERM)
+kills the TUIs it started and removes its directories; a run whose checks fail keeps its temporary
+directory (path in the output) for inspection, and you delete it afterwards.
