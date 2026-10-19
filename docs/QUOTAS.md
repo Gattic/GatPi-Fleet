@@ -18,7 +18,7 @@ cannot renew freshness or rewind reset countdowns. Only receiving another report
 The narrowly scoped endpoint readers and normalization were adapted from
 [Sarrius/pi-multi-account](https://github.com/Sarrius/pi-multi-account), reviewed at
 `f5819b36565d74fad2e0af24f952a84f9a053283`. See [license and attribution](THIRD-PARTY-NOTICES.md).
-The old extension is not installed or executed. Its routing, auth refresh, automatic continuation,
+The old extension is not installed or executed. Its routing, its own auth refresh, automatic continuation,
 proxies and persistent quota cache are not copied.
 
 `src/manager/collectors/provider-usage.ts` is the credential-bearing integration adapter:
@@ -30,11 +30,28 @@ proxies and persistent quota cache are not copied.
 - Credentials are read locally from Pi's `auth.json`, never sent to Android or exported in reports.
   API keys and other provider families are not sent to these endpoints. Responses expose only
   normalized windows, timestamps and sanitized diagnostics, not email, account IDs or raw bodies.
-- The collector does **not** refresh or rewrite OAuth credentials. Pi remains their owner. A
-  known stored OAuth expiry at or before the current time stops usage probes locally with
-  “OAuth refresh required in Pi.” Invalid/expired local credentials do not reserve provider polls
-  or overwrite an existing server cooldown. Pi's next login/token refresh is detected automatically.
-  Pi model requests can refresh OAuth themselves, so successful model inference does not prove
+- Pi refreshes OAuth tokens only when a model request needs one, so a token can sit expired in
+  `auth.json` while no session is using that provider. When a polled login's stored expiry is at or
+  before the current time, the collector asks **Pi's own runtime** (`ModelRuntime.getAuth`, loaded
+  lazily by `oauth-renewal.ts`) to resolve it. Pi performs the refresh under the `auth.json` lock,
+  re-checks inside the lock and persists the rotated refresh token, so concurrent Pi sessions, the TUI
+  and the gateway refresh at most once and never race. The dashboard has no OAuth client, endpoint
+  or token handling of its own, and the usage probe still never sends an expired token.
+- A started renewal is never cancelled: the provider may already have rotated the refresh token, and
+  abandoning the call before Pi persists it would destroy the login (the `pi-coding-agent` 1.0.0 that the
+  dashboard loads discards an aborted refresh outright). Closing the dashboard or gateway therefore waits
+  for an in-flight renewal; Pi bounds that wait (30 s for the lock, 15 s for the token request). Killing the
+  process with SIGKILL mid-refresh is the same unavoidable risk Pi itself has.
+- The dashboard's Pi runtime loads no extensions, so it cannot renew the `anthropic-account-N` and
+  `openai-codex-account-N` aliases that the multi-login extension registers. Their usage still shows
+  “OAuth refresh required in Pi.” once expired, until a Pi session uses that account and renews it.
+- If Pi cannot renew the login (revoked refresh token, or offline), usage shows “OAuth refresh required
+  in Pi.” Attempts are spaced five minutes apart **per provider**, so a renewal that stores a
+  still-expired token, or a replaced credential, cannot cause a refresh loop against the token endpoint.
+  The failure's cause is never displayed. Log in again in Pi to repair it, and the new login is detected
+  automatically. Renewal attempts and failures do not reserve provider polls or overwrite an existing
+  server cooldown.
+  Pi model requests can also refresh OAuth themselves, so successful model inference does not prove
   the previous stored access token was still valid. Conversely, a usage-endpoint 429 is not proof
   of token expiry or model-quota exhaustion: inference and quota reads are separate endpoints.
   Merely reloading the dashboard is not a login repair.

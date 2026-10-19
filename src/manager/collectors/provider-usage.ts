@@ -1,5 +1,5 @@
 // Anthropic/Codex usage readers adapted from Sarrius/pi-multi-account (MIT).
-// Pinned source and license: docs/THIRD-PARTY-NOTICES.md. No routing or auth mutation.
+// Pinned source and license: docs/THIRD-PARTY-NOTICES.md. No routing; this adapter never mutates auth.
 /** null resetAt preserves a reported balance when the provider has no reset timestamp. */
 export interface QuotaWindow { label: string; usedPercent: number; resetAt: number | null }
 export interface UsageCredential { type?: unknown; access?: unknown; accountId?: unknown; expires?: unknown }
@@ -55,10 +55,17 @@ export class UsageFetchError extends Error {
 /** A local rejection proves that no provider request was attempted. */
 export class UsageCredentialError extends UsageFetchError {}
 
-/** Pi owns token refresh; local auth failures must not consume a provider poll reservation. */
+export const REFRESH_REQUIRED = "OAuth refresh required in Pi";
+
+/** A known stored OAuth expiry at or before `now`; Pi's refresh (oauth-renewal.ts) is the only repair. */
+export function credentialExpired(credential: UsageCredential, now: number): boolean {
+	return credential.type === "oauth" && typeof credential.expires === "number" && credential.expires <= now;
+}
+
+/** Local auth failures must not consume a provider poll reservation. */
 export function assertUsageCredential(credential: UsageCredential, now: number): asserts credential is UsageCredential & { type: "oauth"; access: string } {
 	if (credential.type !== "oauth" || typeof credential.access !== "string" || !credential.access) throw new UsageCredentialError("OAuth login required");
-	if (typeof credential.expires === "number" && credential.expires <= now) throw new UsageCredentialError("OAuth refresh required in Pi");
+	if (credentialExpired(credential, now)) throw new UsageCredentialError(REFRESH_REQUIRED);
 }
 
 function retryAfter(value: string | null, now: number): number | undefined {

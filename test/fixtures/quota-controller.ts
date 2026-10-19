@@ -6,6 +6,7 @@ let now = Number(clock);
 let complete: ((response: Response) => void) | undefined;
 const quota = new QuotaMonitor(join(agent, "multi-login-state.json"), join(agent, "auth.json"), {
 	now: () => now,
+	renew: async () => {},
 	fetch: async () => {
 		process.send!({ type: "request" });
 		return new Promise<Response>((resolve) => { complete = resolve; });

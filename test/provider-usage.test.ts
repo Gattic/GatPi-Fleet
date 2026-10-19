@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
+import { renewLoginWithPi, type RenewLogin } from "../src/manager/collectors/oauth-renewal.ts";
 import { fetchProviderUsage, parseUsage, UsageFetchError } from "../src/manager/collectors/provider-usage.ts";
 import { QuotaMonitor } from "../src/manager/collectors/quota.ts";
 import { SharedUsageState } from "../src/manager/collectors/quota-state.ts";
@@ -83,14 +84,15 @@ test("quota failures are bounded and never expose raw bodies or errors", async (
 	await assert.rejects(request(async () => new Response("x".repeat(65537))), /too large/);
 });
 
-function monitor(t: TestContext, impl: typeof fetch, clock?: () => number) {
+/** The default renewer is Pi itself: a test must opt into any stand-in so none can reach a provider. */
+function monitor(t: TestContext, impl: typeof fetch, clock?: () => number, renew: RenewLogin = async () => {}) {
 	const dir = mkdtempSync(join(tmpdir(), "pi-usage-"));
 	let now = NOW;
 	const save = (value: unknown) => writeFileSync(join(dir, "auth.json"), JSON.stringify(value));
 	save({ anthropic: credential, "openai-codex-account-2": credential, openai: credential });
 	const monitors: QuotaMonitor[] = [];
 	const newMonitor = () => {
-		const quota = new QuotaMonitor(join(dir, "multi-login-state.json"), join(dir, "auth.json"), { fetch: impl, now: clock ?? (() => now) });
+		const quota = new QuotaMonitor(join(dir, "multi-login-state.json"), join(dir, "auth.json"), { fetch: impl, now: clock ?? (() => now), renew });
 		monitors.push(quota);
 		return quota;
 	};
@@ -407,13 +409,137 @@ test("local authentication failures do not reserve a shared provider cooldown", 
 		assert.equal(f.snapshot()[0].message, message);
 		assert.deepEqual(f.snapshot()[0].windows, []);
 		assert.equal(existsSync(join(f.dir, "pi-dash", "quota", "anthropic.json")), false, "local failures cannot fabricate provider cooldowns");
-		assert.equal(readFileSync(join(f.dir, "auth.json"), "utf8"), originalAuth, "the collector never refreshes/writes credentials");
+		assert.equal(readFileSync(join(f.dir, "auth.json"), "utf8"), originalAuth, "an unrenewable login leaves credentials untouched");
 		f.save({ anthropic: { ...credential, expires: NOW + HOUR } });
 		const peer = f.newMonitor();
 		await peer.refresh();
 		assert.equal(calls, 1, "a Pi-owned login refresh can be used immediately when no provider cooldown exists");
 		assert.equal(peer.snapshot(NOW)![0].status, "fresh");
 	});
+});
+
+/** Stands in for Pi's locked refresh: once `gate` opens it rewrites auth.json with a new access token. */
+function renewedAnthropic(onRenew: () => void, gate: Promise<void> = Promise.resolve()): RenewLogin {
+	return async (authFile) => {
+		onRenew();
+		await gate;
+		const auth = JSON.parse(readFileSync(authFile, "utf8"));
+		auth.anthropic = { ...auth.anthropic, access: "synthetic-renewed", expires: NOW + 8 * HOUR };
+		writeFileSync(authFile, JSON.stringify(auth));
+	};
+}
+
+test("an expired login is renewed once through Pi, then probed with the renewed token", async (t) => {
+	const tokens: (string | null)[] = [];
+	let renewals = 0, release!: () => void;
+	const gate = new Promise<void>((resolve) => { release = resolve; });
+	const f = monitor(t, async (_url, init) => { tokens.push(new Headers(init?.headers).get("Authorization")); return Response.json(anthropic); },
+		undefined, renewedAnthropic(() => renewals++, gate));
+	f.save({ anthropic: { ...credential, refresh: "synthetic-refresh", expires: NOW - 1 } });
+	const refreshes = [f.quota.refresh(), f.quota.refresh()];
+	release();
+	await Promise.all(refreshes);
+	assert.equal(renewals, 1, "concurrent refreshes share one renewal");
+	assert.deepEqual(tokens, [], "the expired token is never sent to the usage endpoint");
+	assert.equal(existsSync(join(f.dir, "pi-dash", "quota", "anthropic.json")), false, "renewal reserves no provider poll");
+	await f.quota.refresh();
+	assert.deepEqual(tokens, ["Bearer synthetic-renewed"]);
+	assert.equal(f.snapshot()[0].status, "fresh");
+	const peer = f.newMonitor();
+	await peer.refresh();
+	assert.equal(renewals, 1, "another dashboard on the renewed login neither renews nor probes again");
+	assert.equal(tokens.length, 1);
+	assert.equal(peer.snapshot(NOW)![0].status, "fresh");
+});
+
+test("a failed renewal reports a sanitized diagnostic and retries only after the backoff", async (t) => {
+	let attempts = 0, calls = 0, succeed = false;
+	const renewed = renewedAnthropic(() => {});
+	const f = monitor(t, async () => { calls++; return Response.json(anthropic); }, undefined, async (authFile, provider) => {
+		attempts++;
+		if (!succeed) throw new Error("synthetic-refresh response body");
+		await renewed(authFile, provider);
+	});
+	f.save({ anthropic: { ...credential, refresh: "synthetic-refresh", expires: NOW - 1 } });
+	await f.quota.refresh();
+	assert.equal(attempts, 1);
+	assert.equal(f.snapshot()[0].message, "OAuth refresh required in Pi");
+	assert.doesNotMatch(JSON.stringify(f.snapshot()), /synthetic|response body/);
+	f.tick(5 * 60_000 - 1); await f.quota.refresh();
+	assert.equal(attempts, 1, "an unchanged login is not retried inside the backoff");
+	assert.equal(f.snapshot()[0].message, "OAuth refresh required in Pi");
+	succeed = true; f.tick(1); await f.quota.refresh();
+	assert.equal(attempts, 2);
+	await f.quota.refresh();
+	assert.equal(calls, 1);
+	assert.equal(f.snapshot()[0].status, "fresh");
+});
+
+test("close waits for a started renewal instead of cancelling it, so a rotated refresh token is persisted", async (t) => {
+	let release!: () => void, started!: () => void;
+	const gate = new Promise<void>((resolve) => { release = resolve; });
+	const begun = new Promise<void>((resolve) => { started = resolve; });
+	const f = monitor(t, async () => Response.json(anthropic), undefined, renewedAnthropic(started, gate));
+	f.save({ anthropic: { ...credential, refresh: "synthetic-refresh", expires: NOW - 1 } });
+	const refreshing = f.quota.refresh();
+	await begun;
+	let closed = false;
+	const closing = f.quota.close().then(() => { closed = true; });
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(closed, false, "the process must not be allowed to exit while Pi is mid-refresh");
+	assert.doesNotMatch(readFileSync(join(f.dir, "auth.json"), "utf8"), /synthetic-renewed/);
+	release();
+	await Promise.all([refreshing, closing]);
+	assert.match(readFileSync(join(f.dir, "auth.json"), "utf8"), /synthetic-renewed/, "the renewal ran to completion and was persisted");
+});
+
+test("renewal spacing is per provider: a renewal that yields a still-expired login is not repeated or hidden", async (t) => {
+	let attempts = 0;
+	const f = monitor(t, async () => Response.json(anthropic), undefined, async (authFile) => {
+		attempts++;
+		const auth = JSON.parse(readFileSync(authFile, "utf8"));
+		auth.anthropic = { ...auth.anthropic, access: `synthetic-short-${attempts}`, expires: NOW - 1 };
+		writeFileSync(authFile, JSON.stringify(auth));
+	});
+	f.save({ anthropic: { ...credential, refresh: "synthetic-refresh", expires: NOW - 1 } });
+	await f.quota.refresh();
+	assert.equal(attempts, 1);
+	assert.equal(f.snapshot()[0].message, "OAuth refresh required in Pi", "a replaced but expired login is still diagnosed");
+	for (let tick = 0; tick < 5; tick++) { f.tick(1000); await f.quota.refresh(); }
+	assert.equal(attempts, 1, "a changed credential must not restart the spacing and hammer the token endpoint");
+	assert.equal(f.snapshot()[0].message, "OAuth refresh required in Pi");
+	f.tick(5 * 60_000 - 5000 - 1); await f.quota.refresh();
+	assert.equal(attempts, 1);
+	f.tick(1); await f.quota.refresh();
+	assert.equal(attempts, 2, "one further attempt once the spacing has elapsed");
+});
+
+test("only expired OAuth logins of polled providers are renewed", async (t) => {
+	const renewed: string[] = [];
+	const f = monitor(t, async () => Response.json(anthropic), undefined, async (_file, provider) => { renewed.push(provider); });
+	f.save({
+		anthropic: { ...credential, expires: NOW + 1 },
+		"openai-codex": { type: "api_key", key: "synthetic-key", expires: NOW - 1 },
+		"anthropic-account-2": { ...credential },
+		openai: { type: "oauth", access: "synthetic", expires: NOW - 1 },
+	});
+	await f.quota.refresh();
+	assert.deepEqual(renewed, [], "valid, unknown-expiry, non-OAuth and unsupported logins are never renewed");
+	f.save({ anthropic: { ...credential, expires: NOW - 1 }, "openai-codex-account-2": { ...credential, expires: NOW - 1 } });
+	await f.quota.refresh();
+	assert.deepEqual(renewed.sort(), ["anthropic", "openai-codex-account-2"]);
+});
+
+test("Pi's runtime resolves a valid login without rewriting auth.json, and ignores providers it does not know", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-renew-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const login = { type: "oauth", access: "synthetic-access", refresh: "synthetic-refresh", expires: Date.now() + 2 * HOUR };
+	const file = join(dir, "auth.json");
+	const auth = JSON.stringify({ anthropic: login, "anthropic-account-2": login });
+	writeFileSync(file, auth);
+	for (const provider of ["anthropic", "anthropic-account-2"]) await renewLoginWithPi(file, provider);
+	assert.equal(readFileSync(file, "utf8"), auth);
+	assert.deepEqual(readdirSync(dir), ["auth.json"]);
 });
 
 test("expiry checks and refreshed credentials cannot erase an actual Retry-After deadline", async (t) => {

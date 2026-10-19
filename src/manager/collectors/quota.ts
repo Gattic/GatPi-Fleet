@@ -1,7 +1,8 @@
 // Provider-reported quotas and local failover cooldowns are independent sources.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { assertUsageCredential, fetchProviderUsage, UsageCredentialError, UsageFetchError, usageFamily, type QuotaWindow, type UsageCredential } from "./provider-usage.ts";
+import { renewLoginWithPi, type RenewLogin } from "./oauth-renewal.ts";
+import { assertUsageCredential, credentialExpired, fetchProviderUsage, REFRESH_REQUIRED, UsageCredentialError, UsageFetchError, usageFamily, type QuotaWindow, type UsageCredential } from "./provider-usage.ts";
 import { SharedUsageState } from "./quota-state.ts";
 
 export interface QuotaReading { fetchedAt: number | null; windows: QuotaWindow[]; error?: string }
@@ -15,6 +16,7 @@ export interface QuotaAccount {
 }
 interface Login { key: string; credential: UsageCredential; nextAt: number; pending?: Promise<void> }
 const refreshMs = (provider: string) => usageFamily(provider) === "anthropic" ? 10 * 60_000 : 60_000;
+const RENEW_RETRY_MS = 5 * 60_000;
 
 export interface AccountCooldown {
 	provider: string;
@@ -41,13 +43,19 @@ export class QuotaMonitor {
 	private readonly controller = new AbortController();
 	private readonly fetchImpl: typeof fetch;
 	private readonly now: () => number;
+	private readonly renewLogin: RenewLogin;
+	/** Per provider, not per login: a replaced but still-expired login must not restart the spacing. */
+	private readonly renewAt = new Map<string, number>();
+	/** A started refresh may hold the only copy of a rotated refresh token, so close() outlives it. */
+	private readonly renewing = new Map<string, Promise<void>>();
 	private readonly shared: SharedUsageState;
 
-	constructor(file: string, authFile: string, options: { fetch?: typeof fetch; now?: () => number } = {}) {
+	constructor(file: string, authFile: string, options: { fetch?: typeof fetch; now?: () => number; renew?: RenewLogin } = {}) {
 		this.file = file;
 		this.authFile = authFile;
 		this.fetchImpl = options.fetch ?? fetch;
 		this.now = options.now ?? Date.now;
+		this.renewLogin = options.renew ?? renewLoginWithPi;
 		this.shared = new SharedUsageState(authFile);
 	}
 
@@ -75,6 +83,12 @@ export class QuotaMonitor {
 			if (!family) return;
 			if (login.pending) return login.pending;
 			const now = this.now();
+			if (credentialExpired(login.credential, now)) {
+				const renewal = this.renewing.get(provider);
+				if (renewal) return renewal;
+				if (now >= (this.renewAt.get(provider) ?? 0)) return this.startRenewal(provider, now);
+				// Inside the retry spacing the expiry itself is diagnosed below.
+			}
 			try { assertUsageCredential(login.credential, now); }
 			catch (error) {
 				const previous = this.readings.get(provider) ?? { fetchedAt: null, windows: [] };
@@ -137,9 +151,30 @@ export class QuotaMonitor {
 		}));
 	}
 
+	private startRenewal(provider: string, now: number): Promise<void> {
+		this.renewAt.set(provider, now + RENEW_RETRY_MS);
+		const renewal = this.renew(provider).finally(() => this.renewing.delete(provider));
+		this.renewing.set(provider, renewal);
+		return renewal;
+	}
+
+	/** Pi rewrites auth.json; poll() adopts the renewed login and the next refresh probes with it. */
+	private async renew(provider: string): Promise<void> {
+		try { await this.renewLogin(this.authFile, provider); }
+		// Refresh failures can embed provider response bodies: report only that Pi must repair the login.
+		catch { /* a login that is still expired is diagnosed below */ }
+		if (this.controller.signal.aborted) return;
+		this.poll();
+		const login = this.logins.get(provider);
+		if (!login || !credentialExpired(login.credential, this.now())) return;
+		const previous = this.readings.get(provider) ?? { fetchedAt: null, windows: [] };
+		this.readings.set(provider, { ...previous, error: REFRESH_REQUIRED });
+	}
+
+	/** Aborts usage requests only; a started renewal is never cancelled and is awaited so the process cannot exit mid-refresh. */
 	async close(): Promise<void> {
 		this.controller.abort();
-		await Promise.all([...this.logins.values()].map((login) => login.pending));
+		await Promise.all([...[...this.logins.values()].map((login) => login.pending), ...this.renewing.values()]);
 	}
 
 	/** Expire against the caller's clock even when the state file has not changed. */

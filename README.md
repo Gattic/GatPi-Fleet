@@ -306,7 +306,9 @@ come from read-only Anthropic/Codex usage endpoints using local Pi OAuth logins,
 Bars show the allowance **left**, with provider reset timers. Failed/old readings are explicitly stale;
 missing or unsupported data never becomes 100% available. The old `provider-failover-state.json` stays ignored.
 Account cooldowns come separately from `multi-login-state.json`: local failover timers, not provider resets.
-Quota probes never change logins, cooldowns or model selection. Models without a price count in tokens.
+Quota probes never change cooldowns or model selection. An expired OAuth login is renewed through pi's own
+locked refresh, not a dashboard implementation, so usage keeps working while no session is using that provider.
+Models without a price count in tokens.
 LLM calls that extensions make outside the session transcript are not counted. That includes asks (`i`): each answer shows its own tokens, cache
 share and cost, but they are not added to the session's totals.
 
