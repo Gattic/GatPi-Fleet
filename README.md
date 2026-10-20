@@ -17,7 +17,8 @@ and on the other machines of your network (over ssh).
   `bg_run` jobs and subagents are listed by name (BG).
 - **API usage**: tokens and API-equivalent $ per session (direct, nested tool LLM calls,
   subagents), per-minute trends, separate multi-login account cooldowns,
-  and a usage view for today / 7 days / 30 days in $ or tokens. Anthropic and Codex subscription
+  and a usage view for today / 7 days / 30 days in $ or tokens, across this machine and your
+  [remote hosts](#remote-hosts) with a per-host share. Anthropic and Codex subscription
   quotas show account bars, remaining percentages and provider reset countdowns; unavailable or stale
   readings are labelled explicitly. Sessions on models without a price show tokens (`173Mt`) instead of an empty $.
 - **Conversation**: the last prompt, the recent tool calls with their arguments, the latest reply
@@ -222,8 +223,11 @@ A host is an ssh destination, usually a `~/.ssh/config` alias. `add` copies this
 as `.pi/` stay here) to `~/.local/share/pi-dash` on the host (replacing an earlier copy), registers its bridge with the host's pi (`pi install`), checks that the relay
 answers, and adds the host to `~/.config/pi-dash/hosts.json` (`{"hosts": ["box00", …]}`; you can
 edit it by hand). Run `add` again after updating pi-dash here: an older or newer host shows
-`✖ offline … run pi-dash-host add HOST`. pi sessions already running on a host show `? no bridge`
-until `/reload`; `add` refuses this machine itself, whose sessions are already shown.
+`✖ offline … run pi-dash-host add HOST`. That message names both versions (`host runs relay v3 …,
+this pi-dash v2`): when the host's is the newer one, this dashboard or gateway was started before the
+update, so restart it; running `add` from the same old checkout would only downgrade the host. pi sessions
+already running on a host show `? no bridge` until `/reload`; `add` refuses this machine itself, whose
+sessions are already shown.
 
 Remote sessions are listed as `name@host`. Everything in the table above works on them: commands
 and asks go to their bridge, `v` peeks and `a` attaches over ssh (`ssh -t HOST screen -rx`), `g`
@@ -242,9 +246,18 @@ links to the hosts, so the phone shows and drives their sessions too and offers 
 new sessions. Its service therefore needs the same non-interactive ssh as pi-dash (keys, or an ssh
 agent its environment can reach); restart it after changing the host list.
 
-What stays local: the usage view (also the phone's Usage tab, for the gateway's machine) and
-`today $` count this machine's session files (each remote session's own $ comes from its bridge,
-without its subagents), and account status uses this machine's logins.
+Usage counts every host. Each relay indexes its own host's pi session files (in a worker, so the
+bridges are never delayed) and pushes the result, so the usage view, `today (all) $` and the phone's
+Usage tab add up this machine and all the hosts, show each host's share (`BY HOST`), name remote
+sessions `project@host`, and include a remote session's subagents in its total. A host that is
+connecting or still on its first scan is marked `…`; one that is offline (`✖`) keeps the usage it reported
+before. Each host keeps a derived cache at `~/.cache/pi-dash/usage-index-relay.json` (30 days, a few hundred
+KB), so a reconnect does not re-read its session files; run `pi-dash-host add HOST` once to update a host's
+relay for this.
+
+What stays local: account quotas and cooldowns. They come from this machine's logins; a login that
+exists only on a remote host is not polled, because its credentials stay there. A provider reports
+its allowance per account, so an account logged in here shows its balance whichever host used it.
 
 ## How it works
 
@@ -290,7 +303,7 @@ remote host: bridges, /proc, screen, git ── pi-dash-relay ══ ssh stdio �
 Files written: shared Anthropic usage readings and polling deadlines in `~/.pi/agent/pi-dash/quota/`
 (private state/lock files per account, no credentials; see [Account quotas](docs/QUOTAS.md)),
 the usage index cache at `~/.cache/pi-dash/usage-index.json` (derived, keeps
-30 days, about 200 KB), Hermes advisor feedback at
+30 days, about 200 KB; remote hosts keep their own as `usage-index-relay.json`), Hermes advisor feedback at
 `~/.cache/pi-dash/hermes-advisor-events.jsonl`, and short-lived peek captures and sockets in
 `$XDG_RUNTIME_DIR/pi-dash/` (on remote hosts too; the relay removes its captures when it ends).
 Dismissed exited sessions are empty files in `$XDG_RUNTIME_DIR/pi-dash/dismissed/`, which is how

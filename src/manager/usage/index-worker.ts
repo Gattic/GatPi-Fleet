@@ -13,6 +13,12 @@ port.postMessage({ type: "update", changed: loaded, removed: [], scanned: false,
 port.on("message", (request: ScanRequest) => {
 	const started = Date.now();
 	const { changed, removed } = indexer.scan(request);
-	if (changed.length || removed.length) indexer.save();
+	// The cache only speeds up the next start. If it cannot be written (read-only home, full disk), the scan must still
+	// be reported: a worker that dies here never answers, and its host would show as still indexing for good.
+	if (changed.length || removed.length) {
+		try {
+			indexer.save();
+		} catch {}
+	}
 	port.postMessage({ type: "update", changed, removed, scanned: true, durationMs: Date.now() - started } satisfies IndexUpdate);
 });

@@ -20,6 +20,7 @@ import org.junit.After
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.InetAddress
@@ -136,6 +137,28 @@ class GatewayRepositoryTest {
         assertNull("the launch receipt came back", app.pending())
     }
 
+    @Test fun usageIncludesRemoteHostsWhenTheGatewayReportsThem() {
+        val gateway = Gateway().apply { usage = javaClass.classLoader!!.getResource("usage.json")!!.readText() }
+        val app = App(gateway.url).open()
+        waitFor(10.0, "online") { app.onlineThrough(gateway) }
+        val report = app.usage()
+        assertEquals(listOf("box00", "boxhome"), report.hosts.map { it.host })
+        assertEquals(listOf<String?>(null, "box00", "boxhome"), report.range("30d").measure(Metric.Cost).hosts.map { it.host })
+    }
+
+    @Test fun anOlderGatewaysUsageIsRefusedWithTheInstructionToUpdateTheHost() {
+        // The report a gateway sends before it counts remote hosts: neither the top-level nor the per-measure `hosts`.
+        val older = JSONObject(javaClass.classLoader!!.getResource("usage.json")!!.readText())
+        older.remove("hosts")
+        val ranges = older.getJSONArray("ranges")
+        for (i in 0 until ranges.length()) for (measure in listOf("cost", "tokens")) ranges.getJSONObject(i).getJSONObject(measure).remove("hosts")
+        val gateway = Gateway().apply { usage = older.toString() }
+        val app = App(gateway.url).open()
+        waitFor(10.0, "online") { app.onlineThrough(gateway) }
+        val refusal = assertThrows(IllegalArgumentException::class.java) { app.usage() }
+        assertEquals("Update the host: its usage report is outdated", refusal.message)
+    }
+
     @Test fun gitUsesTheSelectedSessionAndConfirmedRevisionWithoutReplayingUncertainPosts() {
         val gateway = Gateway()
         val app = App(gateway.url).open()
@@ -202,6 +225,7 @@ class GatewayRepositoryTest {
         fun leave() = onMain { repository.foreground(false) }
         fun pair(document: String) = onMain { repository.pair(document) }
         fun projects() = onMain { repository.projects() }
+        fun usage() = onMain { repository.usage() }
         fun launch(project: Project) = onMain { repository.launch(project, null) }
         fun pending() = repository.pending.value
         fun session() = repository.state.value.sessions.single()
@@ -231,6 +255,8 @@ class GatewayRepositoryTest {
         val requests = CopyOnWriteArrayList<String>()
         val gitPosts = CopyOnWriteArrayList<JSONObject>()
         var loseGitReply = false
+        /** What `GET /api/v1/usage` returns. */
+        var usage = "{}"
         private val streams = ConcurrentHashMap.newKeySet<WebSocket>()
         private var closed = false
         private val stream = object : WebSocketListener() {
@@ -261,6 +287,7 @@ class GatewayRepositoryTest {
                     return when (request.path) {
                         "/api/v1/events" -> MockResponse().withWebSocketUpgrade(stream)
                         "/api/v1/info" -> MockResponse().setBody("""{"version":1}""")
+                        "/api/v1/usage" -> MockResponse().setBody(usage)
                         "/api/v1/projects" -> MockResponse().setBody("""{"projects":[{"id":"p","host":null,"label":"project","path":"/project"}],"unreachable":[]}""")
                         "/api/v1/sessions" -> {
                             val id = JSONObject(request.body.readUtf8()).getString("requestId")

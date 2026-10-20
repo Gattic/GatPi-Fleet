@@ -1,8 +1,7 @@
 // Shared, terminal-independent view of this machine and the remote hosts. Each client owns its lifecycle.
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { socketDir } from "../protocol/index.ts";
+import { cacheDir, socketDir } from "../protocol/index.ts";
 import { launchSession } from "./actions/launch.ts";
 import { agentDir, RecoveryJournal, type InterruptedSession } from "./recovery.ts";
 import { BridgeHub, pidAlive } from "./collectors/bridges.ts";
@@ -14,7 +13,7 @@ import { hostRows, rowCwd, rowIncarnation, rowLabel, SAMPLE_MS, type SessionRow,
 import { Network } from "./network.ts";
 import { relayCommand } from "./remote/hosts.ts";
 import { RemoteHost } from "./remote/host.ts";
-import { UsageIndex } from "./usage/usage-index.ts";
+import { UsageIndex, USAGE_RETENTION_MS } from "./usage/usage-index.ts";
 
 export class ManagerRuntime {
 	readonly sessionRoot: string;
@@ -41,7 +40,7 @@ export class ManagerRuntime {
 		this.sessionRoot = join(agent, "sessions");
 		this.recovery = new RecoveryJournal(agent);
 		this.runtimeDir = options.runtimeDir ?? socketDir();
-		this.cacheDir = options.cacheDir ?? join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "pi-dash");
+		this.cacheDir = options.cacheDir ?? cacheDir();
 		this.store = new Store(() => this.changed());
 		this.dismissals = new Dismissals(join(this.runtimeDir, "dismissed"));
 		this.hub = new BridgeHub(this.runtimeDir, {
@@ -58,13 +57,17 @@ export class ManagerRuntime {
 					onBye: (pid, reason) => this.store.bye(pid, reason, name),
 					onDisconnect: (pid, alive) => this.store.disconnect(pid, alive, name),
 					onIncompatible: (pid, version) => this.store.incompatible(pid, version, name),
+					onUsage: (delta) => {
+						this.usage.applyRemote(name, delta);
+						this.changed();
+					},
 					onLost: () => this.store.hostLost(name),
 				}, (options.relay ?? relayCommand)(name)),
 			]),
 		);
 		this.network = new Network(this.hub, remotes);
 		this.quota = new QuotaMonitor(join(agent, "multi-login-state.json"), join(agent, "auth.json"));
-		this.usage = new UsageIndex({ sessionRoot: this.sessionRoot, cachePath: join(this.cacheDir, options.cacheName ?? "usage-index.json"), retentionMs: 30 * 86_400_000, onUpdate: () => this.changed() });
+		this.usage = new UsageIndex({ sessionRoot: this.sessionRoot, cachePath: join(this.cacheDir, options.cacheName ?? "usage-index.json"), retentionMs: USAGE_RETENTION_MS, onUpdate: () => this.changed() });
 	}
 
 	/** Offline hosts offer no actionable recovery until their process identities can be checked. */
@@ -138,7 +141,7 @@ export class ManagerRuntime {
 			for (const remote of this.network.remotes.values()) this.sampleRemote(remote);
 		};
 		const slow = () => { void this.quota.refresh().then(() => this.changed()); void this.gpu.poll(); };
-		// Usage comes from this machine's session files; remote sessions report theirs through their bridges.
+		// This machine's session files; each remote host's relay indexes its own and pushes the result.
 		const usage = () => this.usage.scan([...new Set([...this.usage.cwds(), ...hostRows(this.store.ordered(), undefined).flatMap((row) => rowCwd(row) ?? [])])]);
 		for (const remote of this.network.remotes.values()) remote.start();
 		this.hub.scan();

@@ -61,7 +61,7 @@ export function sessionUsage(row: SessionRow, usage: UsageIndex): SessionUsage {
 	const bridge = row.bridge;
 	const direct = { cost: bridge?.usage.direct.cost ?? 0, tokens: bridge?.usage.direct.tokens ?? 0 };
 	const indirect = { cost: bridge?.usage.indirect.cost ?? 0, tokens: bridge?.usage.indirect.tokens ?? 0 };
-	const sub = bridge ? usage.subagentUsage(bridge.sessionId) : undefined;
+	const sub = bridge ? usage.subagentUsage(row.host, bridge.sessionId) : undefined;
 	const subagents = { cost: sub?.cost ?? 0, tokens: sub?.tokens ?? 0 };
 	return { direct, indirect, subagents, total: { cost: direct.cost + indirect.cost + subagents.cost, tokens: direct.tokens + indirect.tokens + subagents.tokens } };
 }
@@ -139,7 +139,7 @@ export function hostLine(ctx: ViewContext, width: number): string {
 	const parts: string[] = [];
 	const today = ctx.usage.total(startOfToday(ctx.now));
 	const hourly = ctx.usage.series(startOfToday(ctx.now), ctx.now, 1, "cost");
-	const todayText = ctx.usage.scanned || ctx.usage.files.size ? `${theme.muted("today")} ${theme.text(`$${fmtCost(today.cost)}`)}${spark ? ` ${sparkline(hourly, Math.min(12, Math.max(1, hourly.length)))}` : ""}` : theme.dim("today …");
+	const todayText = ctx.usage.scanned || ctx.usage.files.size ? `${theme.muted(ctx.remotes.size ? "today (all)" : "today")} ${theme.text(`$${fmtCost(today.cost)}`)}${spark ? ` ${sparkline(hourly, Math.min(12, Math.max(1, hourly.length)))}` : ""}` : theme.dim("today …");
 	parts.push(`${theme.muted("cpu")} ${trend(ctx.store.hostCpu.last(spark * 15))}${theme.text(`${Math.round((host?.cpu ?? 0) * 100)}%`)}`);
 	if (host) parts.push(`${theme.muted("mem")} ${gauge(host.memUsed / Math.max(1, host.memTotal), width >= 120 ? 12 : 8)} ${theme.text(fmtBytes(host.memUsed))}${theme.dim(`/${fmtBytes(host.memTotal)}`)}`);
 	const gpu = ctx.store.gpu;

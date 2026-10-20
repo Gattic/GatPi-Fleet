@@ -8,12 +8,15 @@ import { UncertainCommandError } from "../collectors/bridges.ts";
 import type { HostSample, Sample, SampleTarget } from "../collectors/procs.ts";
 import { relayCommand } from "./hosts.ts";
 import type { RecoveryRecord } from "../recovery.ts";
+import type { UsageDelta } from "../usage/types.ts";
 
 export interface RemoteEvents {
 	onState(pid: number, state: SessionState): void;
 	onBye(pid: number, reason: string): void;
 	onDisconnect(pid: number, alive: boolean): void;
 	onIncompatible(pid: number, version: number): void;
+	/** A change to the host's usage index. */
+	onUsage(delta: UsageDelta): void;
 	/** The link went down: the host's sessions are unknown until it is back. */
 	onLost(): void;
 }
@@ -42,11 +45,11 @@ function withoutControls(text: string): string {
 	return stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
 }
 
-/** Every string inside a message from the relay, without control sequences. */
+/** Every string inside a message from the relay, keys included (usage is keyed by model), without control sequences. */
 function sanitize(value: unknown): unknown {
 	if (typeof value === "string") return withoutControls(value);
 	if (Array.isArray(value)) return value.map(sanitize);
-	if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitize(item)]));
+	if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, item]) => [withoutControls(key), sanitize(item)]));
 	return value;
 }
 
@@ -204,6 +207,9 @@ export class RemoteHost {
 				return;
 			case "incompatible":
 				this.events.onIncompatible(message.pid, message.version);
+				return;
+			case "usage":
+				this.events.onUsage(message);
 				return;
 			case "result": {
 				const pending = this.pending.get(message.id);

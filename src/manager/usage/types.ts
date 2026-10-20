@@ -8,6 +8,8 @@ export interface UsageBucket {
 /** Hourly usage of one session (or subagent session) file. */
 export interface FileUsage {
 	path: string;
+	/** The remote host (hosts.json name) whose file this is; unset for this machine's. Paths only identify a file within their host. */
+	host?: string;
 	kind: "session" | "subagent";
 	cwd?: string;
 	sessionId?: string;
@@ -38,4 +40,14 @@ export interface IndexUpdate {
 	/** True when this update concludes a scan. */
 	scanned: boolean;
 	durationMs: number;
+}
+
+/** A change to a remote host's usage index, as its relay sends it. */
+export interface UsageDelta {
+	/** The first message of a relay process: it replaces whatever an earlier link delivered. */
+	reset: boolean;
+	changed: FileUsage[];
+	removed: string[];
+	/** True when this delta concludes a scan. */
+	scanned: boolean;
 }

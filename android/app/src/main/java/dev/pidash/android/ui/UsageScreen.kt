@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.pidash.android.DashViewModel
 import dev.pidash.android.Metric
+import dev.pidash.android.RemoteUsageHost
 import dev.pidash.android.UsageItem
 import dev.pidash.android.UsageRange
 import dev.pidash.android.UsageReport
@@ -72,7 +73,7 @@ internal fun UsageScreen(vm: DashViewModel, fresh: Boolean) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Usage", style = MaterialTheme.typography.headlineSmall)
-                    Text(report?.let { "pi's API usage on the host, as of ${clock(it.at)}" } ?: "pi's API usage on the host",
+                    Text(report?.let { "pi's API usage on the host${if (it.hosts.isEmpty()) "" else " and its remote hosts"}, as of ${clock(it.at)}" } ?: "pi's API usage on the host",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = vm::refreshUsage, enabled = fresh && !busy) { Icon(Icons.Filled.Refresh, "Refresh usage") }
@@ -82,18 +83,19 @@ internal fun UsageScreen(vm: DashViewModel, fresh: Boolean) {
             if (!busy) item { Hint("Usage was not loaded. Refresh to try again.") }
             return@LazyColumn
         }
-        if (report.indexing) item { Hint("Indexing the host's session files; totals are still growing.") }
+        if (report.indexing) item { Hint("Indexing session files; totals are still growing.") }
         item { QuotaCard(report, now) }
         item { CooldownCard(report) }
         item { Selection(range, metric, onRange = { vm.usageRange.value = it }, onMetric = { vm.usageMetric.value = it }) }
         val selected = report.range(range)
         item { TotalCard(selected, metric) }
+        if (report.hosts.isNotEmpty()) item { HostsCard(selected, metric, report.hosts, vm.repository.host()?.removePrefix("https://") ?: "Gateway host") }
         item { SessionsCard(selected.measure(metric).sessions, metric, report.indexing) }
         item { ModelsCard(selected, metric) }
         item {
             Hint("$ is pi's API-equivalent cost, not a subscription invoice; unpriced models count in tokens only. " +
-                "Subagents count toward the session that spawned them. Counts the host's own session files and logins " +
-                "(not its remote hosts'); 30 days kept.")
+                "Subagents count toward the session that spawned them. Counts the session files of the host and its remote hosts; " +
+                "quotas and cooldowns are the host's own logins. 30 days kept.")
         }
     }
 }
@@ -189,6 +191,22 @@ private fun TotalCard(range: UsageRange, metric: Metric) {
     }
 }
 
+/** Each machine's share, with the remote hosts whose usage is incomplete marked and explained. */
+@Composable
+private fun HostsCard(range: UsageRange, metric: Metric, remotes: List<RemoteUsageHost>, gateway: String) {
+    val hosts = range.measure(metric).hosts
+    val total = range.total(metric)
+    SectionCard("${if (metric == Metric.Cost) "Cost" else "Tokens"} by host") {
+        hosts.forEach { usage ->
+            val gap = remotes.firstOrNull { it.host == usage.host }?.gap
+            val share = if (total > 0) usage.value / total else 0.0
+            UsageBar(usage.host ?: gateway, "${(share * 100).roundToInt()}% · ${amount(metric, usage.value)}", share, Pi.Accent,
+                if (gap == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, note = gap, labelLines = 2)
+        }
+        if (remotes.any { it.gap != null }) Hint("A host that is offline, connecting or still indexing shows what it has reported so far; its totals are incomplete.", icon = null)
+    }
+}
+
 /** One bar per bucket, oldest at the left, scaled to the largest. */
 @Composable
 private fun BarChart(values: List<Double>, color: Color, modifier: Modifier = Modifier) {
@@ -236,14 +254,19 @@ private fun ModelsCard(range: UsageRange, metric: Metric) {
     }
 }
 
+/**
+ * The label gets only the width the value leaves, so [note] goes under the bar, not in the row, and a label that
+ * identifies a machine may take [labelLines] lines: with a large system font a single line holds about six characters.
+ */
 @Composable
-private fun UsageBar(label: String, value: String, fraction: Double, color: Color, labelColor: Color) {
+private fun UsageBar(label: String, value: String, fraction: Double, color: Color, labelColor: Color, note: String? = null, labelLines: Int = 1) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = labelColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = labelColor, maxLines = labelLines, overflow = TextOverflow.Ellipsis)
             Text(value, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Meter(fraction, color)
+        if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = Pi.Waiting)
     }
 }
 

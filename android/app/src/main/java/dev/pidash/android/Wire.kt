@@ -68,13 +68,16 @@ data class History(val id: String, val title: String, val blocked: String?)
 enum class Metric { Cost, Tokens }
 /** A session's ([open] while it runs) or a model's usage in one measure. */
 data class UsageItem(val label: String, val value: Double, val open: Boolean = false)
-/** Usage in one measure over a range: per chart bucket (oldest first), and the largest sessions and models. */
-data class UsageMeasure(val series: List<Double>, val sessions: List<UsageItem>, val models: List<UsageItem>) {
+/** One machine's usage in one measure; [host] is null for the gateway's own machine, else a remote host's name. */
+data class HostUsage(val host: String?, val value: Double)
+/** Usage in one measure over a range: per chart bucket (oldest first), the largest sessions and models, and each machine's share. */
+data class UsageMeasure(val series: List<Double>, val sessions: List<UsageItem>, val models: List<UsageItem>, val hosts: List<HostUsage>) {
     companion object {
         fun parse(j: JSONObject) = UsageMeasure(
             j.getJSONArray("series").let { a -> (0 until a.length()).map(a::getDouble) },
             j.getJSONArray("sessions").objects().map { UsageItem(it.getString("label"), it.getDouble("value"), it.getBoolean("open")) },
             j.getJSONArray("models").objects().map { UsageItem(it.getString("name"), it.getDouble("value")) },
+            j.getJSONArray("hosts").objects().map { HostUsage(it.text("host"), it.getDouble("value")) },
         )
     }
 }
@@ -113,19 +116,40 @@ data class QuotaAccount(val provider: String, val status: String, val fetchedAt:
 }
 /** A local account cooldown, not a provider quota reset; [until] is host epoch milliseconds. */
 data class AccountCooldown(val provider: String, val until: Long)
-/** The host's usage view as of [at]; null cooldowns means unavailable, not an empty list. */
-data class UsageReport(val at: Long, val indexing: Boolean, val quota: List<QuotaAccount>?, val cooldowns: List<AccountCooldown>?, val ranges: List<UsageRange>) {
+/** A remote host of the gateway: its link [status] ("online", "connecting" or "offline") and whether its first scan of session files is still running. */
+data class RemoteUsageHost(val host: String, val status: String, val indexing: Boolean) {
+    /** What keeps its usage incomplete: not linked, or not fully indexed yet; null when complete. */
+    val gap: String? get() = when {
+        status == "offline" -> "offline"
+        status == "connecting" -> "connecting"
+        indexing -> "indexing"
+        else -> null
+    }
+    companion object {
+        fun parse(j: JSONObject): RemoteUsageHost {
+            val status = j.getString("status")
+            require(status in listOf("online", "connecting", "offline")) { "Unsupported host status" }
+            return RemoteUsageHost(j.getString("host"), status, j.getBoolean("indexing"))
+        }
+    }
+}
+/** The host's usage view as of [at], counting [hosts], its remote hosts, beside itself; null cooldowns means unavailable, not an empty list. */
+data class UsageReport(val at: Long, val indexing: Boolean, val quota: List<QuotaAccount>?, val cooldowns: List<AccountCooldown>?, val hosts: List<RemoteUsageHost>, val ranges: List<UsageRange>) {
     fun range(id: String): UsageRange = ranges.first { it.range == id }
     companion object {
         val RANGES = listOf("today", "7d", "30d")
         fun parse(j: JSONObject): UsageReport {
+            // Both `hosts` fields arrive together; a gateway without them predates remote-host usage. The status line
+            // shows this in two lines, so with a large system font it must be short, and the instruction first.
+            require(j.has("hosts")) { "Update the host: its usage report is outdated" }
             val ranges = j.getJSONArray("ranges").objects().map(UsageRange::parse)
             require(ranges.map { it.range } == RANGES) { "Unsupported usage ranges" }
             val quota = if (j.isNull("quota")) null else j.getJSONArray("quota").objects().map(QuotaAccount::parse)
             val cooldowns = if (j.isNull("cooldowns")) null else j.getJSONArray("cooldowns").objects().map {
                 AccountCooldown(it.getString("provider"), it.getLong("until"))
             }
-            return UsageReport(j.getLong("at"), j.getBoolean("indexing"), quota, cooldowns, ranges)
+            val hosts = j.getJSONArray("hosts").objects().map(RemoteUsageHost::parse)
+            return UsageReport(j.getLong("at"), j.getBoolean("indexing"), quota, cooldowns, hosts, ranges)
         }
     }
 }

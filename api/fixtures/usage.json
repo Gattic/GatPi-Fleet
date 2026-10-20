@@ -1,6 +1,18 @@
 {
   "at": 1768478400000,
   "indexing": false,
+  "hosts": [
+    {
+      "host": "box00",
+      "status": "online",
+      "indexing": false
+    },
+    {
+      "host": "boxhome",
+      "status": "offline",
+      "indexing": false
+    }
+  ],
   "quota": [
     {
       "provider": "anthropic",
@@ -47,8 +59,8 @@
       "range": "today",
       "bucketHours": 1,
       "total": {
-        "cost": 3.25,
-        "tokens": 2100000,
+        "cost": 4.75,
+        "tokens": 3100000,
         "cacheHit": 0.75
       },
       "cost": {
@@ -65,19 +77,38 @@
           0,
           0,
           0.25,
-          3
+          4.5
         ],
         "sessions": [
           {
             "label": "pi-dash",
             "open": true,
             "value": 3.25
+          },
+          {
+            "label": "train@box00",
+            "open": true,
+            "value": 1.5
           }
         ],
         "models": [
           {
             "name": "claude-opus",
+            "value": 4.75
+          }
+        ],
+        "hosts": [
+          {
+            "host": null,
             "value": 3.25
+          },
+          {
+            "host": "box00",
+            "value": 1.5
+          },
+          {
+            "host": "boxhome",
+            "value": 0
           }
         ]
       },
@@ -95,19 +126,38 @@
           0,
           0,
           100000,
-          2000000
+          3000000
         ],
         "sessions": [
           {
             "label": "pi-dash",
             "open": true,
             "value": 2100000
+          },
+          {
+            "label": "train@box00",
+            "open": true,
+            "value": 1000000
           }
         ],
         "models": [
           {
             "name": "claude-opus",
+            "value": 3100000
+          }
+        ],
+        "hosts": [
+          {
+            "host": null,
             "value": 2100000
+          },
+          {
+            "host": "box00",
+            "value": 1000000
+          },
+          {
+            "host": "boxhome",
+            "value": 0
           }
         ]
       }
@@ -116,8 +166,8 @@
       "range": "7d",
       "bucketHours": 6,
       "total": {
-        "cost": 3.25,
-        "tokens": 8100000,
+        "cost": 5.5,
+        "tokens": 11600000,
         "cacheHit": 0.75
       },
       "cost": {
@@ -141,6 +191,7 @@
           0,
           0,
           0,
+          0.75,
           0,
           0,
           0,
@@ -148,20 +199,43 @@
           0,
           0,
           0,
-          0,
-          3.25
+          4.75
         ],
         "sessions": [
           {
             "label": "pi-dash",
             "open": true,
             "value": 3.25
+          },
+          {
+            "label": "train@box00",
+            "open": true,
+            "value": 1.5
+          },
+          {
+            "label": "notes@boxhome › Release notes",
+            "open": false,
+            "value": 0.75
           }
         ],
         "models": [
           {
             "name": "claude-opus",
+            "value": 5.5
+          }
+        ],
+        "hosts": [
+          {
+            "host": null,
             "value": 3.25
+          },
+          {
+            "host": "box00",
+            "value": 1.5
+          },
+          {
+            "host": "boxhome",
+            "value": 0.75
           }
         ]
       },
@@ -186,15 +260,15 @@
           0,
           0,
           0,
+          500000,
+          0,
+          0,
+          8000000,
           0,
           0,
           0,
-          6000000,
           0,
-          0,
-          0,
-          0,
-          2100000
+          3100000
         ],
         "sessions": [
           {
@@ -206,16 +280,45 @@
             "label": "pi-dash",
             "open": true,
             "value": 2100000
+          },
+          {
+            "label": "train@box00 › Evaluate the run",
+            "open": false,
+            "value": 2000000
+          },
+          {
+            "label": "train@box00",
+            "open": true,
+            "value": 1000000
+          },
+          {
+            "label": "notes@boxhome › Release notes",
+            "open": false,
+            "value": 500000
           }
         ],
         "models": [
           {
             "name": "gpt-6",
-            "value": 6000000
+            "value": 8000000
           },
           {
             "name": "claude-opus",
-            "value": 2100000
+            "value": 3600000
+          }
+        ],
+        "hosts": [
+          {
+            "host": null,
+            "value": 8100000
+          },
+          {
+            "host": "box00",
+            "value": 3000000
+          },
+          {
+            "host": "boxhome",
+            "value": 500000
           }
         ]
       }
@@ -224,8 +327,8 @@
       "range": "30d",
       "bucketHours": 24,
       "total": {
-        "cost": 3.25,
-        "tokens": 8100000,
+        "cost": 5.5,
+        "tokens": 11600000,
         "cacheHit": 0.75
       },
       "cost": {
@@ -257,21 +360,45 @@
           0,
           0,
           0,
+          0.75,
           0,
-          0,
-          3.25
+          4.75
         ],
         "sessions": [
           {
             "label": "pi-dash",
             "open": true,
             "value": 3.25
+          },
+          {
+            "label": "train@box00",
+            "open": true,
+            "value": 1.5
+          },
+          {
+            "label": "notes@boxhome › Release notes",
+            "open": false,
+            "value": 0.75
           }
         ],
         "models": [
           {
             "name": "claude-opus",
+            "value": 5.5
+          }
+        ],
+        "hosts": [
+          {
+            "host": null,
             "value": 3.25
+          },
+          {
+            "host": "box00",
+            "value": 1.5
+          },
+          {
+            "host": "boxhome",
+            "value": 0.75
           }
         ]
       },
@@ -304,9 +431,9 @@
           0,
           0,
           0,
-          0,
-          6000000,
-          2100000
+          500000,
+          8000000,
+          3100000
         ],
         "sessions": [
           {
@@ -318,16 +445,45 @@
             "label": "pi-dash",
             "open": true,
             "value": 2100000
+          },
+          {
+            "label": "train@box00 › Evaluate the run",
+            "open": false,
+            "value": 2000000
+          },
+          {
+            "label": "train@box00",
+            "open": true,
+            "value": 1000000
+          },
+          {
+            "label": "notes@boxhome › Release notes",
+            "open": false,
+            "value": 500000
           }
         ],
         "models": [
           {
             "name": "gpt-6",
-            "value": 6000000
+            "value": 8000000
           },
           {
             "name": "claude-opus",
-            "value": 2100000
+            "value": 3600000
+          }
+        ],
+        "hosts": [
+          {
+            "host": null,
+            "value": 8100000
+          },
+          {
+            "host": "box00",
+            "value": 3000000
+          },
+          {
+            "host": "boxhome",
+            "value": 500000
           }
         ]
       }

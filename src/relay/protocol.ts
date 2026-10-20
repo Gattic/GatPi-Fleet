@@ -6,10 +6,11 @@ import type { RecoveryRecord } from "../manager/recovery.ts";
 import type { LaunchOptions } from "../manager/actions/launch.ts";
 import type { Project, SessionSummary } from "../manager/actions/sessions.ts";
 import type { HostSample, PiProcess, ResourceSample, SampleTarget } from "../manager/collectors/procs.ts";
+import type { FileUsage, UsageDelta } from "../manager/usage/types.ts";
 import type { Command, SessionIdentity, SessionPatch, SessionState } from "../protocol/index.ts";
 
 /** Bumped on any change to these messages; the bridge protocol version is checked separately. */
-export const RELAY_VERSION = 2;
+export const RELAY_VERSION = 3;
 
 export interface GpuSummary {
 	utilization: number;
@@ -56,6 +57,8 @@ export type RelayMessage =
 	| { type: "bye"; pid: number; reason: string }
 	| { type: "disconnect"; pid: number; alive: boolean }
 	| { type: "incompatible"; pid: number; version: number }
+	/** The host's usage index changes, pushed as its session files are indexed. */
+	| ({ type: "usage" } & UsageDelta)
 	| { type: "result"; id: number; ok: true; value: unknown }
 	/** `uncertain`: the command may have run (UncertainCommandError). */
 	| { type: "result"; id: number; ok: false; error: string; uncertain?: boolean };
@@ -70,6 +73,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isId(value: unknown): value is number {
 	return Number.isSafeInteger(value) && (value as number) > 0;
+}
+
+/** Splits files into messages of about `maxChars` (one larger file gets its own), so a first scan stays under the receiver's line limit. */
+export function chunkUsage(files: readonly FileUsage[], maxChars: number): FileUsage[][] {
+	const messages: FileUsage[][] = [[]];
+	let chars = 0;
+	for (const file of files) {
+		const size = JSON.stringify(file).length;
+		if (chars + size > maxChars && messages.at(-1)!.length) {
+			messages.push([]);
+			chars = 0;
+		}
+		messages.at(-1)!.push(file);
+		chars += size;
+	}
+	return messages;
+}
+
+function optionalString(value: unknown): boolean {
+	return value === undefined || typeof value === "string";
+}
+
+/** What aggregation reads of an indexed file. A malformed one must not throw while the dashboard draws, and an hour that is not a number would be counted in every range. */
+function isFileUsage(value: unknown): boolean {
+	if (!isRecord(value) || typeof value.path !== "string" || (value.kind !== "session" && value.kind !== "subagent") || !isRecord(value.hours)) return false;
+	if (![value.cwd, value.sessionId, value.parentSessionId, value.name, value.firstPrompt].every(optionalString)) return false;
+	return Object.entries(value.hours).every(
+		([hour, models]) => /^\d+$/.test(hour) && isRecord(models) && Object.values(models).every((bucket) => isRecord(bucket) && [bucket.tokens, bucket.cost, bucket.cacheRead, bucket.prompt].every((amount) => typeof amount === "number" && Number.isFinite(amount))),
+	);
 }
 
 /**
@@ -95,6 +127,8 @@ export function parseRelayMessage(value: unknown): RelayMessage | undefined {
 			return isId(value.pid) && typeof value.alive === "boolean" ? message : undefined;
 		case "incompatible":
 			return isId(value.pid) && typeof value.version === "number" ? message : undefined;
+		case "usage":
+			return typeof value.reset === "boolean" && typeof value.scanned === "boolean" && Array.isArray(value.removed) && value.removed.every((path) => typeof path === "string") && Array.isArray(value.changed) && value.changed.every(isFileUsage) ? message : undefined;
 		case "result":
 			if (!isId(value.id)) return undefined;
 			if (value.ok === true) return message;

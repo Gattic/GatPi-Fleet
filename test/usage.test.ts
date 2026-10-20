@@ -111,6 +111,35 @@ test("UsageIndex folds subagent usage into the parent session", () => {
 	assert.equal(owners.size, 1);
 	assert.equal(owners.get("parent")?.usage.cost, 3.5);
 	assert.equal(index.byOwner(T0 - 1, "anthropic").get("parent")?.usage.cost, 3, "provider filter keeps only that provider's models");
-	assert.equal(index.subagentUsage("parent").cost, 1.5);
+	assert.equal(index.subagentUsage(undefined, "parent").cost, 1.5);
 	assert.deepEqual(index.series(T0, T0 + 3_600_000, 1, "cost"), [3.5, 0]);
+});
+
+test("UsageIndex counts remote hosts' files beside this machine's without mixing them up", () => {
+	const index = new UsageIndex({ sessionRoot: "", cachePath: "", retentionMs: 0, onUpdate: () => {} });
+	const hour = String(Math.floor(T0 / 3_600_000));
+	const bucket = (cost: number) => ({ tokens: cost * 1000, cost, cacheRead: 0, prompt: 0 });
+	const file = (cost: number, kind: "session" | "subagent" = "session") => ({ path: "/home/u/.pi/agent/sessions/s.jsonl", kind, sessionId: "same", parentSessionId: "same", cwd: "/home/u/p", size: 1, mtimeMs: 1, offset: 1, hours: { [hour]: { "anthropic/opus": bucket(cost) } } });
+	index.apply({ type: "update", scanned: true, durationMs: 0, removed: [], changed: [file(1)] });
+	// The same path and session id on two hosts are three different files and sessions.
+	index.applyRemote("box00", { reset: true, changed: [file(2), { ...file(4, "subagent"), path: "/sub.jsonl" }], removed: [], scanned: false });
+	index.applyRemote("boxhome", { reset: true, changed: [file(8)], removed: [], scanned: true });
+
+	assert.equal(index.files.size, 4);
+	assert.deepEqual([...index.byHost(T0 - 1)].map(([host, usage]) => [host, usage.cost]), [[undefined, 1], ["box00", 6], ["boxhome", 8]]);
+	assert.equal(index.total(T0 - 1).cost, 15);
+	assert.deepEqual([...index.byOwner(T0 - 1)].map(([owner, entry]) => [owner, entry.usage.cost]).sort(), [["box00:same", 6], ["boxhome:same", 8], ["same", 1]]);
+	assert.equal(index.subagentUsage("box00", "same").cost, 4);
+	assert.equal(index.subagentUsage(undefined, "same").cost, 0);
+	assert.deepEqual(index.cwds(), ["/home/u/p"], "only this machine's directories exist here to look for subagents in");
+	assert.deepEqual([index.hostScanned("box00"), index.hostScanned("boxhome")], [false, true]);
+
+	// Deltas change the host's files only; a new relay's first message replaces them all.
+	index.applyRemote("box00", { reset: false, changed: [file(3)], removed: ["/sub.jsonl"], scanned: true });
+	assert.equal(index.byHost(T0 - 1).get("box00")?.cost, 3);
+	assert.equal(index.hostScanned("box00"), true);
+	index.applyRemote("box00", { reset: true, changed: [], removed: [], scanned: false });
+	assert.equal(index.byHost(T0 - 1).get("box00"), undefined);
+	assert.equal(index.hostScanned("box00"), false);
+	assert.deepEqual([...index.byHost(T0 - 1)].map(([host, usage]) => [host, usage.cost]), [[undefined, 1], ["boxhome", 8]]);
 });

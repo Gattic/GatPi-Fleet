@@ -10,6 +10,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { ManagerRuntime } from "../src/manager/runtime.ts";
+import { usageReport } from "../src/server/usage.ts";
 import { UncertainCommandError } from "../src/manager/collectors/bridges.ts";
 import { resumeBlocked } from "../src/manager/actions/launch.ts";
 import { sessionDirName } from "../src/manager/actions/sessions.ts";
@@ -208,7 +209,11 @@ test("the gateway lists, drives and dismisses the sessions of remote hosts", asy
 	const sessionDir = join(boxAgent, "sessions", sessionDirName(project));
 	mkdirSync(sessionDir, { recursive: true });
 	const file = join(sessionDir, "a.jsonl");
-	writeFileSync(file, `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: project })}\n`);
+	const spent = { input: 100, output: 50, cacheRead: 1000, cacheWrite: 0, totalTokens: 1150, cost: { total: 0.5 } };
+	writeFileSync(file, [
+		{ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: project },
+		{ type: "message", id: "m1", parentId: null, timestamp: new Date().toISOString(), message: { role: "assistant", content: [], provider: "anthropic", model: "opus", usage: spent, stopReason: "stop", timestamp: Date.now() } },
+	].map((entry) => `${JSON.stringify(entry)}\n`).join(""));
 	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "a", sessionFile: file, cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
 	const received: ClientMessage[] = [];
 	let bridgeSocket: Socket;
@@ -224,7 +229,7 @@ test("the gateway lists, drives and dismisses the sessions of remote hosts", asy
 	});
 	await new Promise<void>((resolve) => bridge.listen(socketPath(process.pid, join(boxRun, "pi-dash")), resolve));
 	t.after(() => { bridgeSocket?.destroy(); bridge.close(); });
-	const relay = (host: string) => host === "box" ? ["env", `XDG_RUNTIME_DIR=${boxRun}`, `PI_CODING_AGENT_DIR=${boxAgent}`, process.execPath, RELAY] : [process.execPath, "-e", "process.exit(3)"];
+	const relay = (host: string) => host === "box" ? ["env", `XDG_RUNTIME_DIR=${boxRun}`, `XDG_CACHE_HOME=${join(dir, "box-cache")}`, `PI_CODING_AGENT_DIR=${boxAgent}`, process.execPath, RELAY] : [process.execPath, "-e", "process.exit(3)"];
 	const runtime = new ManagerRuntime({ runtimeDir: join(dir, "run"), agent: join(dir, "agent"), cacheDir: join(dir, "cache"), hosts: ["box", "gone"], relay });
 	t.after(() => runtime.close());
 	for (const remote of runtime.network.remotes.values()) remote.start();
@@ -233,6 +238,13 @@ test("the gateway lists, drives and dismisses the sessions of remote hosts", asy
 	const sessions = new Sessions(runtime);
 	const [remote] = sessions.overview();
 	assert.equal(remote.label, "remote-project@box");
+
+	// The host's relay indexes its own session files, and the gateway counts them as that host's, under its open session.
+	await until(() => runtime.usage.hostScanned("box"));
+	const [today] = usageReport(runtime).ranges;
+	assert.deepEqual(today.cost.hosts, [{ host: null, value: 0 }, { host: "box", value: 0.5 }, { host: "gone", value: 0 }]);
+	assert.deepEqual(today.cost.sessions, [{ label: "remote-project@box", open: true, value: 0.5 }]);
+	assert.equal(usageReport(runtime).hosts.find((host) => host.host === "box")?.indexing, false);
 	assert.notEqual(remote.id, ref(`${process.pid}:a:${state.instanceId}`), "the same pid on this machine would be another session");
 
 	// Git follows the same remote session, not a directory on the gateway's own host.
@@ -448,6 +460,17 @@ test("mobile contract fixtures and projections keep missing metrics missing and 
 	assert.deepEqual(schemas, JSON.parse(JSON.stringify({ command: CommandRequestSchema, git: GitRequestSchema, launch: LaunchRequestSchema, subscribe: SubscriptionSchema })));
 });
 
+test("usage is still indexing until this machine and every connected host have scanned; a host that is not connected is not waited for", () => {
+	const runtime = new ManagerRuntime({ hosts: ["up", "down"] });
+	runtime.network.remote("up").status = { kind: "online", since: 1, hostname: "up" };
+	runtime.network.remote("down").status = { kind: "offline", since: 1, error: "unreachable" };
+	const report = () => usageReport(runtime, Date.UTC(2026, 0, 15, 12));
+	runtime.usage.apply({ type: "update", scanned: true, durationMs: 0, removed: [], changed: [] });
+	assert.deepEqual([report().indexing, report().hosts.map((host) => host.indexing)], [true, [true, false]]);
+	runtime.usage.applyRemote("up", { reset: true, changed: [], removed: [], scanned: true });
+	assert.deepEqual([report().indexing, report().hosts.map((host) => host.indexing)], [false, [false, false]]);
+});
+
 test("the usage tab gets the dashboard's usage view as data", (t) => {
 	const tz = process.env.TZ;
 	process.env.TZ = "UTC";
@@ -459,18 +482,23 @@ test("the usage tab gets the dashboard's usage view as data", (t) => {
 	const fixture = JSON.parse(readFileSync(new URL("../api/fixtures/usage.json", import.meta.url), "utf8"));
 	assert.deepEqual(fixture, JSON.parse(JSON.stringify(report)), "regenerate with npm run api:generate");
 	const [today, week] = report.ranges;
-	// An open session is named as in the session list, and its subagents count toward it.
-	assert.deepEqual(today.cost.sessions, [{ label: "pi-dash", open: true, value: 3.25 }]);
-	assert.equal(today.cost.series.at(-1), 3);
-	// An ended session is named by project and first prompt. Without a price it has tokens, not cost.
-	assert.deepEqual(week.tokens.sessions.map((s) => s.label), ["site \u203a Fix the header", "pi-dash"]);
-	assert.deepEqual(week.cost.sessions.map((s) => s.label), ["pi-dash"]);
-	assert.deepEqual(week.tokens.models, [{ name: "gpt-6", value: 6e6 }, { name: "claude-opus", value: 2.1e6 }], "one model through two accounts is one model");
+	// An open session is named as in the session list, and its subagents count toward it. Remote hosts' sessions
+	// are counted too, named with their host as in the session list.
+	assert.deepEqual(today.cost.sessions, [{ label: "pi-dash", open: true, value: 3.25 }, { label: "train@box00", open: true, value: 1.5 }]);
+	assert.equal(today.cost.series.at(-1), 4.5);
+	// An ended session is named by project and first prompt (or name). Without a price it has tokens, not cost.
+	assert.deepEqual(week.tokens.sessions.map((s) => s.label), ["site \u203a Fix the header", "pi-dash", "train@box00 \u203a Evaluate the run", "train@box00", "notes@boxhome \u203a Release notes"]);
+	assert.deepEqual(week.cost.sessions.map((s) => s.label), ["pi-dash", "train@box00", "notes@boxhome \u203a Release notes"]);
+	assert.deepEqual(week.tokens.models, [{ name: "gpt-6", value: 8e6 }, { name: "claude-opus", value: 3.6e6 }], "one model through two accounts, or two hosts, is one model");
 	// 7 and 30 days are whole 6-hour and daily buckets; the last holds the latest 6 or 24 hours, not the current hour alone.
 	assert.equal(week.cost.series.length, 28);
-	assert.equal(week.cost.series.at(-1), 3.25);
+	assert.equal(week.cost.series.at(-1), 4.75);
 	assert.equal(report.ranges[2].tokens.series.length, 30);
-	assert.deepEqual(report.ranges[2].tokens.series.slice(-2), [6e6, 2.1e6]);
+	assert.deepEqual(report.ranges[2].tokens.series.slice(-2), [8e6, 3.1e6]);
+	// Each machine's share: this one (null), then the remote hosts in hosts.json order, with or without usage.
+	assert.deepEqual(today.cost.hosts, [{ host: null, value: 3.25 }, { host: "box00", value: 1.5 }, { host: "boxhome", value: 0 }]);
+	assert.deepEqual(week.tokens.hosts, [{ host: null, value: 8.1e6 }, { host: "box00", value: 3e6 }, { host: "boxhome", value: 5e5 }]);
+	assert.deepEqual(report.hosts, [{ host: "box00", status: "online", indexing: false }, { host: "boxhome", status: "offline", indexing: false }]);
 	assert.deepEqual(report.quota?.map(({ provider, status }) => ({ provider, status })), [{ provider: "anthropic", status: "fresh" }, { provider: "codex", status: "stale" }]);
 	assert.deepEqual(report.quota![0].windows.map((w) => w.usedPercent), [0, 57]);
 	assert.deepEqual(report.quota![0].windows[0], { label: "5h", usedPercent: 0, resetAt: null });

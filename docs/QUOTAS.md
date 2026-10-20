@@ -13,6 +13,11 @@ host time using elapsed time, not the phone's potentially different wall clock. 
 its monotonic receipt-time anchor are retained together across Activity recreation, so rotation
 cannot renew freshness or rewind reset countdowns. Only receiving another report replaces the anchor.
 
+Quotas are for **this machine's** logins. The Usage views' spend figures include the remote hosts'
+session files, but a login that exists only on a remote host is not polled: its credentials stay on
+that host and are never sent here. A provider reports its allowance per account, so an account that is
+logged in here shows its balance whichever host used it.
+
 ## Source and boundaries
 
 The narrowly scoped endpoint readers and normalization were adapted from

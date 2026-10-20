@@ -10,8 +10,10 @@ import { sessionDirName } from "../src/manager/actions/sessions.ts";
 import { UncertainCommandError } from "../src/manager/collectors/bridges.ts";
 import { type HostStatus, RemoteHost, type RemoteEvents } from "../src/manager/remote/host.ts";
 import { loadHosts, saveHosts, shellQuote, sshCommand } from "../src/manager/remote/hosts.ts";
+import type { UsageDelta } from "../src/manager/usage/types.ts";
+import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 import { type ClientMessage, emptyUsage, encodeMessage, LineDecoder, PROTOCOL_VERSION, type SessionState, socketPath } from "../src/protocol/index.ts";
-import { type GitMethod, RELAY_VERSION } from "../src/relay/protocol.ts";
+import { chunkUsage, type GitMethod, RELAY_VERSION } from "../src/relay/protocol.ts";
 import { RecoveryJournal } from "../src/manager/recovery.ts";
 
 const RELAY = fileURLToPath(new URL("../src/relay/main.ts", import.meta.url));
@@ -29,14 +31,16 @@ async function until<T>(check: () => T | false | undefined, timeout = 8000): Pro
 function recorder() {
 	const states: SessionState[] = [];
 	const log: string[] = [];
+	const usage: UsageDelta[] = [];
 	const events: RemoteEvents = {
 		onState: (_pid, state) => states.push(state),
 		onBye: (pid, reason) => log.push(`bye ${pid} ${reason}`),
 		onDisconnect: (pid, alive) => log.push(`disconnect ${pid} ${alive ? "alive" : "dead"}`),
 		onIncompatible: (pid, version) => log.push(`incompatible ${pid} v${version}`),
+		onUsage: (delta) => usage.push(delta),
 		onLost: () => log.push("lost"),
 	};
-	return { states, log, events };
+	return { states, log, usage, events };
 }
 
 test("a remote host's bridges, samples, listings and commands go through the relay", async (t) => {
@@ -76,7 +80,7 @@ test("a remote host's bridges, samples, listings and commands go through the rel
 	const { states, log, events } = recorder();
 	const bin = join(root, "bin"); mkdirSync(bin);
 	writeFileSync(join(bin, "screen"), '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; fi\nexit 0\n', { mode: 0o700 });
-	const remote = new RemoteHost("box", events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${runtime}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
+	const remote = new RemoteHost("box", events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${runtime}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `XDG_CACHE_HOME=${join(root, "cache")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
 	t.after(() => remote.close());
 	remote.start();
 	await until(() => remote.status.kind === "online" && states.length);
@@ -133,7 +137,7 @@ test("remote recovery discovers persisted records at relay startup and revalidat
 	const bin = join(root, "bin"); mkdirSync(bin);
 	const capture = join(root, "arguments");
 	writeFileSync(join(bin, "screen"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\nprintf '%s\\n' "$@" > '${capture}'\n`, { mode: 0o700 });
-	const remote = new RemoteHost("box", recorder().events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${join(root, "run")}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
+	const remote = new RemoteHost("box", recorder().events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${join(root, "run")}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `XDG_CACHE_HOME=${join(root, "cache")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
 	t.after(() => remote.close());
 	remote.start();
 	await until(() => remote.status.kind === "online");
@@ -147,6 +151,90 @@ test("remote recovery discovers persisted records at relay startup and revalidat
 	assert.deepEqual(remote.interrupted, []);
 	assert.equal(readFileSync(file, "utf8"), "saved transcript");
 	await assert.rejects(remote.request("recover", { instanceId: "killed" }), /recovery changed/);
+});
+
+test("a remote host's relay indexes its session files and pushes their usage", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-relay-usage-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const agent = join(root, "agent");
+	const project = join(root, "project");
+	mkdirSync(project);
+	const dir = join(agent, "sessions", sessionDirName(project));
+	mkdirSync(dir, { recursive: true });
+	const now = Date.now();
+	const session = (id: string, cost: number) => [
+		{ type: "session", version: 3, id, timestamp: new Date(now).toISOString(), cwd: project },
+		{ type: "message", id: "a1", parentId: null, timestamp: new Date(now).toISOString(), message: { role: "assistant", content: [], provider: "anthropic", model: "opus", usage: { input: 100, output: 50, cacheRead: 1000, cacheWrite: 0, totalTokens: 1150, cost: { total: cost } }, stopReason: "stop", timestamp: now } },
+	].map((entry) => `${JSON.stringify(entry)}\n`).join("");
+	writeFileSync(join(dir, "a.jsonl"), session("remote-session", 0.5));
+	const link = (cache: string) => {
+		const { usage, events } = recorder();
+		const remote = new RemoteHost("box", events, ["env", `XDG_RUNTIME_DIR=${join(root, "run")}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `XDG_CACHE_HOME=${join(root, cache)}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
+		t.after(() => remote.close());
+		remote.start();
+		return { remote, deltas: usage };
+	};
+
+	const first = link("cache");
+	await until(() => first.deltas.some((delta) => delta.scanned));
+	assert.equal(first.deltas[0].reset, true, "the first message replaces what an earlier relay delivered");
+	assert.deepEqual(first.deltas.slice(1).map((delta) => delta.reset), first.deltas.slice(1).map(() => false));
+
+	// Applied as pi-dash does, the host's usage is counted under its name.
+	const index = new UsageIndex({ sessionRoot: "", cachePath: "", retentionMs: 0, onUpdate: () => {} });
+	for (const delta of first.deltas) index.applyRemote("box", delta);
+	assert.equal(index.hostScanned("box"), true);
+	const [file] = [...index.files.values()];
+	assert.deepEqual([index.files.size, file.host, file.sessionId, file.cwd], [1, "box", "remote-session", project]);
+	assert.deepEqual([...index.byHost(0)].map(([host, total]) => [host, total.cost, total.tokens]), [["box", 0.5, 1150]]);
+	assert.deepEqual([...index.byModel(0).keys()], ["anthropic/opus"]);
+
+	// A new link (a reconnect, or a relay that lost its cache) replaces the host's usage: nothing is counted twice,
+	// and a file that is gone does not linger as spend nobody will ever remove.
+	first.remote.close();
+	rmSync(join(dir, "a.jsonl"));
+	writeFileSync(join(dir, "b.jsonl"), session("other-session", 0.25));
+	const second = link("fresh-cache");
+	await until(() => second.deltas.some((delta) => delta.scanned));
+	assert.equal(second.deltas[0].reset, true);
+	for (const delta of second.deltas) index.applyRemote("box", delta);
+	assert.deepEqual([...index.files.values()].map((entry) => entry.sessionId), ["other-session"]);
+	assert.deepEqual([...index.byHost(0)].map(([host, total]) => [host, total.cost]), [["box", 0.25]]);
+});
+
+test("a relay whose usage cache cannot be written still reports what it indexed", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-relay-nocache-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const agent = join(root, "agent");
+	const project = join(root, "project");
+	mkdirSync(project);
+	const dir = join(agent, "sessions", sessionDirName(project));
+	mkdirSync(dir, { recursive: true });
+	const now = Date.now();
+	writeFileSync(join(dir, "a.jsonl"), [
+		{ type: "session", version: 3, id: "s", timestamp: new Date(now).toISOString(), cwd: project },
+		{ type: "message", id: "a1", parentId: null, timestamp: new Date(now).toISOString(), message: { role: "assistant", content: [], provider: "anthropic", model: "opus", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0.25 } }, stopReason: "stop", timestamp: now } },
+	].map((entry) => `${JSON.stringify(entry)}\n`).join(""));
+	// A cache directory that cannot be created (its parent is a file), as on a read-only home or a full disk.
+	writeFileSync(join(root, "not-a-directory"), "");
+	const { usage, events } = recorder();
+	const remote = new RemoteHost("box", events, ["env", `XDG_RUNTIME_DIR=${join(root, "run")}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `XDG_CACHE_HOME=${join(root, "not-a-directory")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
+	t.after(() => remote.close());
+	remote.start();
+	// Without a cache the host would otherwise stay "indexing" for good, with no usage.
+	await until(() => usage.some((delta) => delta.scanned), 6000);
+	const index = new UsageIndex({ sessionRoot: "", cachePath: "", retentionMs: 0, onUpdate: () => {} });
+	for (const delta of usage) index.applyRemote("box", delta);
+	assert.equal(index.byHost(0).get("box")?.cost, 0.25);
+});
+
+test("usage goes out in messages that stay under the receiver's line limit", () => {
+	const file = (path: string, size: number) => ({ path, kind: "session" as const, size: 1, mtimeMs: 1, offset: 1, hours: { 1: { [`m/${"x".repeat(size)}`]: { tokens: 1, cost: 1, cacheRead: 0, prompt: 0 } } } });
+	const files = [file("a", 100), file("b", 100), file("c", 100), file("d", 600), file("e", 100)];
+	const limit = 2.5 * JSON.stringify(files[0]).length;
+	const messages = chunkUsage(files, limit);
+	assert.deepEqual(messages.map((group) => group.map((entry) => entry.path)), [["a", "b"], ["c"], ["d"], ["e"]], "a file larger than the limit goes alone");
+	assert.deepEqual(chunkUsage([], limit), [[]], "even nothing is one message: its flags still matter");
 });
 
 const HELLO = { type: "hello", version: RELAY_VERSION, bridge: PROTOCOL_VERSION, hostname: "box" };
@@ -191,6 +279,10 @@ test("a relay that sends something malformed, or speaks before greeting, loses i
 		["a snapshot for another pid", [HELLO, { type: "snapshot", pid: 8, state }], true],
 		["a result without an id", [HELLO, { type: "result", ok: true, value: 1 }], true],
 		["a snapshot before hello", [{ type: "snapshot", pid: 7, state }, HELLO], false],
+		["usage that is not a number", [HELLO, { type: "usage", reset: true, scanned: true, removed: [], changed: [{ path: "/a", kind: "session", hours: { 1: { "p/m": { tokens: "many", cost: 0, cacheRead: 0, prompt: 0 } } } }] }], true],
+		["usage without hours", [HELLO, { type: "usage", reset: true, scanned: true, removed: [], changed: [{ path: "/a", kind: "session" }] }], true],
+		["usage in an hour that is not a number", [HELLO, { type: "usage", reset: true, scanned: true, removed: [], changed: [{ path: "/a", kind: "session", hours: { soon: { "p/m": { tokens: 1, cost: 1, cacheRead: 0, prompt: 0 } } } }] }], true],
+		["usage of an unknown kind of file", [HELLO, { type: "usage", reset: true, scanned: true, removed: [], changed: [{ path: "/a", kind: "other", hours: {} }] }], true],
 	];
 	for (const [name, lines, wasOnline] of cases) {
 		const { states, log, events } = recorder();
@@ -213,6 +305,20 @@ test("text from a remote host reaches this terminal without control sequences", 
 	assert.equal(states[0].name, "red");
 	assert.equal(states[0].lastSaid, "line one\n\tline two", "newlines and tabs stay");
 	assert.equal(remote.status.kind === "online" && remote.status.hostname, "box");
+});
+
+test("usage text from a remote host reaches this terminal without control sequences", async (t) => {
+	const file = { path: "/a\x1b[2J", kind: "session", cwd: "/p\x07", firstPrompt: "\x1b]52;c;aGk=\x07fix", size: 1, mtimeMs: 1, offset: 1, hours: { 1: { "anthropic/opus\x1b[31m": { tokens: 1, cost: 1, cacheRead: 0, prompt: 0 } } } };
+	const { usage, events } = recorder();
+	const remote = new RemoteHost("box", events, fakeRelay([HELLO, { type: "usage", reset: true, scanned: true, removed: ["/b\x1b[2J"], changed: [file] }], 5000));
+	t.after(() => remote.close());
+	remote.start();
+	await until(() => usage.length);
+	assert.equal(usage[0].changed[0].path, "/a");
+	assert.equal(usage[0].changed[0].cwd, "/p");
+	assert.equal(usage[0].changed[0].firstPrompt, "fix");
+	assert.deepEqual(Object.keys(usage[0].changed[0].hours[1]), ["anthropic/opus"], "model names are keys, and are cleaned too");
+	assert.deepEqual(usage[0].removed, ["/b"]);
 });
 
 test("a relay that stops answering loses its link", async (t) => {

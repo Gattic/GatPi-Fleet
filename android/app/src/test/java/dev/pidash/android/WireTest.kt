@@ -34,11 +34,30 @@ class WireTest {
         assertEquals(listOf(AccountCooldown("anthropic", usage.at + 3_600_000L)), usage.cooldowns)
         val week = usage.range("7d")
         assertEquals(6, week.bucketHours)
-        assertEquals(listOf(UsageItem("pi-dash", 3.25, open = true)), week.measure(Metric.Cost).sessions)
-        assertEquals(listOf("site › Fix the header", "pi-dash"), week.measure(Metric.Tokens).sessions.map { it.label })
-        assertEquals(listOf(UsageItem("gpt-6", 6e6), UsageItem("claude-opus", 2.1e6)), week.measure(Metric.Tokens).models)
-        assertEquals(8.1e6, week.total(Metric.Tokens), 0.0)
-        assertEquals(3.0, usage.range("today").measure(Metric.Cost).series.last(), 0.0)
+        assertEquals(listOf(UsageItem("pi-dash", 3.25, open = true), UsageItem("train@box00", 1.5, open = true), UsageItem("notes@boxhome › Release notes", 0.75)), week.measure(Metric.Cost).sessions)
+        assertEquals(listOf("site › Fix the header", "pi-dash", "train@box00 › Evaluate the run", "train@box00", "notes@boxhome › Release notes"), week.measure(Metric.Tokens).sessions.map { it.label })
+        assertEquals(listOf(UsageItem("gpt-6", 8e6), UsageItem("claude-opus", 3.6e6)), week.measure(Metric.Tokens).models)
+        assertEquals(11.6e6, week.total(Metric.Tokens), 0.0)
+        assertEquals(4.5, usage.range("today").measure(Metric.Cost).series.last(), 0.0)
+    }
+    @Test fun readsEachRemoteHostsUsageAndSaysWhichAreIncomplete() {
+        val usage = UsageReport.parse(JSONObject(javaClass.classLoader!!.getResource("usage.json")!!.readText()))
+        assertEquals(listOf(RemoteUsageHost("box00", "online", false), RemoteUsageHost("boxhome", "offline", false)), usage.hosts)
+        assertEquals(listOf<String?>(null, "offline"), usage.hosts.map { it.gap })
+        assertEquals(listOf(HostUsage(null, 3.25), HostUsage("box00", 1.5), HostUsage("boxhome", 0.0)), usage.range("today").measure(Metric.Cost).hosts)
+        assertEquals(listOf(HostUsage(null, 8.1e6), HostUsage("box00", 3e6), HostUsage("boxhome", 5e5)), usage.range("7d").measure(Metric.Tokens).hosts)
+        assertEquals(listOf<String?>(null, "offline", "connecting", "indexing"),
+            listOf(RemoteUsageHost("a", "online", false), RemoteUsageHost("b", "offline", false), RemoteUsageHost("c", "connecting", false), RemoteUsageHost("d", "online", true)).map { it.gap })
+        assertThrows(IllegalArgumentException::class.java) { RemoteUsageHost.parse(JSONObject().put("host", "x").put("status", "asleep").put("indexing", false)) }
+    }
+    @Test fun aGatewayThatPredatesRemoteHostUsageIsRejectedWithTheRolloutInstruction() {
+        // The report an older gateway sends: no per-host usage anywhere.
+        val json = JSONObject(javaClass.classLoader!!.getResource("usage.json")!!.readText())
+        json.remove("hosts")
+        val ranges = json.getJSONArray("ranges")
+        for (i in 0 until ranges.length()) for (measure in listOf("cost", "tokens")) ranges.getJSONObject(i).getJSONObject(measure).remove("hosts")
+        val failure = assertThrows(IllegalArgumentException::class.java) { UsageReport.parse(json) }
+        assertEquals("Update the host: its usage report is outdated", failure.message)
     }
     @Test fun unavailableAccountStateIsNotAnEmptyCooldownList() {
         val json = JSONObject(javaClass.classLoader!!.getResource("usage.json")!!.readText())

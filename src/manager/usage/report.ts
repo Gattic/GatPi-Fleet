@@ -1,5 +1,6 @@
 // Usage aggregates shown by the dashboard's usage view and served to the phone by the gateway.
 import { basename } from "node:path";
+import type { RemoteHost } from "../remote/host.ts";
 import type { FileUsage, UsageBucket } from "./types.ts";
 import type { UsageIndex } from "./usage-index.ts";
 
@@ -62,7 +63,24 @@ export function rankedModels(index: UsageIndex, sinceMs: number, metric: UsageMe
 	return [...models.entries()].filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]).map(([model, value]) => ({ model, value }));
 }
 
-/** How a session that is no longer open is named: by project and its name (or first prompt), so sessions of one project stay apart. */
+/** Usage per machine since `sinceMs`: this machine (`host` undefined) first, then every one of `hosts`, in order, with or without usage. */
+export function hostUsage(index: UsageIndex, sinceMs: number, metric: UsageMetric, hosts: readonly string[]): { host: string | undefined; value: number }[] {
+	const byHost = index.byHost(sinceMs);
+	return [undefined, ...hosts].map((host) => ({ host, value: byHost.get(host)?.[metric] ?? 0 }));
+}
+
+/** A connected remote host that has not finished a first scan of its session files. */
+export function hostIndexing(index: UsageIndex, remote: RemoteHost): boolean {
+	return remote.status.kind === "online" && !index.hostScanned(remote.name);
+}
+
+/** True until this machine and every connected remote host have finished a first scan; a host that is not connected is not waited for. */
+export function indexing(index: UsageIndex, remotes: Iterable<RemoteHost>): boolean {
+	return !index.scanned || [...remotes].some((remote) => hostIndexing(index, remote));
+}
+
+/** How a session that is no longer open is named: by project (and host, as `project@host`) and its name (or first prompt), so sessions of one project stay apart. */
 export function sessionTitle(file: FileUsage): { project: string; title?: string } {
-	return { project: file.cwd ? basename(file.cwd) : "unknown", title: file.name ?? file.firstPrompt };
+	const project = file.cwd ? basename(file.cwd) : "unknown";
+	return { project: file.host === undefined ? project : `${project}@${file.host}`, title: file.name ?? file.firstPrompt };
 }

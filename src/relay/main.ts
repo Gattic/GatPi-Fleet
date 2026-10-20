@@ -13,12 +13,17 @@ import { listProjects, listSessions } from "../manager/actions/sessions.ts";
 import { BridgeHub, pidAlive, UncertainCommandError } from "../manager/collectors/bridges.ts";
 import { GpuMonitor } from "../manager/collectors/gpu.ts";
 import { ProcSampler } from "../manager/collectors/procs.ts";
-import { Store } from "../manager/model/store.ts";
+import { rowCwd, Store } from "../manager/model/store.ts";
 import { agentDir, RecoveryJournal } from "../manager/recovery.ts";
-import { diffState, LineDecoder, PROTOCOL_VERSION, type SessionState, socketDir } from "../protocol/index.ts";
-import { encodeRelay, GIT_METHODS, RELAY_VERSION, type RelayMessage, type RelayOp, type RelayOps, type RelayRequest } from "./protocol.ts";
+import type { IndexUpdate } from "../manager/usage/types.ts";
+import { UsageIndex, USAGE_RETENTION_MS } from "../manager/usage/usage-index.ts";
+import { cacheDir, diffState, LineDecoder, PROTOCOL_VERSION, type SessionState, socketDir } from "../protocol/index.ts";
+import { chunkUsage, encodeRelay, GIT_METHODS, RELAY_VERSION, type RelayMessage, type RelayOp, type RelayOps, type RelayRequest } from "./protocol.ts";
 
 type Handlers = { [K in RelayOp]: (params: RelayOps[K]["params"]) => RelayOps[K]["result"] | Promise<RelayOps[K]["result"]> };
+
+/** A usage message stays well below the receiver's line limit however many files a first scan finds. */
+const USAGE_MESSAGE_CHARS = 1024 * 1024;
 
 function serve(): void {
 	const dir = socketDir();
@@ -49,6 +54,25 @@ function serve(): void {
 			write({ type: "disconnect", pid, alive });
 		},
 		onIncompatible: (pid, version) => write({ type: "incompatible", pid, version }),
+	});
+	// This host's usage, indexed in a worker so a first scan never delays the bridges. Updates go out as they
+	// arrive: the first message replaces what an earlier relay of this host delivered.
+	let firstUsage = true;
+	let scanReported = false;
+	const usage = new UsageIndex({
+		sessionRoot,
+		cachePath: join(cacheDir(), "usage-index-relay.json"),
+		retentionMs: USAGE_RETENTION_MS,
+		onUpdate: (update: IndexUpdate) => {
+			if (!firstUsage && !update.changed.length && !update.removed.length && (!update.scanned || scanReported)) return;
+			scanReported ||= update.scanned;
+			const messages = chunkUsage(update.changed, USAGE_MESSAGE_CHARS);
+			messages.forEach((changed, index) => {
+				const last = index === messages.length - 1;
+				write({ type: "usage", reset: firstUsage, changed, removed: index === 0 ? update.removed : [], scanned: last && update.scanned });
+				firstUsage = false;
+			});
+		},
 	});
 	const sampler = new ProcSampler();
 	const gpu = new GpuMonitor();
@@ -109,11 +133,13 @@ function serve(): void {
 		}
 	};
 
-	const timers = [setInterval(() => hub.scan(), 1000), setInterval(() => void gpu.poll(), 5000)];
+	const scanUsage = () => usage.scan([...new Set([...usage.cwds(), ...store.ordered().flatMap((row) => rowCwd(row) ?? [])])]);
+	const timers = [setInterval(() => hub.scan(), 1000), setInterval(() => void gpu.poll(), 5000), setInterval(scanUsage, 15_000)];
 	// pi-dash ends the ssh session when it quits or loses the host; stdin closes then.
 	const stop = () => {
 		for (const timer of timers) clearInterval(timer);
 		hub.close();
+		void usage.close();
 		for (const file of peeks) {
 			try {
 				unlinkSync(file);
@@ -141,6 +167,8 @@ function serve(): void {
 	write({ type: "hello", version: RELAY_VERSION, bridge: PROTOCOL_VERSION, hostname: hostname() });
 	hub.scan();
 	void gpu.poll();
+	usage.start();
+	scanUsage();
 }
 
 if (process.argv[2] === "install") {

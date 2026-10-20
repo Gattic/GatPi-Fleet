@@ -34,7 +34,7 @@ function payloadFiles(): string[] {
 
 /** Starts the relay on `host` and waits for its greeting (or the reason there is none). */
 async function probe(host: string): Promise<HostStatus> {
-	const remote = new RemoteHost(host, { onState() {}, onBye() {}, onDisconnect() {}, onIncompatible() {}, onLost() {} });
+	const remote = new RemoteHost(host, { onState() {}, onBye() {}, onDisconnect() {}, onIncompatible() {}, onUsage() {}, onLost() {} });
 	remote.start();
 	const deadline = Date.now() + PROBE_TIMEOUT_MS;
 	while (remote.status.kind === "connecting" && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));

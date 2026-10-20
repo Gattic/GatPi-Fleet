@@ -1,6 +1,6 @@
 // Wire protocol between the in-process pi bridge extension and the pi-dash
 // dashboard: LF-delimited JSON over a per-process unix socket.
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 export const PROTOCOL_VERSION = 5;
@@ -9,6 +9,11 @@ export const PROTOCOL_VERSION = 5;
 export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
 	const runtimeDir = env.XDG_RUNTIME_DIR;
 	return runtimeDir ? join(runtimeDir, "pi-dash") : join(tmpdir(), `pi-dash-${process.getuid?.() ?? "user"}`);
+}
+
+/** pi-dash's cache directory (`~/.cache/pi-dash`). */
+export function cacheDir(env: NodeJS.ProcessEnv = process.env): string {
+	return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "pi-dash");
 }
 
 export function socketPath(pid: number, dir: string = socketDir()): string {

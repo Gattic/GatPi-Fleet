@@ -40,10 +40,11 @@ Unknown values are null, not invented zero measurements. Status `stalled` remain
 a CPU/inactivity heuristic. Overview deliberately omits prompts, replies, asks,
 raw errors, transcripts and tools.
 
-Usage is computed like the dashboard's usage view (`u`), from the gateway machine's own
-session files and logins (not its remote hosts'). It is fetched, not streamed. `at` is the
-host time it was made, and `indexing` is true until the first scan of the session files
-ends. `quota` is an array of `{ provider, status, fetchedAt, freshUntil, message, windows }`,
+Usage is computed like the dashboard's usage view (`u`): spend from the session files of the
+gateway machine and of its remote hosts (each host's relay indexes its own), quotas and cooldowns
+from the gateway machine's own logins. It is fetched, not streamed. `at` is the host time it was
+made, and `indexing` is true until the gateway machine and every connected remote host have
+finished a first scan of their session files. `quota` is an array of `{ provider, status, fetchedAt, freshUntil, message, windows }`,
 or null when login state cannot be read; an empty array means no logins. `provider` is a display
 label, never an email or credential. `status` is `fresh`, `stale`, `unknown`, or `unsupported`.
 `fetchedAt` and `freshUntil` are host epoch milliseconds (null before any reading); `message`
@@ -60,13 +61,21 @@ Legacy quota snapshots are not used.
 or is null if account state is unreadable. An empty list means no recorded cooldowns, **not**
 available quota. These timers are not provider reset times. Update the app and host together
 for this usage-response change.
+`hosts` lists the remote hosts in `hosts.json` order as `{ host, status, indexing }`: `status` is
+`online`, `connecting` or `offline`, and `indexing` is true while a connected host's first scan runs.
+It is empty without remote hosts. A host's usage is incomplete while it is `connecting`, `offline` or
+`indexing`: an offline host keeps the usage it reported before, so totals miss what it did since.
+A report without `hosts` comes from a gateway that predates this: the app refuses it, and says
+"Update the host: its usage report is outdated" rather than showing partial data.
 `ranges` has `today` (from the host's local midnight), `7d` and `30d` (the last 168 and 720
 whole hours, ending with the current one) in that order, each with `range`, `bucketHours`,
 `total` (`cost`, `tokens`, `cacheHit` 0–1), and per measure (`cost`, `tokens`): `series` per
-bucket from the range's start to now, the 50 largest `sessions` (`label`, `open`, `value`)
-and the 5 largest `models` (`name`, `value`; one model through several provider accounts
-counts once). An open session's label is its overview label; any other is
-`project › name`, `project › first prompt` or just `project` (at most 200 characters).
+bucket from the range's start to now, the 50 largest `sessions` (`label`, `open`, `value`), the 5 largest `models` (`name`, `value`;
+one model through several provider accounts or hosts counts once) and `hosts`: `{ host, value }`
+for each machine, the gateway's own first (`host` null) and then each remote host in the order of
+the top-level `hosts`, with or without usage. An open session's label is its overview label; any
+other is `project › name`, `project › first prompt` or just `project`, with `@host` after the project
+for a remote host's session (at most 200 characters).
 
 Selected detail adds a 200-character last-prompt preview, `prompts` (the session's
 earlier prompts to recall, oldest first), up to 32,000 characters of latest reply,

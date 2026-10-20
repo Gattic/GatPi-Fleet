@@ -13,6 +13,7 @@ import { renderDetail } from "../src/dashboard/ui/views/detail.ts";
 import { renderOverview } from "../src/dashboard/ui/views/overview.ts";
 import type { ViewContext } from "../src/dashboard/ui/views/shared.ts";
 import { renderUsage } from "../src/dashboard/ui/views/usage.ts";
+import { RemoteHost } from "../src/manager/remote/host.ts";
 import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 import { type AskRun, emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
@@ -321,6 +322,69 @@ test("the usage view keeps open and ended sessions apart", () => {
 	assert.match(usage, /QUOTA +anthropic unknown/);
 	assert.match(usage, /^1 project-101 +█+ +3\.00/m);
 	assert.match(usage, /^project-101 › Fix the bug +█+[▏▎▍▌▋▊▉]? +2\.00/m);
+});
+
+test("the usage view counts remote hosts and marks those whose usage is incomplete", () => {
+	const ctx = context();
+	const hour = String(Math.floor(Date.now() / 3_600_000));
+	const bucket = (cost: number) => ({ tokens: cost * 1000, cost, cacheRead: 0, prompt: 0 });
+	const file = (sessionId: string, cost: number) => ({ path: "/same.jsonl", kind: "session" as const, sessionId, cwd: "/home/user/dev/train", size: 1, mtimeMs: 1, offset: 1, hours: { [hour]: { "anthropic/opus": bucket(cost) } } });
+	const idle = { onState() {}, onBye() {}, onDisconnect() {}, onIncompatible() {}, onUsage() {}, onLost() {} };
+	const hosts = ["box00", "boxhome", "box01"].map((name) => new RemoteHost(name, idle, ["true"]));
+	ctx.remotes = new Map(hosts.map((host) => [host.name, host]));
+	hosts[0].status = { kind: "online", since: 1, hostname: "box00" };
+	hosts[1].status = { kind: "offline", since: 1, error: "unreachable" };
+	ctx.store.setState(201, state(201, { sessionId: "remote-open", cwd: "/home/user/dev/train" }), "box00");
+	ctx.usage.apply({ type: "update", scanned: true, durationMs: 0, removed: [], changed: [file("local", 1)] });
+	ctx.usage.applyRemote("box00", { reset: true, changed: [file("remote-open", 3)], removed: [], scanned: false });
+	ctx.usage.applyRemote("boxhome", { reset: true, changed: [file("earlier", 2)], removed: [], scanned: true });
+
+	const view = strip(renderUsage(ctx, 140, 36, "today", "cost").join("\n"));
+	assert.match(view, /\$6\.00 · 6\.0k tokens/, "the total counts every host");
+	assert.match(view, /indexing session files/, "a connected host is still being indexed");
+	assert.match(view, /│ BY HOST/);
+	assert.match(view, /│ this machine +[█▏▎▍▌▋▊▉]+ +17% +\$1\.00/);
+	assert.match(view, /│ box00 … +[█▏▎▍▌▋▊▉]+ +50% +\$3\.00/, "still indexing");
+	assert.match(view, /│ boxhome ✖ +[█▏▎▍▌▋▊▉]+ +33% +\$2\.00/, "offline: what it reported stays counted");
+	assert.match(view, /│ box01 … +0% +\$0\.00/, "not connected yet");
+	assert.match(view, /^5 train@box00 +█+ +3\.00/m, "an open remote session is named as in the session list");
+	assert.match(view, /^train@boxhome +[█▏▎▍▌▋▊▉]+ +2\.00/m, "an ended one by project and host");
+	assert.match(view, /^train +[█▏▎▍▌▋▊▉]+ +1\.00/m);
+	assert.match(strip(renderOverview(ctx, 140, 30).join("\n")), /today \(all\) \$6\.00/);
+});
+
+test("the usage view with many hosts fits any terminal, keeps its notes in view and never shortens a host's mark", () => {
+	const ctx = context();
+	const idle = { onState() {}, onBye() {}, onDisconnect() {}, onIncompatible() {}, onUsage() {}, onLost() {} };
+	const names = ["box00", "box01", "box02", "box03", "box04", "rob@a-training-node-with-a-very-long-name.cluster.example.org"];
+	const hosts = names.map((name) => new RemoteHost(name, idle, ["true"]));
+	hosts[5].status = { kind: "offline", since: 1, error: "unreachable" };
+	ctx.remotes = new Map(hosts.map((host) => [host.name, host]));
+	ctx.usage.apply({ type: "update", scanned: true, durationMs: 0, removed: [], changed: [] });
+	for (const host of names) ctx.usage.applyRemote(host, { reset: true, changed: [], removed: [], scanned: true });
+	for (const height of [14, 24, 30, 45]) {
+		for (const width of [80, 100, 140]) {
+			const lines = renderUsage(ctx, width, height, "today", "cost");
+			assert.equal(lines.length, height - 1, `${width}x${height} fills the terminal`);
+			for (const line of lines) assert.ok(visibleWidth(line) <= width, `${width}x${height}: a line is ${visibleWidth(line)} wide`);
+			if (height >= 24) assert.match(strip(lines.join("\n")), /Hosts: … still indexing/, `${width}x${height} keeps the notes`);
+		}
+	}
+	assert.match(strip(renderUsage(ctx, 140, 45, "today", "cost").join("\n")), /│ rob@a-training… ✖/, "a long name is shortened before its mark");
+});
+
+test("the HOST line keeps today's total in view at 100 columns with remote hosts and a busy machine", () => {
+	const ctx = context();
+	const idle = { onState() {}, onBye() {}, onDisconnect() {}, onIncompatible() {}, onUsage() {}, onLost() {} };
+	ctx.remotes = new Map([["box00", new RemoteHost("box00", idle, ["true"])]]);
+	// The widest realistic line: every core busy, large memory, a GPU with memory, and a four-digit day.
+	ctx.store.applySample({ resources: new Map(), piProcesses: [], host: { cpu: 1, memUsed: 123 * 1024 ** 3, memTotal: 251 * 1024 ** 3 } } as unknown as Parameters<typeof ctx.store.applySample>[0], { utilization: 1, memUsed: 79 * 1024 ** 3, memTotal: 80 * 1024 ** 3 } as unknown as Parameters<typeof ctx.store.applySample>[1], Date.now());
+	const hour = String(Math.floor(Date.now() / 3_600_000));
+	ctx.usage.apply({ type: "update", scanned: true, durationMs: 0, removed: [], changed: [{ path: "/a", kind: "session", size: 1, mtimeMs: 1, offset: 1, hours: { [hour]: { "p/m": { tokens: 1, cost: 1234.5, cacheRead: 0, prompt: 0 } } } }] });
+	for (const width of [80, 100, 120]) {
+		const line = strip(renderOverview(ctx, width, 30).join("\n")).split("\n").find((entry) => entry.includes(" HOST ")) ?? "";
+		assert.match(line, /today \(all\) \$1235/, `${width} columns: ${line.trim()}`);
+	}
 });
 
 test("detail shows the whole reply in a scrollable SAID pane, then the suggested next prompt", () => {

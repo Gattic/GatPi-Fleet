@@ -10,7 +10,7 @@ class UsageSnapshotTest {
         val at = 1_000_000_000_000L
         val account = QuotaAccount("Codex", "fresh", at, at + 120_000, null,
             listOf(QuotaWindow("Weekly", 56.0, at + 180_000)))
-        val snapshot = UsageSnapshot(UsageReport(at, false, listOf(account), emptyList(), emptyList()), receivedAt = 5_000)
+        val snapshot = UsageSnapshot(UsageReport(at, false, listOf(account), emptyList(), emptyList(), emptyList()), receivedAt = 5_000)
 
         // Nothing needs to observe the report for its clock to advance, including across sleep.
         assertTrue(account.fresh(snapshot.hostTime(124_999)))
