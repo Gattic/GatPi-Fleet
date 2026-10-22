@@ -77,6 +77,19 @@ the top-level `hosts`, with or without usage. An open session's label is its ove
 other is `project › name`, `project › first prompt` or just `project`, with `@host` after the project
 for a remote host's session (at most 200 characters).
 
+Selected detail adds nullable `roadmap`: a display-only projection of the publisher's nested
+viewer snapshot (`id`, `title`, `lifecycle`, `updatedAt`, workflow `complete`/`total`/`blocked`,
+root `outcomes` with separate `complete`/`total`/`blocked`, `totalEntries`, and `entries`). Each
+entry has `kind` (`item` or `roadmap`), dotted `path`, `title`, explicit `status`, and latest
+`notes`. Paths are structural identifiers and are preserved in full within the publisher's
+entry budget, not shortened like preview text. Root outcomes must not be confused with recursive workflow totals. Publisher limits
+are 500 entries / 64 KiB, titles 500 characters and three notes of 200 characters per item;
+`entries.length < totalEntries` means the snapshot is limited. `null` means no nested detail
+was published, not zero work. Overview retains compact plan progress only. Both HTTP detail and
+selected-detail stream frames carry the same sanitized projection; no new endpoint or mutation
+is introduced. [`api/fixtures/roadmap.json`](../api/fixtures/roadmap.json) is generated through
+the real projection and decoded by Android JVM tests.
+
 Selected detail adds a 200-character last-prompt preview, `prompts` (the session's
 earlier prompts to recall, oldest first), up to 32,000 characters of latest reply,
 suggested prompt, error, model choices, 20 recent tool summaries and 10 bounded

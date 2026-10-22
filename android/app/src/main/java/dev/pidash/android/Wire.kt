@@ -38,13 +38,14 @@ data class Session(
 data class Ask(val id: Int, val question: String, val answer: String, val status: String, val error: String?, val cost: Double?)
 data class Tool(val name: String, val detail: String, val running: Boolean, val failed: Boolean)
 /** [prompts] are the session's earlier prompts to recall, oldest first. */
-data class Detail(val session: Session, val prompt: String?, val prompts: List<String>, val reply: String?, val suggestion: String?, val error: String?, val models: List<String>, val asks: List<Ask>, val tools: List<Tool>) {
+data class Detail(val session: Session, val prompt: String?, val prompts: List<String>, val reply: String?, val suggestion: String?, val error: String?, val models: List<String>, val asks: List<Ask>, val tools: List<Tool>, val roadmap: Roadmap? = null) {
     companion object {
         fun parse(j: JSONObject) = Detail(Session.parse(j), j.text("lastPrompt"), j.getJSONArray("prompts").let { a -> (0 until a.length()).map(a::getString) },
             j.text("lastSaid"), j.text("suggestion"), j.text("error"),
             j.getJSONArray("models").let { a -> (0 until a.length()).map(a::getString) },
             j.getJSONArray("asks").objects().map { Ask(it.getInt("id"), it.getString("question"), it.getString("answer"), it.getString("status"), it.text("error"), it.number("cost")) },
-            j.getJSONArray("tools").objects().map { Tool(it.getString("name"), it.getString("detail"), it.isNull("endedAt"), it.getBoolean("isError")) })
+            j.getJSONArray("tools").objects().map { Tool(it.getString("name"), it.getString("detail"), it.isNull("endedAt"), it.getBoolean("isError")) },
+            j.optJSONObject("roadmap")?.let(Roadmap::parse))
     }
 }
 /** [host] is a remote host of the gateway's pi-dash, or null for the gateway's own machine. */
@@ -172,8 +173,12 @@ fun reduceFrame(old: Dashboard, frame: JSONObject, now: Long): Dashboard {
     when (type) {
         "snapshot" -> {
             val sessions = frame.getJSONArray("sessions").objects().map(Session::parse)
-            val selected = old.selected?.takeIf { id -> sessions.any { it.id == id } }
-            state = state.copy(sessions = sessions, selected = selected, detail = old.detail?.takeIf { it.session.id == selected && old.epoch == epoch })
+            val selectedSession = sessions.firstOrNull { it.id == old.selected }
+            // An overview cannot refresh private detail from a previous connection.
+            // On this connection, retain the content but use the newest connection/status metadata.
+            val detail = old.detail?.takeIf { old.connected && it.session.id == selectedSession?.id && old.epoch == epoch }
+            state = state.copy(sessions = sessions, selected = selectedSession?.id,
+                detail = if (selectedSession == null) null else detail?.copy(session = selectedSession))
         }
         "detail" -> if (frame.getString("id") == old.selected) state = state.copy(detail = frame.optJSONObject("detail")?.let(Detail::parse))
         "heartbeat", "receipt" -> Unit

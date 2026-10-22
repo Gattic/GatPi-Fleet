@@ -9,6 +9,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import piDashBridge from "../src/bridge/index.ts";
 import { LineDecoder, MAX_PROMPTS, socketPath, type BridgeMessage, type SessionState } from "../src/protocol/index.ts";
 import { RecoveryJournal } from "../src/manager/recovery.ts";
+import { roadmapFixture } from "../scripts/roadmap-fixture.ts";
 
 type Handler = (event: unknown, ctx?: ExtensionContext) => void;
 
@@ -21,9 +22,10 @@ function startBridge(t: TestContext, entries: unknown[] = []) {
 	process.env.PI_CODING_AGENT_DIR = root;
 	const session = { id: "test", file: undefined as string | undefined };
 	const handlers = new Map<string, Handler>();
+	const bus = new Map<string, (data: unknown) => void>();
 	const pi = {
 		on: (name: string, handler: Handler) => handlers.set(name, handler),
-		events: { on: () => {} },
+		events: { on: (name: string, handler: (data: unknown) => void) => bus.set(name, handler) },
 		getSessionName: () => undefined,
 	} as unknown as ExtensionAPI;
 	const ctx = {
@@ -60,7 +62,7 @@ function startBridge(t: TestContext, entries: unknown[] = []) {
 			await closed;
 		}
 	}
-	return { handlers, snapshot, root, session, ctx };
+	return { handlers, snapshot, root, session, ctx, publish: (data: unknown) => bus.get("roadmap:changed")!(data) };
 }
 
 test("bridge tracks file/name, retains reload recovery until replacement, and clears intentional session exits", async (t) => {
@@ -87,6 +89,19 @@ test("bridge tracks file/name, retains reload recovery until replacement, and cl
 			assert.notEqual(journal.list()[0].instanceId, state.instanceId, "replacement retires the reload marker");
 		}
 	}
+});
+
+test("bridge carries nested roadmap viewer snapshots and clears them without invoking the model", async (t) => {
+	const { publish, snapshot, handlers, ctx } = startBridge(t);
+	const plan = roadmapFixture();
+	publish(plan);
+	assert.deepEqual((await snapshot()).plan, plan);
+	handlers.get("session_shutdown")!({ reason: "reload" });
+	publish(plan); // Publishers can run before the replacement bridge's session_start.
+	handlers.get("session_start")!({}, ctx);
+	assert.deepEqual((await snapshot()).plan?.viewer, plan.viewer);
+	publish(null);
+	assert.equal((await snapshot()).plan, undefined);
 });
 
 test("bridge counts tool progress and raw provider events as activity", async (t) => {

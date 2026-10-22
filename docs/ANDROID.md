@@ -257,6 +257,17 @@ do in pi's editor: each is shown in place of the draft, and stepping down past t
 newest brings the draft back. Editing or sending a recalled prompt makes it the
 draft; until then the saved draft stays the one you typed, also if you leave the
 session.
+**Roadmap → Open roadmap** in session detail opens a read-only, scrollable viewer. It shows
+nested item/subroadmap paths, explicit statuses (including unsubstantiated verification), latest
+notes, lifecycle and update time, and root outcomes separately from recursive workflow counts.
+It follows selected-session updates and clears when the roadmap clears. Connection-stale,
+disconnected or exited sessions are labelled last-known; reading remains available offline or
+with a pending command receipt. Closing the viewer returns to the same session without sending
+anything. Update GatPi-Harness and `/reload` sessions to publish nested detail. Missing detail is
+labelled, not guessed. Snapshots include the first 500 entries / 64 KiB, with titles capped at
+500 characters and the latest three notes at 200 characters each. A snapshot-limit notice gives
+the displayed/total entries; this is a current-roadmap viewer, not an archive or editor.
+
 Missing resource/context fields display as unknown rather than zero. Cost is
 pi's API-equivalent usage, not a provider subscription invoice.
 

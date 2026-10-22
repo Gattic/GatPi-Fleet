@@ -10,7 +10,9 @@ and on the other machines of your network (over ssh).
 - **Crash recovery**: interrupted sessions survive dashboard restarts. Press `e` to find them across
   projects and connected hosts, then confirm a resume of the exact saved conversation.
 - **Plan progress**: the active roadmap step and a progress bar (from the GatPi-Harness roadmap), and
-  how full each session's context window is (CTX).
+  how full each session's context window is (CTX). The read-only **Roadmap Viewer** (`o`, or
+  **Open roadmap** in Android session detail) shows nested tasks, statuses, notes and separate
+  root-outcome/workflow progress, updating with the selected session.
 - **Resources**: CPU, memory and GPU memory per session, split into the pi process itself (▓) and
   everything it started (▒): tool commands, LSP servers, subagents, background jobs, `build_project`
   systemd units, and detached processes that carry the session's `PI_SESSION_ID`. Running
@@ -81,6 +83,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `x` | abort the current run |
 | `Z` | compact the conversation (idle sessions; asks first) |
 | `M` / `T` | switch the model / thinking level (pi limits the level to what the model supports) |
+| `o` | open the selected session's read-only Roadmap Viewer (`↑↓` / `PgUp` / `PgDn`, mouse wheel, `Home` / `End` to scroll; `Esc` / `q` closes) |
 | `s` | read the latest reply full screen (`↑↓` `PgUp` `PgDn` `Home` `End` scroll, `p` prompt). Clicking SAID in the detail view does the same |
 | `PgUp` `PgDn` | scroll SAID in the detail view (the mouse wheel over it works too) |
 | `v` | peek: live read-only mirror of the session's screen (catches dialogs that only show in pi) |
@@ -297,7 +300,13 @@ remote host: bridges, /proc, screen, git ── pi-dash-relay ══ ssh stdio �
   with the session: answers typically read 99% of their input from cache (about $0.02 for a 75k
   token context on Claude). Answers live in the bridge's memory for the life of the pi process.
 - Roadmap progress comes from the GatPi-Harness roadmap extension, which emits `roadmap:changed` on
-  pi's extension event bus. The suggested next prompt comes the same way from the GatPi-Harness
+  pi's extension event bus. Nested viewer detail is included only in the selected phone session,
+  not every overview broadcast. It is bounded to the first 500 entries / 64 KiB (titles 500 characters,
+  latest three notes of 200 characters each); an explicit snapshot-limit notice reports omissions.
+  Disconnected/exited sessions show last-known state, never implied live progress. No commands,
+  model requests or roadmap mutations are sent by either viewer. Update GatPi-Harness as well as
+  pi-dash and `/reload` the sessions to publish nested detail; a missing publisher is labelled,
+  not displayed as an empty roadmap. The suggested next prompt comes the same way from the GatPi-Harness
   prompt-suggestions extension (`prompt-suggestion:changed`).
 
 Files written: shared Anthropic usage readings and polling deadlines in `~/.pi/agent/pi-dash/quota/`

@@ -23,6 +23,7 @@ import { Receipts } from "../src/server/receipts.ts";
 import { SessionGit } from "../src/server/git.ts";
 import { clean, ref, sessionRef, Sessions, summary } from "../src/server/sessions.ts";
 import { usageFixture } from "../scripts/usage-fixture.ts";
+import { roadmapFixture } from "../scripts/roadmap-fixture.ts";
 
 const RELAY = fileURLToPath(new URL("../src/relay/main.ts", import.meta.url));
 const LATE_ADDRESS = fileURLToPath(new URL("fixtures/late-address.ts", import.meta.url));
@@ -44,6 +45,7 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	const runtime = new ManagerRuntime({ runtimeDir: run, agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
 	t.after(() => runtime.close());
 	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: ["private earlier\nprompt", "x".repeat(32_001), "private prompt"], lastSaid: "private reply", lastPrompt: "private prompt" };
+	state.plan = roadmapFixture();
 	let commands = 0;
 	let bridgeSocket: Socket;
 	const bridge = createServer((s) => {
@@ -105,6 +107,8 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	const id = overview[0].id;
 	const detail = (await get(`/api/v1/sessions/${id}`)).data;
 	assert.equal(detail.lastSaid, "private reply");
+	assert.deepEqual(detail.roadmap.entries, state.plan.viewer!.entries);
+	assert.equal(overview[0].roadmap, undefined, "nested notes stay out of overview broadcasts");
 	assert.deepEqual(detail.prompts, ["private earlier\nprompt", "private prompt"], "only prompts short enough to send again");
 	const frames: any[] = [];
 	const ws = new WebSocket(`wss://127.0.0.1:${port}/api/v1/events`, { ca, headers: { Authorization: auth } });
@@ -114,6 +118,10 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	ws.send(JSON.stringify({ type: "subscribe", sessionId: id }));
 	await until(() => frames.find((f) => f.type === "detail"));
 	assert.ok(frames.every((f, i) => f.epoch === info.epoch && f.seq === i + 1));
+	assert.equal(frames.find((f) => f.type === "detail").detail.roadmap.entries[3].status, "blocked");
+	bridgeSocket!.write(encodeMessage({ type: "patch", changes: { plan: null } }));
+	await until(() => frames.findLast((f) => f.type === "detail")?.detail.roadmap === null);
+	assert.equal(commands, 0, "viewing and clearing roadmaps dispatch no session commands");
 	const input = { requestId: randomUUID(), epoch: info.epoch, revision: overview[0].revision, command: { kind: "prompt", text: "hello" } };
 	const route = `/api/v1/sessions/${id}/commands`;
 	await Promise.all([get(route, input), get(route, input)]);

@@ -18,6 +18,7 @@ import type { InterruptedSession } from "../src/manager/recovery.ts";
 import { Sessions } from "../src/server/sessions.ts";
 import { App } from "../src/dashboard/ui/app.ts";
 import { COMMIT_REVIEW_PROMPT } from "../src/manager/actions/git.ts";
+import { roadmapFixture } from "../scripts/roadmap-fixture.ts";
 import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 import { type Command, emptyUsage, type SessionState } from "../src/protocol/index.ts";
 
@@ -222,6 +223,45 @@ test("quit asks first while a close-and-restart is waiting for its session to ex
 
 	ui.press("\x03", "y"); // Ctrl-c takes the same path as q
 	assert.equal(ui.quits(), 1);
+});
+
+test("Roadmap Viewer opens for the selected remote session, follows updates, labels disconnects and guards reload identity", () => {
+	const ui = harness("/nonexistent");
+	const state: SessionState = { pid: 101, cwd: "/work", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], plan: roadmapFixture() };
+	ui.store.setState(101, state, "box");
+	ui.press("o");
+	assert.match(ui.dialog() ?? "", /Roadmap Viewer · live · work@box/);
+	assert.match(ui.dialog() ?? "", /Phone viewer/);
+	ui.store.setState(101, { ...state, plan: { ...state.plan!, lifecycle: "shelved" } }, "box");
+	assert.match(ui.dialog() ?? "", /Lifecycle: shelved/);
+	ui.store.disconnect(101, true, "box");
+	assert.match(ui.dialog() ?? "", /Last known roadmap/);
+	assert.match(ui.dialog()?.split("\n")[0] ?? "", /last known/, "freshness remains in the fixed title when scrolled");
+	ui.store.setState(101, { ...state, instanceId: "replacement" }, "box");
+	assert.match(ui.dialog() ?? "", /Session ended or reloaded/);
+	ui.press("q");
+	assert.equal(ui.dialog(), undefined);
+	assert.equal(ui.quits(), 0, "q closes only the viewer");
+	assert.deepEqual(ui.sent, [], "viewing sends no commands or model prompts");
+	ui.press("\r", "o");
+	assert.match(ui.dialog() ?? "", /Phone viewer/, "viewer is reachable from detail as well as overview");
+});
+
+test("Roadmap Viewer handles no selection, unpublished plans and plan clearing", () => {
+	const ui = harness("/nonexistent");
+	ui.press("o");
+	assert.match(strip(ui.app.render(120).join("\n")), /No session selected/);
+	const state: SessionState = { pid: 101, cwd: "/work", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
+	ui.store.setState(101, state);
+	ui.press("o");
+	assert.match(ui.dialog() ?? "", /No roadmap published/);
+	ui.store.setState(101, { ...state, plan: roadmapFixture() });
+	assert.match(ui.dialog() ?? "", /Phone viewer/);
+	ui.store.setState(101, state);
+	assert.match(ui.dialog() ?? "", /No roadmap published/);
+	ui.press("\x1b");
+	assert.equal(ui.dialog(), undefined);
+	assert.deepEqual(ui.sent, []);
 });
 
 test("quit without pending work does not ask", () => {

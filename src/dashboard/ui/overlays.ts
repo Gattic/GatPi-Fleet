@@ -12,6 +12,7 @@ import {
 	type SelectItem,
 	SelectList,
 	type SelectListTheme,
+	stripTerminalSequences,
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
@@ -577,11 +578,14 @@ export class Peek implements Component {
 }
 
 export interface ReaderOptions {
-	title: string;
+	/** A live title can keep freshness visible while the body is scrolled. */
+	title: string | (() => string);
 	/** Read on every render, so the reader follows new replies. */
 	text: () => string;
 	/** Show the text as is (command output) instead of rendering it as Markdown. */
 	plain?: boolean;
+	/** Preserve the scroll position as live read-only content changes. */
+	keepPosition?: boolean;
 	height: () => number;
 	/** Hints for the keys `onKey` handles. */
 	keys: [string, string][];
@@ -619,13 +623,15 @@ export class Reader implements Component {
 
 	render(width: number): string[] {
 		const height = Math.max(1, this.options.height() - 2);
-		this.pane.setText(this.options.text());
+		this.pane.setText(this.options.text(), this.options.keepPosition);
 		const view = this.pane.render(frameInner(width), height);
 		const body = [...view.lines];
 		while (body.length < height) body.push("");
 		const total = view.above + view.lines.length + view.below;
 		const position = total > view.lines.length ? `${theme.muted(`${view.above + 1}–${view.above + view.lines.length}/${total}`)}  ` : "";
-		return frame(this.options.title, body, width, `${position}${keyHints([["↑↓ PgUp PgDn", "scroll"], ...this.options.keys])}`);
+		const title = typeof this.options.title === "function" ? this.options.title() : this.options.title;
+		const safeTitle = stripTerminalSequences(title).replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+		return frame(safeTitle, body, width, `${position}${keyHints([["↑↓ PgUp PgDn", "scroll"], ...this.options.keys])}`);
 	}
 }
 
@@ -647,6 +653,7 @@ const HELP: [string, [string, string][]][] = [
 			["i", "ask the session about its work; nothing is added to the session"],
 			["H", "Hermes advisor: cross-session action cards with feedback"],
 			["s", "read the latest reply full screen (or click SAID)"],
+			["o", "open the read-only Roadmap Viewer for the selected session"],
 			["PgUp PgDn", "scroll SAID in the detail view (or mouse wheel)"],
 			["x", "abort the current run"],
 			["v", "peek: live read-only mirror of the pi screen"],

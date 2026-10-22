@@ -91,6 +91,22 @@ export interface PlanStep {
 	path?: string;
 }
 
+export interface RoadmapEntry extends PlanStep {
+	kind: "item" | "roadmap";
+	path: string;
+	/** Latest three notes, each bounded to 200 characters by the publisher. */
+	notes: string[];
+}
+
+/** Display-only nested detail, bounded by the publisher to 500 entries / 64 KiB. */
+export interface RoadmapViewer {
+	id: string;
+	updatedAt: string;
+	outcomes: { complete: number; total: number; blocked: number };
+	entries: RoadmapEntry[];
+	totalEntries: number;
+}
+
 /** Published by the GatPi-Harness roadmap extension on the `roadmap:changed` event. */
 export interface PlanSnapshot {
 	title: string;
@@ -100,6 +116,8 @@ export interface PlanSnapshot {
 	blocked: number;
 	milestones: PlanStep[];
 	activePath: PlanStep[];
+	/** Absent when the roadmap publisher does not supply nested detail. */
+	viewer?: RoadmapViewer;
 }
 
 export const ROADMAP_CHANGED_EVENT = "roadmap:changed";

@@ -1,0 +1,101 @@
+{
+  "id": "178464e5ea5f1f1ac96e9627b16da774",
+  "revision": "564fcbfafa7433d8080146d1316bed7d",
+  "label": "project",
+  "project": "/project",
+  "status": {
+    "kind": "ready",
+    "label": "ready",
+    "since": 1
+  },
+  "attentionKey": null,
+  "connected": true,
+  "model": null,
+  "thinking": null,
+  "contextPercent": null,
+  "plan": {
+    "title": "Ship the viewer 界 🧭",
+    "complete": 1,
+    "total": 4,
+    "blocked": 1,
+    "active": "Build"
+  },
+  "resources": null,
+  "usage": {
+    "tokens": 0,
+    "cost": 0
+  },
+  "commands": {
+    "prompt": null,
+    "ask": null,
+    "abort": null,
+    "shutdown": null,
+    "compact": null,
+    "rename": null,
+    "model": null,
+    "thinking": null,
+    "dismiss": "Only exited sessions can be dismissed"
+  },
+  "roadmap": {
+    "title": "Ship the viewer 界 🧭",
+    "lifecycle": "active",
+    "complete": 1,
+    "total": 4,
+    "blocked": 1,
+    "id": "roadmap-fixture",
+    "updatedAt": "2026-10-22T12:00:00.000Z",
+    "outcomes": {
+      "complete": 0,
+      "total": 2,
+      "blocked": 1
+    },
+    "totalEntries": 5,
+    "entries": [
+      {
+        "kind": "item",
+        "path": "1",
+        "title": "Build",
+        "status": "active",
+        "notes": []
+      },
+      {
+        "kind": "roadmap",
+        "path": "1.1",
+        "title": "Build goals",
+        "status": "active",
+        "notes": []
+      },
+      {
+        "kind": "item",
+        "path": "1.1.1",
+        "title": "Terminal viewer",
+        "status": "done",
+        "notes": []
+      },
+      {
+        "kind": "item",
+        "path": "1.1.2",
+        "title": "Phone viewer",
+        "status": "blocked",
+        "notes": [
+          "Waiting for dependency"
+        ]
+      },
+      {
+        "kind": "item",
+        "path": "2",
+        "title": "Release",
+        "status": "pending",
+        "notes": []
+      }
+    ]
+  },
+  "lastPrompt": null,
+  "prompts": [],
+  "lastSaid": null,
+  "suggestion": null,
+  "error": null,
+  "models": [],
+  "tools": [],
+  "asks": []
+}

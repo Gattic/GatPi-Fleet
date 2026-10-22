@@ -13,7 +13,7 @@ import type { GpuMonitor } from "../../manager/collectors/gpu.ts";
 import { buildHermesSnapshot, feedbackFor, type HermesAdviceCard, type HermesAdvisorClient, type HermesCardAction } from "../hermes/advisor.ts";
 import type { QuotaMonitor } from "../../manager/collectors/quota.ts";
 import { isAlert } from "../../manager/model/status.ts";
-import { hostRows, openCwds, rowCwd, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../../manager/model/store.ts";
+import { hostRows, openCwds, rowCwd, rowIncarnation, rowLabel, rowSty, rowWindow, type SessionRow, type Store } from "../../manager/model/store.ts";
 import type { Network } from "../../manager/network.ts";
 import type { InterruptedSession } from "../../manager/recovery.ts";
 import { RemoteGit } from "../../manager/remote/git.ts";
@@ -27,6 +27,7 @@ import { keyHints, theme } from "./theme.ts";
 import { GitView } from "./git-view.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
 import { renderOverview } from "./views/overview.ts";
+import { roadmapText } from "./views/roadmap.ts";
 import { background, hostStatusText, SPINNER, type ViewContext, type ViewName } from "./views/shared.ts";
 import { renderUsage } from "./views/usage.ts";
 
@@ -57,8 +58,8 @@ const GIT_MESSAGE_LIMIT = 500;
 
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["Tab", "next ◆"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["Tab", "next ◆"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["?", "help"]],
 };
 
@@ -215,7 +216,7 @@ export class App implements Component {
 		} else {
 			const row = this.selected();
 			if (!row) {
-				if ("gpixsvacCRrdMTZ".includes(data)) this.notify("No session selected", true);
+				if ("ogpixsvacCRrdMTZ".includes(data)) this.notify("No session selected", true);
 				return;
 			}
 			this.rowAction(row, data);
@@ -258,6 +259,8 @@ export class App implements Component {
 		row = { ...row };
 		const label = rowLabel(row);
 		switch (key) {
+			case "o":
+				return this.openRoadmap(row);
 			case "p":
 				return this.compose(row);
 			case "i":
@@ -1062,6 +1065,29 @@ export class App implements Component {
 			}),
 			{ width: "90%", maxHeight: "85%" },
 		);
+	}
+
+	private openRoadmap(row: SessionRow): void {
+		const identity = rowIncarnation(row);
+		this.show(new Reader({
+			title: () => {
+				const current = this.services.store.rows.get(row.key);
+				const status = !current || rowIncarnation(current) !== identity ? "session changed" : !current.connected || current.exitedAt !== undefined ? "last known" : "live";
+				return `Roadmap Viewer · ${status} · ${rowLabel(row)}`;
+			},
+			plain: true,
+			keepPosition: true,
+			text: () => {
+				const current = this.services.store.rows.get(row.key);
+				if (!current || rowIncarnation(current) !== identity) return "Session ended or reloaded. Close this viewer and select its current instance.";
+				return roadmapText(current.bridge?.plan, !current.connected || current.exitedAt !== undefined);
+			},
+			height: () => this.services.tui.terminal.rows,
+			keys: [["Home/End", "top/end"], ["Esc", "close"]],
+			onKey: (data) => {
+				if (matchesKey(data, Key.escape) || data === "o" || data === "q") this.closeOverlay();
+			},
+		}), { width: "100%", maxHeight: "100%" });
 	}
 
 	private openReader(row: SessionRow): void {
