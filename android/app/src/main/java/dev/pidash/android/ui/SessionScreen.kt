@@ -18,7 +18,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -27,8 +26,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -261,7 +258,6 @@ private fun ToolsCard(tools: List<Tool>) {
 @Composable
 private fun ManageCard(vm: DashViewModel, session: Session, models: List<String>, can: (String) -> Boolean) {
     var name by remember(session.id) { mutableStateOf(session.label) }
-    var modelMenu by remember { mutableStateOf(false) }
     fun command(kind: String, build: JSONObject.() -> Unit = {}) = vm.run { vm.repository.command(session, JSONObject().put("kind", kind).apply(build)) }
     SectionCard("Manage session") {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -269,20 +265,9 @@ private fun ManageCard(vm: DashViewModel, session: Session, models: List<String>
             FilledTonalButton(onClick = { command("rename") { put("name", name) } }, enabled = can("rename") && name.isNotBlank()) { Text("Rename") }
         }
         Text("Model", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Box {
-            OutlinedButton(onClick = { modelMenu = true }, enabled = can("model"), modifier = Modifier.fillMaxWidth()) {
-                Text(session.model ?: "Choose model", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Icon(Icons.Filled.ArrowDropDown, "Choose model")
-            }
-            DropdownMenu(modelMenu, { modelMenu = false }) {
-                models.forEach { model ->
-                    DropdownMenuItem(text = { Text(model) }, onClick = {
-                        modelMenu = false
-                        val slash = model.indexOf('/')
-                        if (slash > 0) command("model") { put("provider", model.take(slash)); put("id", model.substring(slash + 1)) }
-                    })
-                }
-            }
+        ModelSelector(session.id, session.model, models, can("model")) { model ->
+            val slash = model.indexOf('/')
+            if (slash > 0) command("model") { put("provider", model.take(slash)); put("id", model.substring(slash + 1)) }
         }
         Text("Thinking", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
