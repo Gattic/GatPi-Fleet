@@ -198,7 +198,7 @@ test("overview sparklines share one scale, so an idle session does not look busy
 			row.cpuDirect.push(cores);
 			row.cpuIndirect.push(0);
 		}
-		row.resources = { directCpu: cores, indirectCpu: 0, directMem: 1e8, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0, consumers: [], background: [] };
+		row.resources = { directCpu: cores, indirectCpu: 0, directMem: 1e8, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0, consumers: [], childProcesses: 0, background: [] };
 	};
 	load(101, 2.5);
 	load(102, 0.1);
@@ -259,6 +259,7 @@ test("background jobs and subagents show as a BG badge on wide terminals and as 
 		directGpuMem: 0,
 		indirectGpuMem: 0,
 		consumers: [],
+		childProcesses: 0,
 		background: [
 			{ kind: "job", label: "nightly-build", startedAt: now - 12 * 60_000 },
 			{ kind: "subagent", label: "coder", startedAt: now - 3 * 60_000 },

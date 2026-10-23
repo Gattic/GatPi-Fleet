@@ -61,6 +61,8 @@ export interface ResourceSample {
 	indirectGpuMem: number;
 	/** Largest consumers by CPU, then memory. */
 	consumers: Consumer[];
+	/** Live descendants of the pi process: the tool processes it is running. */
+	childProcesses: number;
 	/** Background jobs and subagents among the session's processes, oldest first. */
 	background: Background[];
 }
@@ -286,6 +288,7 @@ export class ProcSampler {
 				directGpuMem,
 				indirectGpuMem,
 				consumers: consumers.slice(0, TOP_CONSUMERS),
+				childProcesses: tree.size,
 				background: background.sort((a, b) => a.startedAt - b.startedAt),
 			});
 		}

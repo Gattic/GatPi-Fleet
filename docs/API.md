@@ -37,7 +37,8 @@ References are not credentials. Overview fields include revision, label/project,
 status/since, attention transition key, bridge connected flag, model/thinking,
 contextPercent, plan, resource/usage aggregates, and per-command disabled reasons.
 Unknown values are null, not invented zero measurements. Status `stalled` remains
-a CPU/inactivity heuristic. Overview deliberately omits prompts, replies, asks,
+a CPU/inactivity heuristic that also requires no live tool subprocess. Overview
+deliberately omits prompts, replies, asks,
 raw errors, transcripts and tools.
 
 Usage is computed like the dashboard's usage view (`u`): spend from the session files of the

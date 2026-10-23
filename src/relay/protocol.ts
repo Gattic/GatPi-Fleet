@@ -10,7 +10,7 @@ import type { FileUsage, UsageDelta } from "../manager/usage/types.ts";
 import type { Command, SessionIdentity, SessionPatch, SessionState } from "../protocol/index.ts";
 
 /** Bumped on any change to these messages; the bridge protocol version is checked separately. */
-export const RELAY_VERSION = 3;
+export const RELAY_VERSION = 4;
 
 export interface GpuSummary {
 	utilization: number;

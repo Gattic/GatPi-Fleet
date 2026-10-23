@@ -35,19 +35,20 @@ function bridge(overrides: Partial<SessionState> = {}): SessionState {
 }
 
 test("deriveStatus distinguishes the states the board shows", () => {
-	const status = (state: Partial<SessionState>, extra: { cpu?: number; connected?: boolean; exitedAt?: number } = {}) =>
-		deriveStatus({ bridge: bridge(state), connected: extra.connected ?? true, cpu: extra.cpu ?? 0, exitedAt: extra.exitedAt }, NOW).kind;
+	const status = (state: Partial<SessionState>, extra: { cpu?: number; connected?: boolean; exitedAt?: number; childProcesses?: number } = {}) =>
+		deriveStatus({ bridge: bridge(state), connected: extra.connected ?? true, cpu: extra.cpu ?? 0, childProcesses: extra.childProcesses ?? 0, exitedAt: extra.exitedAt }, NOW).kind;
 	assert.equal(status({}), "ready", "fresh session that never ran");
 	assert.equal(status({ lastSettledAt: NOW - 5000 }), "needs-you");
 	assert.equal(status({ phase: "working", activity: { kind: "tool", tool: "bash", since: NOW } }), "working");
 	assert.equal(status({ phase: "working", lastEventAt: NOW - STALL_MS - 1, activity: { kind: "tool", tool: "bash", since: NOW - STALL_MS - 1 } }), "stalled", "a quiet tool with no CPU may need attention");
 	assert.equal(status({ phase: "working", lastEventAt: NOW - STALL_MS - 1, activity: { kind: "tool", tool: "bash", since: NOW - STALL_MS - 1 } }, { cpu: 2 }), "working", "long tool runs that use CPU are not stalls");
+	assert.equal(status({ phase: "working", lastEventAt: NOW - STALL_MS - 1, activity: { kind: "tool", tool: "bash", detail: "sleep 300", since: NOW - STALL_MS - 1 } }, { childProcesses: 1 }), "working", "a quiet command such as sleep keeps a child process alive");
 	assert.equal(status({ phase: "working", rateLimited: { at: NOW - 1000 } }), "rate-limited");
 	assert.equal(status({ lastSettledAt: NOW, lastError: { message: "overloaded", at: NOW } }), "error");
 	assert.equal(status({}, { connected: false }), "connecting");
 	assert.equal(status({}, { exitedAt: NOW }), "exited");
-	assert.equal(deriveStatus({ connected: false, cpu: 0 }, NOW).kind, "unbridged");
-	const working = deriveStatus({ bridge: bridge({ phase: "working", activity: { kind: "tool", tool: "build_project", since: NOW - 4000 } }), connected: true, cpu: 1 }, NOW);
+	assert.equal(deriveStatus({ connected: false, cpu: 0, childProcesses: 0 }, NOW).kind, "unbridged");
+	const working = deriveStatus({ bridge: bridge({ phase: "working", activity: { kind: "tool", tool: "build_project", since: NOW - 4000 } }), connected: true, cpu: 1, childProcesses: 0 }, NOW);
 	assert.deepEqual(working, { kind: "working", label: "build_project", since: NOW - 4000 });
 });
 
@@ -55,8 +56,21 @@ test("remote model work is not stalled merely because events and local CPU are q
 	for (const kind of [undefined, "model", "thinking", "writing", "compacting", "continuing"] as const) {
 		const since = NOW - STALL_MS * 10;
 		const state = bridge({ phase: "working", phaseSince: since, lastEventAt: since, activity: kind ? { kind, since } : undefined });
-		assert.equal(deriveStatus({ bridge: state, connected: true, cpu: 0 }, NOW).kind, "working", `${kind ?? "unknown"} can wait on remote work`);
+		assert.equal(deriveStatus({ bridge: state, connected: true, cpu: 0, childProcesses: 0 }, NOW).kind, "working", `${kind ?? "unknown"} can wait on remote work`);
 	}
+});
+
+test("a quiet tool with a live child process is working, not stalled", () => {
+	const store = new Store(() => {});
+	const now = Date.now();
+	const quiet = bridge({ pid: 10, phase: "working", lastEventAt: now - STALL_MS - 1000, activity: { kind: "tool", tool: "bash", detail: "sleep 300", since: now - STALL_MS - 1000 } });
+	const host = { cpu: 0, cores: 1, memUsed: 0, memTotal: 1, load1: 0 };
+	const sample = (childProcesses: number): ResourceSample => ({ directCpu: 0, indirectCpu: 0, directMem: 1, indirectMem: 1, directGpuMem: 0, indirectGpuMem: 0, consumers: [], childProcesses, background: [] });
+	store.setState(10, quiet);
+	store.applySample({ resources: new Map([["10", sample(1)]]), piProcesses: [{ pid: 10, startedAt: 1 }], host }, undefined, now);
+	assert.equal(store.rows.get("10")?.status.kind, "working", "sleep's child process is still running");
+	store.applySample({ resources: new Map([["10", sample(0)]]), piProcesses: [{ pid: 10, startedAt: 1 }], host }, undefined, now);
+	assert.equal(store.rows.get("10")?.status.kind, "stalled", "no child process left: the tool may be blocked");
 });
 
 test("Series keeps the most recent samples in order", () => {
@@ -106,7 +120,7 @@ test("Store does not alert when connecting reveals a state, only when a session 
 test("Store keeps each host's sessions apart: same pids, own samples, and a lost link", () => {
 	const store = new Store(() => {});
 	const host = { cpu: 0, cores: 1, memUsed: 0, memTotal: 1, load1: 0 };
-	const busy: ResourceSample = { directCpu: 0.5, indirectCpu: 0, directMem: 1, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0, consumers: [], background: [] };
+	const busy: ResourceSample = { directCpu: 0.5, indirectCpu: 0, directMem: 1, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0, consumers: [], childProcesses: 0, background: [] };
 	store.setState(10, bridge({ pid: 10, cwd: "/here" }));
 	store.setState(10, bridge({ pid: 10, cwd: "/there" }), "box03");
 	assert.deepEqual(store.ordered().map((row) => [row.key, rowLabel(row)]), [["10", "here"], ["box03:10", "there@box03"]]);

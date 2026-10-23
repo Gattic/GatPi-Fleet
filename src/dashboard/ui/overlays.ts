@@ -698,7 +698,7 @@ export class Help implements Component {
 		}
 		body.push("");
 		const legend: [string, string][] = [
-			["STATES", `${theme.working("⠹")} working  ${theme.waiting("◆")} needs you  ${theme.waiting("◆?")} possibly stalled tool (no events, no CPU)  ${theme.error("✖")} error  ${theme.dim("○ ready  ◌ exited  ? no bridge")}`],
+			["STATES", `${theme.working("⠹")} working  ${theme.waiting("◆")} needs you  ${theme.waiting("◆?")} possibly stalled tool (quiet, no CPU, no live tool process)  ${theme.error("✖")} error  ${theme.dim("○ ready  ◌ exited  ? no bridge")}`],
 			["BARS", `${theme.direct("▓")} pi process  ${theme.indirect("▒")} indirect: tools, builds (systemd units), jobs, subagents`],
 			["", `${theme.accent("▰▱")} roadmap progress   ${theme.working("█")} working ${theme.waiting("▒")} waiting on you ${theme.dim("░")} idle (activity lane)`],
 			["COLUMNS", `${theme.text("CTX")} ${theme.muted("context used")}   ${theme.text("$")} ${theme.muted("API-equivalent cost, or tokens (173Mt) for unpriced models")}`],

@@ -197,7 +197,7 @@ answers, status and usage) and the `ask` command.
 | working · thinking / streaming / tool `<name>` / continuing | animated `⠋⠙⠹…` green, activity icon `✎` `⚙` `⟳` | bridge |
 | **needs you** (idle after settle) | `◆` amber, waiting timer | bridge |
 | error (last stop `error`, 429, provider exhausted) | `✖` red | bridge + quota file |
-| stalled? (working, no event > 3 min, pi + indirect CPU ≈ 0) — usually a blocking dialog | `◆?` amber-red, hint "v to peek" | dashboard-derived |
+| stalled? (working, no event > 3 min, pi + indirect CPU ≈ 0, no live tool process) — usually a blocking dialog | `◆?` amber-red, hint "v to peek" | dashboard-derived |
 | exited (bridge `bye quit` or pid gone) | `◌` grey, stays until dismissed; `r` resumes | dashboard |
 | unbridged (pi pid found in `/proc` without socket, e.g. started before install) | `?` dim; resources only | proc-sampler |
 

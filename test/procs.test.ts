@@ -67,6 +67,7 @@ test("busy descendants, short-lived children and PI_SESSION_ID orphans count as 
 	assert.ok(resources.indirectCpu - liveCpu > 0.1, `reaped bursts are counted (${resources.indirectCpu} total, ${liveCpu} live)`);
 	assert.ok(resources.indirectMem > 0);
 	assert.ok(resources.consumers.some((consumer) => consumer.kind === "self"));
+	assert.ok(resources.childProcesses >= 1, `live descendants are counted (${resources.childProcesses})`);
 });
 
 function userSystemdAvailable(): boolean {
