@@ -179,6 +179,8 @@ test("a remote host's relay indexes its session files and pushes their usage", a
 	await until(() => first.deltas.some((delta) => delta.scanned));
 	assert.equal(first.deltas[0].reset, true, "the first message replaces what an earlier relay delivered");
 	assert.deepEqual(first.deltas.slice(1).map((delta) => delta.reset), first.deltas.slice(1).map(() => false));
+	// Its session listing shows those totals beside each session, as on this machine.
+	assert.deepEqual((await first.remote.request("sessions", { cwd: project })).map((entry) => [entry.sessionId, entry.tokens, entry.cost]), [["remote-session", 1150, 0.5]]);
 
 	// Applied as pi-dash does, the host's usage is counted under its name.
 	const index = new UsageIndex({ sessionRoot: "", cachePath: "", retentionMs: 0, onUpdate: () => {} });

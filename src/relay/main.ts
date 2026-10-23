@@ -111,7 +111,7 @@ function serve(): void {
 			return lines;
 		},
 		projects: ({ live }) => listProjects(sessionRoot, live),
-		sessions: ({ cwd }) => listSessions(sessionRoot, cwd),
+		sessions: ({ cwd }) => listSessions(sessionRoot, cwd, usage),
 		launch: ({ cwd, label, sessionFile }) => launchSession({ cwd: cwd.replace(/^~(?=\/|$)/, homedir()), label, sessionFile }, sessionFile ? launchRows() : [], dir),
 		recover: ({ instanceId }) => {
 			const record = recovery.interrupted(instanceId);

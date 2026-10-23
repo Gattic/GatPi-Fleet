@@ -4,21 +4,32 @@ import { join } from "node:path";
 import { type FileMeta, scanBuffer } from "../usage/extract.ts";
 import type { UsageIndex } from "../usage/usage-index.ts";
 
-const HEAD_BYTES = 64 * 1024;
+const HEAD_CHUNK_BYTES = 64 * 1024;
+/** Sessions can open with entries far larger than a chunk (the harness records its ~60 KB system prompt first); the first prompt follows. */
+const HEAD_LIMIT_BYTES = 4 * 1024 * 1024;
 
 /** pi's per-project session directory name. */
 export function sessionDirName(cwd: string): string {
 	return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
-function readHead(path: string): FileMeta {
+/** The start of a session file, read until `wanted` is known or the file's first `HEAD_LIMIT_BYTES` are exhausted. */
+function readHead(path: string, wanted: "cwd" | "firstPrompt"): FileMeta {
 	const meta: FileMeta = {};
 	let fd: number | undefined;
 	try {
 		fd = openSync(path, "r");
-		const buffer = Buffer.alloc(HEAD_BYTES);
-		const read = readSync(fd, buffer, 0, HEAD_BYTES, 0);
-		scanBuffer(buffer.subarray(0, read), meta, []);
+		const chunk = Buffer.alloc(HEAD_CHUNK_BYTES);
+		// The incomplete last line of a chunk is scanned with the next one.
+		let pending = Buffer.alloc(0);
+		let position = 0;
+		while (meta[wanted] === undefined && position < HEAD_LIMIT_BYTES) {
+			const read = readSync(fd, chunk, 0, HEAD_CHUNK_BYTES, position);
+			if (read === 0) break;
+			position += read;
+			const data = Buffer.concat([pending, chunk.subarray(0, read)]);
+			pending = data.subarray(scanBuffer(data, meta, []));
+		}
 	} catch {
 	} finally {
 		if (fd !== undefined) closeSync(fd);
@@ -51,7 +62,7 @@ export function listProjects(sessionRoot: string, liveCwds: readonly string[]): 
 		}
 		if (!files.length) continue;
 		files.sort((a, b) => b.mtimeMs - a.mtimeMs);
-		const cwd = readHead(files[0].path).cwd;
+		const cwd = readHead(files[0].path, "cwd").cwd;
 		if (!cwd || !existsSync(cwd)) continue;
 		projects.set(cwd, { cwd, lastActive: files[0].mtimeMs, sessions: files.length });
 	}
@@ -71,8 +82,8 @@ export interface SessionSummary {
 	cost?: number;
 }
 
-/** Without a usage index (pi-dash-relay), sessions have no token and cost totals. */
-export function listSessions(sessionRoot: string, cwd: string, index?: UsageIndex): SessionSummary[] {
+/** Titles and totals come from `index` when it has the file (it covers the retention window); otherwise the title is read from the file's start. */
+export function listSessions(sessionRoot: string, cwd: string, index: UsageIndex): SessionSummary[] {
 	const dir = join(sessionRoot, sessionDirName(cwd));
 	let names: string[] = [];
 	try {
@@ -87,8 +98,8 @@ export function listSessions(sessionRoot: string, cwd: string, index?: UsageInde
 		} catch {
 			continue;
 		}
-		const indexed = index?.files.get(path);
-		const head = indexed ? undefined : readHead(path);
+		const indexed = index.files.get(path);
+		const head = indexed ? undefined : readHead(path, "firstPrompt");
 		let tokens: number | undefined;
 		let cost: number | undefined;
 		if (indexed) {
