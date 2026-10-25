@@ -289,6 +289,13 @@ rename, model/thinking changes, graceful close, side question, new session and
 resume in any known project on any host, and dismissing an exited session. Dismissing
 removes it from the list on the phone and in pi-dash; `d` in pi-dash removes it from
 the phone too. Abort/compact/close/new/resume require confirmation.
+In session detail, **Manage session → Search models** filters the session's offered
+models as you type and shows autocomplete suggestions. Search by model ID or provider;
+words match in any order, so `sol 6.1` finds `openai-codex/gpt-6.1-sol` when that
+model is offered by the session. Clear the search to browse the full list. The current
+model remains labelled below the field; only tapping a suggestion sends a model change.
+If a model is not offered by the host session, search cannot add it to the catalog.
+
 Side questions use the session's provider context and are billed separately.
 Slash commands, interactive extension dialogs and terminal attachment remain
 in desktop pi. Phone text is rendered as text, not executable terminal escapes,
