@@ -16,7 +16,8 @@ and on the other machines of your network (over ssh).
 - **Resources**: CPU, memory and GPU memory per session, split into the pi process itself (▓) and
   everything it started (▒): tool commands, LSP servers, subagents, background jobs, `build_project`
   systemd units, and detached processes that carry the session's `PI_SESSION_ID`. Running
-  `bg_run` jobs and subagents are listed by name (BG).
+  `bg_run` jobs and subagents are listed by name (BG), and the **jobs page** (`J`) shows every
+  running job and subagent across sessions with its age, CPU/memory when there is room, and the command or task it runs.
 - **API usage**: tokens and API-equivalent $ per session (direct, nested tool LLM calls,
   subagents), per-minute trends, separate multi-login account cooldowns,
   and a usage view for today / 7 days / 30 days in $ or tokens, across this machine and your
@@ -95,6 +96,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `R` | rename the session |
 | `d` | dismiss an exited row (here, in the gateway and on the phone; dismissing it on the phone removes it here too) |
 | `u` | usage view (`t` / `w` / `m`: today, 7 days, 30 days; `$`: cost or tokens) |
+| `J` | jobs page: every running `bg_run` job and subagent, with its session, age, CPU/memory (wide terminals) and the command or task it runs (`j` `k` / `PgUp` `PgDn` scroll, `Esc` back) |
 | `?` | help and legend |
 | `q` | quit (sessions keep running) |
 

@@ -30,11 +30,12 @@ export const MIN_MEM_SCALE = 4 * 1024 ** 3;
 /** CPU charts never scale below one core. */
 export const MIN_CPU_SCALE = 1;
 
-export type ViewName = "overview" | "detail" | "usage";
+export type ViewName = "overview" | "detail" | "jobs" | "usage";
 
 const TABS: [ViewName, string][] = [
 	["overview", "sessions"],
 	["detail", "detail"],
+	["jobs", "jobs"],
 	["usage", "usage"],
 ];
 

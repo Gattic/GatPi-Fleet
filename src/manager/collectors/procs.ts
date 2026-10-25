@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import type { GpuSample } from "./gpu.ts";
 
 export interface ProcStat {
@@ -48,9 +49,18 @@ export interface Background {
 	kind: "job" | "subagent";
 	/** Job name or subagent role. */
 	label: string;
+	/** The job's command or the subagent's task, when its record has it. */
+	detail?: string;
 	/** Epoch ms. */
 	startedAt: number;
+	/** CPU cores of the job's or subagent's process subtree at the last sample. */
+	cpu: number;
+	/** Resident memory of that subtree. */
+	rss: number;
 }
+
+/** The cached part of a [Background]; CPU and memory are measured each sample. */
+type BackgroundInfo = Omit<Background, "cpu" | "rss">;
 
 export interface ResourceSample {
 	directCpu: number;
@@ -133,6 +143,27 @@ function jsonString(path: string, field: string): string | undefined {
 	}
 }
 
+const BACKGROUND_DETAIL_LIMIT = 300;
+const BACKGROUND_LABEL_LIMIT = 120;
+
+/** Record text is drawn in a terminal, so strip controls before it reaches a view. */
+function safeText(value: string): string {
+	return stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, " ");
+}
+
+/** One line of a job's command or a subagent's task; records can be long. */
+function detailOf(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	const compact = safeText(value).replace(/\s+/g, " ").trim();
+	return compact.length > BACKGROUND_DETAIL_LIMIT ? `${compact.slice(0, BACKGROUND_DETAIL_LIMIT - 1)}…` : compact;
+}
+
+function labelOf(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	const compact = safeText(value).replace(/\s+/g, " ").trim();
+	return compact ? compact.slice(0, BACKGROUND_LABEL_LIMIT) : undefined;
+}
+
 function procKey(stat: ProcStat): string {
 	return `${stat.pid}:${stat.starttime}`;
 }
@@ -152,7 +183,7 @@ export class ProcSampler {
 	private readonly envCache = new Map<string, ProcEnv>();
 	private readonly argsCache = new Map<string, string[]>();
 	/** null: not background work. */
-	private readonly backgroundCache = new Map<string, Background | null>();
+	private readonly backgroundCache = new Map<string, BackgroundInfo | null>();
 
 	constructor(options: { procRoot?: string; appSlice?: string } = {}) {
 		this.procRoot = options.procRoot ?? "/proc";
@@ -225,6 +256,16 @@ export class ProcSampler {
 			const directTicks = prevRoot ? root.own - prevRoot.own : 0;
 			let indirectTicks = prevRoot ? root.child - prevRoot.child : 0;
 			let indirectMem = 0;
+			const ownDeltaOf = (stat: ProcStat): number => {
+				const prev = this.prevProcs.get(procKey(stat));
+				if (prev) return stat.own - prev.own;
+				return this.prevUptimeTicks !== undefined && stat.starttime > this.prevUptimeTicks ? stat.own : 0;
+			};
+			const childDeltaOf = (stat: ProcStat): number => {
+				const prev = this.prevProcs.get(procKey(stat));
+				if (prev) return stat.child - prev.child;
+				return this.prevUptimeTicks !== undefined && stat.starttime > this.prevUptimeTicks ? stat.child : 0;
+			};
 			for (const pid of members) {
 				const stat = procs.get(pid);
 				if (!stat) continue;
@@ -232,18 +273,28 @@ export class ProcSampler {
 				memberKeys.add(key);
 				const prev = this.prevProcs.get(key);
 				const started = this.prevUptimeTicks !== undefined && stat.starttime > this.prevUptimeTicks;
-				let ownDelta = 0;
+				const ownDelta = ownDeltaOf(stat);
 				if (prev) {
-					ownDelta = stat.own - prev.own;
 					indirectTicks += stat.own + stat.child - prev.own - prev.child;
 				} else if (started) {
-					ownDelta = stat.own;
 					indirectTicks += stat.own + stat.child;
 				}
 				indirectMem += stat.rss;
 				consumers.push({ kind: "process", label: this.labelOf(stat), cpu: cpuOf(ownDelta), rss: stat.rss });
 				const work = this.backgroundOf(stat);
-				if (work) background.push(work);
+				if (work) {
+					// A job supervisor's own RSS says little about the command it owns;
+					// report the whole subtree so a busy build is not shown as idle.
+					let cpuTicks = ownDelta + childDeltaOf(stat);
+					let rss = stat.rss;
+					for (const childPid of descendantsOf(stat.pid)) {
+						const child = procs.get(childPid);
+						if (!child) continue;
+						cpuTicks += ownDeltaOf(child) + childDeltaOf(child);
+						rss += child.rss;
+					}
+					background.push({ ...work, cpu: cpuOf(cpuTicks), rss });
+				}
 			}
 			// A process that exited since the last tick has its final CPU time folded
 			// into its parent's cutime; remove the part already counted.
@@ -395,7 +446,7 @@ export class ProcSampler {
 	 * name is in `<job>.json`. A subagent runs `pi --mode rpc --session-dir <cwd>/.pi/subagents/rpc-sessions/<id>`,
 	 * and its role is in `<cwd>/.pi/subagents/records/<id>.json`.
 	 */
-	private backgroundOf(stat: ProcStat): Background | undefined {
+	private backgroundOf(stat: ProcStat): BackgroundInfo | undefined {
 		const key = procKey(stat);
 		const cached = this.backgroundCache.get(key);
 		if (cached !== undefined) return cached ?? undefined;
@@ -404,8 +455,13 @@ export class ProcSampler {
 		const launch = supervisor >= 0 ? args[supervisor + 1] : undefined;
 		if (launch?.endsWith(".launch.json")) {
 			const record = launch.replace(/\.launch\.json$/, ".json");
-			const name = jsonString(record, "name");
-			const work: Background = { kind: "job", label: name ?? basename(record, ".json"), startedAt: this.startedAt(stat) };
+			const name = labelOf(jsonString(record, "name"));
+			const work: BackgroundInfo = {
+				kind: "job",
+				label: name ?? basename(record, ".json"),
+				detail: detailOf(jsonString(record, "command")),
+				startedAt: this.startedAt(stat),
+			};
 			// The job record is written just after the supervisor starts; look again until it has the name.
 			if (name) this.backgroundCache.set(key, work);
 			return work;
@@ -417,8 +473,14 @@ export class ProcSampler {
 		}
 		const sessionDir = args.includes("--session-dir") ? args[args.indexOf("--session-dir") + 1] : undefined;
 		const id = sessionDir ? basename(sessionDir) : undefined;
-		const role = sessionDir && id ? jsonString(join(dirname(dirname(sessionDir)), "records", `${id}.json`), "role") : undefined;
-		const work: Background = { kind: "subagent", label: role ?? id ?? "subagent", startedAt: this.startedAt(stat) };
+		const record = sessionDir && id ? join(dirname(dirname(sessionDir)), "records", `${id}.json`) : undefined;
+		const role = labelOf(record ? jsonString(record, "role") : undefined);
+		const work: BackgroundInfo = {
+			kind: "subagent",
+			label: role ?? id ?? "subagent",
+			detail: detailOf(record ? jsonString(record, "task") : undefined),
+			startedAt: this.startedAt(stat),
+		};
 		this.backgroundCache.set(key, work);
 		return work;
 	}

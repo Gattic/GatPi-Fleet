@@ -643,6 +643,7 @@ const HELP: [string, [string, string][]][] = [
 			["Tab", "next session that needs you (longest waiting first)"],
 			["⏎ / Esc", "detail view / back"],
 			["u", "usage view (t / w / m: today, 7d, 30d; $: cost or tokens)"],
+			["J", "jobs page: every running bg_run job and subagent, with what it runs"],
 			["q / Ctrl-c", "quit (sessions keep running)"],
 		],
 	],

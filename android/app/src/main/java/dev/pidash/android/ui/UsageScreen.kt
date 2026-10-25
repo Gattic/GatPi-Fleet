@@ -289,7 +289,7 @@ private fun tokens(count: Double): String {
     return count.roundToLong().toString()
 }
 
-private fun duration(ms: Long): String {
+internal fun duration(ms: Long): String {
     val seconds = (ms / 1000).coerceAtLeast(0)
     if (seconds < 60) return "${seconds}s"
     val minutes = seconds / 60

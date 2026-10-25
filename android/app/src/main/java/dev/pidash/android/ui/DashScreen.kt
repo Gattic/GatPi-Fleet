@@ -65,10 +65,13 @@ fun DashScreen(vm: DashViewModel = viewModel()) {
     BackHandler(screen != Screen.Sessions, vm::back)
     Scaffold(
         topBar = {
-            if (screen == Screen.Session) SessionTopBar(state.detail?.session, state.fresh, vm::back)
-            else DashTopBar(host, state.fresh)
+            when (screen) {
+                Screen.Session -> SessionTopBar(state.detail?.session, state.fresh, vm::back)
+                Screen.Jobs -> JobsTopBar(vm::back)
+                else -> DashTopBar(host, state.fresh)
+            }
         },
-        bottomBar = { if (screen != Screen.Session) DashNavigation(screen, state.fresh, vm) },
+        bottomBar = { if (screen != Screen.Session && screen != Screen.Jobs) DashNavigation(screen, state.fresh, vm) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
             StatusLine(state.message, busy)
@@ -83,6 +86,7 @@ fun DashScreen(vm: DashViewModel = viewModel()) {
                 when (screen) {
                     Screen.Sessions -> SessionsScreen(vm, state)
                     Screen.Session -> SessionScreen(vm, state, actionsEnabled)
+                    Screen.Jobs -> JobsScreen(vm, state)
                     Screen.Projects -> ProjectsScreen(vm, actionsEnabled)
                     Screen.Usage -> UsageScreen(vm, state.fresh)
                     Screen.Glasses -> GlassesScreen(vm)
@@ -122,6 +126,22 @@ private fun SessionTopBar(session: Session?, fresh: Boolean, onBack: () -> Unit)
             }
         },
         actions = { ConnectionChip(fresh, Modifier.padding(end = 12.dp)) },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun JobsTopBar(onBack: () -> Unit) {
+    TopAppBar(
+        navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to sessions") } },
+        title = {
+            Column {
+                Text("Jobs", style = MaterialTheme.typography.titleLarge)
+                Text("Background work from running sessions", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
     )
 }

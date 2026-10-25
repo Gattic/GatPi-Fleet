@@ -26,6 +26,7 @@ import { TextPane } from "./text-pane.ts";
 import { keyHints, theme } from "./theme.ts";
 import { GitView } from "./git-view.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
+import { jobPageSize, jobRows, renderJobs } from "./views/jobs.ts";
 import { renderOverview } from "./views/overview.ts";
 import { roadmapText } from "./views/roadmap.ts";
 import { background, hostStatusText, SPINNER, type ViewContext, type ViewName } from "./views/shared.ts";
@@ -58,8 +59,9 @@ const GIT_MESSAGE_LIMIT = 500;
 
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["u", "usage"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["Tab", "next ◆"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["?", "help"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["u", "usage"], ["J", "jobs"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["Tab", "next ◆"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["J", "jobs"], ["?", "help"]],
+	jobs: [["Esc", "back"], ["j/k", "scroll"], ["PgUp/PgDn", "page"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["?", "help"]],
 };
 
@@ -72,6 +74,7 @@ export class App implements Component {
 	private metric: UsageMetric = "cost";
 	private flash?: { text: string; error: boolean; until: number };
 	private spinnerIndex = 0;
+	private jobsOffset = 0;
 	private overlay?: OverlayHandle;
 	private peekTimer?: NodeJS.Timeout;
 	private peekFile?: string;
@@ -152,7 +155,13 @@ export class App implements Component {
 		this.saidArea = detail?.said;
 		const interrupted = this.services.interruptedSessions().length;
 		const banner = this.view === "overview" && interrupted > 0;
-		const body = detail ? detail.lines : this.view === "usage" ? renderUsage(ctx, width, height, this.range, this.metric) : renderOverview(ctx, width, height - Number(banner));
+		const body = detail
+			? detail.lines
+			: this.view === "usage"
+				? renderUsage(ctx, width, height, this.range, this.metric)
+				: this.view === "jobs"
+					? renderJobs(ctx, width, height, this.jobsOffset)
+					: renderOverview(ctx, width, height - Number(banner));
 		if (banner) body.splice(1, 0, fit(theme.waiting(` ! ${interrupted} interrupted session${interrupted === 1 ? "" : "s"} · e to review / resume`), width));
 		while (body.length < height - 1) body.push("");
 		const lines = [...body, this.footer(width, now)];
@@ -187,7 +196,18 @@ export class App implements Component {
 		if (data === "?") return this.showHelp();
 		if (data === "H") return this.openHermes();
 		if (data === "e") return this.pickInterrupted();
-		if (/^[1-9]$/.test(data)) {
+		if (data === "J") {
+			this.view = this.view === "jobs" ? "overview" : "jobs";
+			this.jobsOffset = 0;
+		} else if (this.view === "jobs" && (matchesKey(data, Key.up) || data === "k" || matchesKey(data, Key.down) || data === "j")) {
+			const delta = matchesKey(data, Key.up) || data === "k" ? -1 : 1;
+			this.jobsOffset = this.clampJobsOffset(this.jobsOffset + delta);
+		} else if (this.view === "jobs" && (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown))) {
+			const page = jobPageSize(this.services.tui.terminal.rows);
+			this.jobsOffset = this.clampJobsOffset(this.jobsOffset + (matchesKey(data, Key.pageUp) ? -page : page));
+		} else if (this.view === "jobs" && (/^[1-9]$/.test(data) || matchesKey(data, Key.tab))) {
+			// The jobs page is read-only; session selection keys do not apply here.
+		} else if (/^[1-9]$/.test(data)) {
 			this.select(store.bySlot(Number(data)));
 		} else if (matchesKey(data, Key.tab)) {
 			this.selectNextAttention();
@@ -197,7 +217,7 @@ export class App implements Component {
 			const delta = matchesKey(data, Key.up) || data === "k" ? -1 : 1;
 			this.select(rows[Math.max(0, Math.min(rows.length - 1, index + delta))]);
 		} else if (matchesKey(data, Key.enter)) {
-			this.view = this.view === "detail" ? "overview" : "detail";
+			if (this.view !== "jobs") this.view = this.view === "detail" ? "overview" : "detail";
 		} else if (matchesKey(data, Key.escape)) {
 			this.view = "overview";
 		} else if (data === "u") {
@@ -214,6 +234,7 @@ export class App implements Component {
 		} else if (data === "n") {
 			this.newSession();
 		} else {
+			if (this.view === "jobs") return;
 			const row = this.selected();
 			if (!row) {
 				if ("ogpixsvacCRrdMTZ".includes(data)) this.notify("No session selected", true);
@@ -222,6 +243,12 @@ export class App implements Component {
 			this.rowAction(row, data);
 		}
 		this.services.tui.requestRender();
+	}
+
+	private clampJobsOffset(offset: number): number {
+		const count = jobRows(this.services.store.ordered()).length;
+		const page = jobPageSize(this.services.tui.terminal.rows);
+		return Math.max(0, Math.min(offset, Math.max(0, count - page)));
 	}
 
 	/** Sessions that need attention (needs you, error, stalled), longest waiting first; each press selects the next one. */

@@ -264,6 +264,53 @@ test("Roadmap Viewer handles no selection, unpublished plans and plan clearing",
 	assert.deepEqual(ui.sent, []);
 });
 
+test("J opens the jobs page from sessions, scrolls background work and Esc returns", () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({ phase: "working" }));
+	const row = ui.store.rows.get("101");
+	assert.ok(row);
+	const now = Date.now();
+	row.resources = {
+		directCpu: 0, indirectCpu: 0, directMem: 0, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0,
+		consumers: [], childProcesses: 0,
+		background: Array.from({ length: 40 }, (_, index) => ({ kind: "job" as const, label: `job-${index}`, detail: `run ${index}`, startedAt: now - index * 60_000, cpu: 0, rss: 1e6 })),
+	};
+	ui.press("J");
+	const first = strip(ui.app.render(120).join("\n"));
+	assert.match(first, /Background work +40 jobs/);
+	assert.match(first, /1–35 of 40/);
+	assert.match(first, /run 0/);
+	ui.press("j");
+	assert.match(strip(ui.app.render(120).join("\n")), /2–36 of 40/);
+	ui.press("\x1b[6~");
+	assert.match(strip(ui.app.render(120).join("\n")), /6–40 of 40/);
+	ui.press("k");
+	assert.match(strip(ui.app.render(120).join("\n")), /5–39 of 40/);
+	ui.press("\x1b");
+	assert.doesNotMatch(strip(ui.app.render(120).join("\n")), /Background work/);
+	assert.match(strip(ui.app.render(120)[0]), /sessions/);
+});
+
+test("the jobs page ignores session selection keys", () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({ cwd: "/home/user/dev/alpha", phase: "working" }));
+	ui.store.setState(102, session({ pid: 102, cwd: "/home/user/dev/bravo", phase: "working" }));
+	const row = ui.store.rows.get("101");
+	assert.ok(row);
+	row.resources = {
+		directCpu: 0, indirectCpu: 0, directMem: 0, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0,
+		consumers: [], childProcesses: 0,
+		background: [{ kind: "job", label: "nightly-build", detail: "npm test", startedAt: Date.now(), cpu: 0.2, rss: 1e7 }],
+	};
+	ui.press("J", "2", "\t", "\x1b");
+	const lines = strip(ui.app.render(120).join("\n")).split("\n");
+	const alpha = lines.find((line) => line.includes("alpha"));
+	const bravo = lines.find((line) => line.includes("bravo"));
+	assert.ok(alpha && bravo);
+	assert.match(alpha, /^▌/, "the first session remains the fallback selection");
+	assert.doesNotMatch(bravo, /^▌/);
+});
+
 test("quit without pending work does not ask", () => {
 	const ui = harness("/nonexistent");
 	ui.press("q");

@@ -36,7 +36,11 @@ sufficient to dispatch a command.
 References are not credentials. Overview fields include revision, label/project,
 status/since, attention transition key, bridge connected flag, model/thinking,
 contextPercent, plan, resource/usage aggregates, and per-command disabled reasons.
-Unknown values are null, not invented zero measurements. Status `stalled` remains
+Unknown values are null, not invented zero measurements. `resources.background` lists live
+`bg_run` jobs and subagents with `kind`, `label`, nullable `detail` (the recorded command or
+task, control-stripped and capped at 300 characters), `startedAt`, `cpu` and `memory`; an
+exited session has an empty list. `cpu` and `memory` cover the job's or subagent's process
+subtree, not just its supervisor. `detail` is the recorded intent, not live output. Status `stalled` remains
 a CPU/inactivity heuristic that also requires no live tool subprocess. Overview
 deliberately omits prompts, replies, asks,
 raw errors, transcripts and tools.

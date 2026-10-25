@@ -1,6 +1,7 @@
 package dev.pidash.android
 
 import dev.pidash.g1.TextPager
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -16,6 +17,27 @@ class WireTest {
         assertNull(state.sessions.single().contextPercent)
         assertTrue(state.sessions.single().commands.containsKey("prompt"))
     }
+    @Test fun readsBackgroundJobsAndToleratesAHostThatDoesNotReportThem() {
+        val json = fixture()
+        val session = json.getJSONArray("sessions").getJSONObject(0)
+        val resources = JSONObject().put("cpu", 0.5).put("memory", 1e8).put("gpuMemory", JSONObject.NULL)
+            .put("background", JSONArray()
+                .put(JSONObject().put("kind", "job").put("label", "nightly-build").put("detail", "npm run test")
+                    .put("startedAt", 10L).put("cpu", 0.3).put("memory", 1e8))
+                .put(JSONObject().put("kind", "subagent").put("label", "coder").put("detail", JSONObject.NULL)
+                    .put("startedAt", 20L).put("cpu", 0.1).put("memory", 5e7)))
+        session.put("resources", resources)
+        val metrics = reduceFrame(Dashboard(), json, 10).sessions.single().metrics!!
+        assertEquals(listOf("job", "subagent"), metrics.background.map { it.kind })
+        assertEquals("npm run test", metrics.background[0].detail)
+        assertNull(metrics.background[1].detail)
+        assertEquals(10L, metrics.background[0].startedAt)
+        assertEquals(0.3, metrics.background[0].cpu, 0.0)
+        // A host that predates the field is not treated as an error.
+        resources.remove("background")
+        assertEquals(emptyList<Background>(), reduceFrame(Dashboard(), json, 10).sessions.single().metrics!!.background)
+    }
+
     @Test fun readsTheActualHostUsageFixture() {
         val usage = UsageReport.parse(JSONObject(javaClass.classLoader!!.getResource("usage.json")!!.readText()))
         assertFalse(usage.indexing)

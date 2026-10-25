@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-enum class Screen { Sessions, Session, Projects, Usage, Glasses, Pairing }
+enum class Screen { Sessions, Session, Jobs, Projects, Usage, Glasses, Pairing }
 
 data class Confirmation(val title: String, val description: String, val target: Session? = null, val command: JSONObject? = null, val project: Project? = null, val history: History? = null, val dismissReceipt: Boolean = false, val git: GitConfirmation? = null)
 

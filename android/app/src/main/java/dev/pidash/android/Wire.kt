@@ -8,7 +8,14 @@ fun JSONObject.number(key: String): Double? = if (isNull(key)) null else getDoub
 fun JSONArray.objects(): List<JSONObject> = (0 until length()).map(::getJSONObject)
 
 data class Plan(val title: String, val complete: Int, val total: Int, val active: String)
-data class Metrics(val cpu: Double, val memory: Double, val gpuMemory: Double?)
+/** Work a running session started in the background, with what it was asked to run. */
+data class Background(val kind: String, val label: String, val detail: String?, val startedAt: Long, val cpu: Double, val memory: Double) {
+    companion object {
+        fun parse(j: JSONObject) = Background(j.getString("kind"), j.getString("label"), j.text("detail"),
+            j.getLong("startedAt"), j.getDouble("cpu"), j.getDouble("memory"))
+    }
+}
+data class Metrics(val cpu: Double, val memory: Double, val gpuMemory: Double?, val background: List<Background>)
 data class Session(
     val id: String, val revision: String, val label: String, val project: String,
     val status: String, val statusLabel: String, val since: Long?, val attentionKey: String?,
@@ -30,7 +37,10 @@ data class Session(
                 status.getString("kind"), status.getString("label"), status.number("since")?.toLong(), j.text("attentionKey"),
                 j.getBoolean("connected"), j.text("model"), j.text("thinking"), j.number("contextPercent"),
                 p?.let { Plan(it.getString("title"), it.getInt("complete"), it.getInt("total"), it.text("active") ?: "") },
-                r?.let { Metrics(it.getDouble("cpu"), it.getDouble("memory"), it.number("gpuMemory")) }, u?.number("tokens"), u?.number("cost"),
+                r?.let {
+                    Metrics(it.getDouble("cpu"), it.getDouble("memory"), it.number("gpuMemory"),
+                        it.optJSONArray("background")?.objects()?.map(Background::parse) ?: emptyList())
+                }, u?.number("tokens"), u?.number("cost"),
                 commands.keys().asSequence().associateWith { commands.text(it) })
         }
     }

@@ -99,20 +99,31 @@ test("background jobs and subagents among a session's processes are recognised w
 	t.after(() => rmSync(project, { recursive: true, force: true }));
 	mkdirSync(join(project, ".pi", "jobs"), { recursive: true });
 	mkdirSync(join(project, ".pi", "subagents", "records"), { recursive: true });
-	writeFileSync(join(project, ".pi", "jobs", "job-1.json"), JSON.stringify({ jobId: "job-1", name: "nightly-build" }));
-	writeFileSync(join(project, ".pi", "subagents", "records", "sub_1.json"), JSON.stringify({ id: "sub_1", role: "coder" }));
-	// Stand-ins with the command lines GatPi-Harness uses; `; :` keeps sh (and its arguments) alive.
-	const job = `sh -c 'sleep 1000; :' /opt/GatPi-Harness/src/managed-job-supervisor.js ${join(project, ".pi", "jobs", "job-1.launch.json")}`;
-	const subagent = `sh -c 'sleep 1000; :' pi --mode rpc --session-dir ${join(project, ".pi", "subagents", "rpc-sessions", "sub_1")}`;
+	writeFileSync(join(project, ".pi", "jobs", "job-1.json"), JSON.stringify({ jobId: "job-1", name: "nightly-\u001b[31mbuild", command: "npm run test\n\u0000" }));
+	writeFileSync(join(project, ".pi", "subagents", "records", "sub_1.json"), JSON.stringify({ id: "sub_1", role: "coder\u001b[0m", task: "Review\t the\nparser" }));
+	// Stand-ins with the command lines GatPi-Harness uses; both keep sh alive so the process tree stays visible.
+	const job = `sh -c 'node -e "const b=Buffer.alloc(20*1024*1024); const t=Date.now(); while(Date.now()-t<1500){}" & sleep 3000' /opt/GatPi-Harness/src/managed-job-supervisor.js ${join(project, ".pi", "jobs", "job-1.launch.json")}`;
+	const subagent = `sh -c 'sleep 3000; :' pi --mode rpc --session-dir ${join(project, ".pi", "subagents", "rpc-sessions", "sub_1")}`;
 	const root = spawn("sh", ["-c", `${job} & ${subagent} & wait`], { detached: true, stdio: "ignore" });
 	children.push(root);
+	const sampler = new ProcSampler();
 	await sleep(300);
-	const resources = new ProcSampler().sample([{ key: "t", pid: root.pid as number }], undefined).resources.get("t");
+	sampler.sample([{ key: "t", pid: root.pid as number }], undefined);
+	await sleep(500);
+	const resources = sampler.sample([{ key: "t", pid: root.pid as number }], undefined).resources.get("t");
 	assert.ok(resources);
-	const found = resources.background.map((work) => [work.kind, work.label]).sort();
+	const found = resources.background.map((work) => [work.kind, work.label, work.detail]).sort();
 	assert.deepEqual(found, [
-		["job", "nightly-build"],
-		["subagent", "coder"],
+		["job", "nightly-build", "npm run test"],
+		["subagent", "coder", "Review the parser"],
 	]);
-	for (const work of resources.background) assert.ok(Math.abs(Date.now() - work.startedAt) < 5000, `start time is the process start (${work.startedAt})`);
+	for (const work of resources.background) {
+		assert.ok(Math.abs(Date.now() - work.startedAt) < 5000, `start time is the process start (${work.startedAt})`);
+		assert.ok(Number.isFinite(work.cpu) && work.cpu >= 0, `CPU measured (${work.cpu})`);
+		assert.ok(Number.isFinite(work.rss) && work.rss > 0, `memory measured (${work.rss})`);
+	}
+	const jobWork = resources.background.find((work) => work.kind === "job");
+	assert.ok(jobWork);
+	assert.ok(jobWork.rss > 20 * 1024 * 1024, `job memory includes its command subtree (${jobWork.rss})`);
+	assert.ok(jobWork.cpu > 0, `job CPU includes its command subtree (${jobWork.cpu})`);
 });

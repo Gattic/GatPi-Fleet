@@ -468,6 +468,26 @@ test("mobile contract fixtures and projections keep missing metrics missing and 
 	assert.deepEqual(schemas, JSON.parse(JSON.stringify({ command: CommandRequestSchema, git: GitRequestSchema, launch: LaunchRequestSchema, subscribe: SubscriptionSchema })));
 });
 
+test("the overview projects live background work with its command and drops it for an exited session", () => {
+	const runtime = new ManagerRuntime();
+	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	const row = runtime.store.rows.get("11")!;
+	row.resources = {
+		directCpu: 0.5, indirectCpu: 0.2, directMem: 1e8, indirectMem: 2e8, directGpuMem: 0, indirectGpuMem: 0,
+		consumers: [], childProcesses: 1,
+		background: [
+			{ kind: "job", label: "nightly-\x1b[31mbuild", detail: "npm run test\x1b[31m\u0000", startedAt: 10, cpu: 0.3, rss: 1e8 },
+			{ kind: "subagent", label: "coder", detail: "Review the parser", startedAt: 20, cpu: 0.1, rss: 5e7 },
+		],
+	};
+	assert.deepEqual(summary(row).resources?.background, [
+		{ kind: "job", label: "nightly-build", detail: "npm run test", startedAt: 10, cpu: 0.3, memory: 1e8 },
+		{ kind: "subagent", label: "coder", detail: "Review the parser", startedAt: 20, cpu: 0.1, memory: 5e7 },
+	]);
+	row.exitedAt = 30;
+	assert.deepEqual(summary(row).resources?.background, [], "an exited session has no live background work");
+});
+
 test("usage is still indexing until this machine and every connected host have scanned; a host that is not connected is not waited for", () => {
 	const runtime = new ManagerRuntime({ hosts: ["up", "down"] });
 	runtime.network.remote("up").status = { kind: "online", since: 1, hostname: "up" };

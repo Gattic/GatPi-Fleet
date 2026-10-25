@@ -133,7 +133,7 @@ private fun OverviewCard(session: Session, canDismiss: Boolean, onDismiss: () ->
     }
 }
 
-private fun mib(bytes: Double) = "%.0f MiB".format(bytes / 1048576)
+internal fun mib(bytes: Double) = "%.0f MiB".format(bytes / 1048576)
 
 @Composable
 private fun ExchangeCard(detail: Detail) {

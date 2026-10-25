@@ -10,6 +10,7 @@ import { AskView } from "../src/dashboard/ui/overlays.ts";
 import { TextPane } from "../src/dashboard/ui/text-pane.ts";
 import { theme } from "../src/dashboard/ui/theme.ts";
 import { renderDetail } from "../src/dashboard/ui/views/detail.ts";
+import { renderJobs } from "../src/dashboard/ui/views/jobs.ts";
 import { renderOverview } from "../src/dashboard/ui/views/overview.ts";
 import type { ViewContext } from "../src/dashboard/ui/views/shared.ts";
 import { renderUsage } from "../src/dashboard/ui/views/usage.ts";
@@ -75,6 +76,7 @@ test("views fit the terminal at 80, 100 and 140 columns and show each state", ()
 		for (const [name, lines] of [
 			["overview", renderOverview(ctx, width, 30)],
 			["detail", renderDetail(ctx, width, 40, new TextPane()).lines],
+			["jobs", renderJobs(ctx, width, 30, 0)],
 			["usage", renderUsage(ctx, width, 30, "today", "cost")],
 		] as const) {
 			assert.ok(lines.length <= 39, `${name} fits the height`);
@@ -261,8 +263,8 @@ test("background jobs and subagents show as a BG badge on wide terminals and as 
 		consumers: [],
 		childProcesses: 0,
 		background: [
-			{ kind: "job", label: "nightly-build", startedAt: now - 12 * 60_000 },
-			{ kind: "subagent", label: "coder", startedAt: now - 3 * 60_000 },
+			{ kind: "job", label: "nightly-build", detail: "npm run test", startedAt: now - 12 * 60_000, cpu: 0.3, rss: 120 * 1024 ** 2 },
+			{ kind: "subagent", label: "coder", detail: "Review the parser", startedAt: now - 3 * 60_000, cpu: 0.1, rss: 40 * 1024 ** 2 },
 		],
 	};
 	ctx.selected = row;
@@ -272,6 +274,63 @@ test("background jobs and subagents show as a BG badge on wide terminals and as 
 	assert.match(wide, /^ BG +job nightly-build 12m {2}· {2}subagent coder 3m00s/m);
 	assert.doesNotMatch(strip(renderOverview(ctx, 120, 40).join("\n")), / BG +\$/m, "no column when PLAN needs the room");
 	assert.match(strip(renderDetail(ctx, 120, 40, new TextPane()).lines.join("\n")), /^ BG +job nightly-build/m);
+});
+
+test("the jobs page lists every live job with its command and drops exited sessions", () => {
+	const ctx = context();
+	const first = ctx.store.rows.get("101");
+	assert.ok(first);
+	first.resources = {
+		directCpu: 0.1, indirectCpu: 0, directMem: 1e8, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0,
+		consumers: [], childProcesses: 0,
+		background: [
+			{ kind: "job", label: "nightly-build", detail: "npm run test", startedAt: ctx.now - 12 * 60_000, cpu: 0.3, rss: 120 * 1024 ** 2 },
+			{ kind: "subagent", label: "coder", detail: "Review the parser", startedAt: ctx.now - 3 * 60_000, cpu: 0.1, rss: 40 * 1024 ** 2 },
+		],
+	};
+	const second = ctx.store.rows.get("102");
+	assert.ok(second);
+	second.resources = {
+		directCpu: 0.1, indirectCpu: 0, directMem: 1e8, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0,
+		consumers: [], childProcesses: 0,
+		background: [{ kind: "subagent", label: "reviewer", detail: "Audit the diff", startedAt: ctx.now - 60_000, cpu: 0.2, rss: 50 * 1024 ** 2 }],
+	};
+	const wide = strip(renderJobs(ctx, 120, 24, 0).join("\n"));
+	assert.match(wide, /Background work +1 job · 2 subagents +across 2 sessions/);
+	assert.match(wide, /^ 1 project-101 +job +nightly-build +12m +0\.3c +120M +npm run test/m);
+	assert.match(wide, /^ 1 project-101 +subagent +coder +3m00s +0\.1c +40M +Review the parser/m);
+	assert.match(wide, /^ 2 project-102 +subagent +reviewer +1m00s +0\.2c +50M +Audit the diff/m);
+	// The narrow layout keeps WHAT and drops the resource columns.
+	const narrow = strip(renderJobs(ctx, 80, 24, 0).join("\n"));
+	assert.doesNotMatch(narrow, / CPU +MEM /);
+	assert.match(narrow, /npm run test/);
+	assert.match(narrow, /Audit the diff/);
+	for (const width of [60, 80, 100, 120]) {
+		for (const line of renderJobs(ctx, width, 24, 0)) assert.ok(visibleWidth(line) <= width, `jobs line fits ${width}: ${strip(line)}`);
+	}
+	// An exited session keeps its resources in the store, but its jobs are no longer live.
+	ctx.store.bye(102, "quit");
+	assert.doesNotMatch(strip(renderJobs(ctx, 120, 24, 0).join("\n")), /reviewer/);
+	assert.match(strip(renderJobs(ctx, 120, 24, 0).join("\n")), /Background work +1 job · 1 subagent +across 1 session/);
+});
+
+test("the jobs page shows an empty state and scrolls through a bounded page", () => {
+	const ctx = context();
+	assert.match(strip(renderJobs(ctx, 120, 24, 0).join("\n")), /No background jobs or subagents/);
+	const row = ctx.store.rows.get("101");
+	assert.ok(row);
+	row.resources = {
+		directCpu: 0, indirectCpu: 0, directMem: 0, indirectMem: 0, directGpuMem: 0, indirectGpuMem: 0,
+		consumers: [], childProcesses: 0,
+		background: Array.from({ length: 30 }, (_, index) => ({ kind: "job" as const, label: `job-${index}`, detail: `run ${index}`, startedAt: ctx.now - index * 60_000, cpu: 0, rss: 1e6 })),
+	};
+	const first = strip(renderJobs(ctx, 120, 24, 0).join("\n"));
+	assert.match(first, /1–19 of 30/);
+	assert.match(first, /job-0/);
+	assert.doesNotMatch(first, /job-25/);
+	const last = strip(renderJobs(ctx, 120, 24, 11).join("\n"));
+	assert.match(last, /12–30 of 30/);
+	assert.match(last, /job-29/);
 });
 
 test("sessions on models without a price show tokens instead of an empty cost", () => {

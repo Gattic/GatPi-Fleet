@@ -50,7 +50,16 @@ export function summary(row: SessionRow, gpuAvailable = false) {
 		connected: row.connected, model: clean(b?.model, 500), thinking: clean(b?.thinking, 20),
 		contextPercent: b?.context?.percent ?? null,
 		plan: b?.plan ? { title: clean(b.plan.title), complete: b.plan.complete, total: b.plan.total, blocked: b.plan.blocked, active: clean(b.plan.activePath.map((s) => s.title).join(" / ")) } : null,
-		resources: r ? { cpu: r.directCpu + r.indirectCpu, memory: r.directMem + r.indirectMem, gpuMemory: gpuAvailable ? r.directGpuMem + r.indirectGpuMem : null } : null,
+		resources: r ? {
+			cpu: r.directCpu + r.indirectCpu,
+			memory: r.directMem + r.indirectMem,
+			gpuMemory: gpuAvailable ? r.directGpuMem + r.indirectGpuMem : null,
+			// Live background work with what it was asked to run; an exited session has none.
+			background: row.exitedAt === undefined ? r.background.map((work) => ({
+				kind: work.kind, label: clean(work.label, 120), detail: clean(work.detail, 300),
+				startedAt: work.startedAt, cpu: work.cpu, memory: work.rss,
+			})) : [],
+		} : null,
 		usage: b ? { tokens: b.usage.direct.tokens + b.usage.indirect.tokens, cost: b.usage.direct.cost + b.usage.indirect.cost } : null,
 		commands: Object.fromEntries(COMMANDS.map((kind) => [kind, disabled(row, kind)])),
 	};

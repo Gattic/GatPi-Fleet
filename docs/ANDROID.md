@@ -247,10 +247,13 @@ pairing/drafts; revoke the old device token and re-pair afterward.
 The app has five tabs: **Sessions**, **Projects** (new/resume in any known project),
 **Usage**, **Glasses** and **Pairing**. Tapping a session opens its detail, grouped into
 status, latest exchange, prompt, glasses, side question, recent tools and session
-management.
+management. The **Jobs** chip on Sessions opens a read-only jobs page: every running
+`bg_run` job and subagent across sessions, with its session, age, CPU/memory and the
+recorded command or task it runs. Tapping a job opens its session. The jobs page is a
+sub-page of Sessions, not a sixth tab.
 
-The overview shows status, project, model, context and roadmap progress. Filter
-by text or attention. Detail contains bounded latest prompt/reply, recent tools,
+The overview shows status, project, model, context and roadmap progress, plus a `BG`
+line naming the session's background jobs and subagents. Filter by text or attention. Detail contains bounded latest prompt/reply, recent tools,
 resources, usage and side-question answers; it is not a full transcript browser.
 The arrows beside the prompt step through the session's earlier prompts, as ↑ and ↓
 do in pi's editor: each is shown in place of the draft, and stepping down past the
