@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GitCli } from "../manager/actions/git.ts";
 import { launchSession } from "../manager/actions/launch.ts";
+import { restartSession } from "../manager/actions/restart.ts";
 import { readHardcopy, requestHardcopy } from "../manager/actions/peek.ts";
 import { listProjects, listSessions } from "../manager/actions/sessions.ts";
 import { BridgeHub, pidAlive, UncertainCommandError } from "../manager/collectors/bridges.ts";
@@ -17,7 +18,7 @@ import { rowCwd, Store } from "../manager/model/store.ts";
 import { agentDir, RecoveryJournal } from "../manager/recovery.ts";
 import type { IndexUpdate } from "../manager/usage/types.ts";
 import { UsageIndex, USAGE_RETENTION_MS } from "../manager/usage/usage-index.ts";
-import { cacheDir, diffState, LineDecoder, PROTOCOL_VERSION, type SessionState, socketDir } from "../protocol/index.ts";
+import { cacheDir, diffState, LineDecoder, PROTOCOL_VERSION, sameSession, type SessionState, socketDir } from "../protocol/index.ts";
 import { chunkUsage, encodeRelay, GIT_METHODS, RELAY_VERSION, type RelayMessage, type RelayOp, type RelayOps, type RelayRequest } from "./protocol.ts";
 
 type Handlers = { [K in RelayOp]: (params: RelayOps[K]["params"]) => RelayOps[K]["result"] | Promise<RelayOps[K]["result"]> };
@@ -113,6 +114,11 @@ function serve(): void {
 		projects: ({ live }) => listProjects(sessionRoot, live),
 		sessions: ({ cwd }) => listSessions(sessionRoot, cwd, usage),
 		launch: ({ cwd, label, sessionFile }) => launchSession({ cwd: cwd.replace(/^~(?=\/|$)/, homedir()), label, sessionFile }, sessionFile ? launchRows() : [], dir),
+		restart: ({ target }) => {
+			const row = launchRows().find((row) => row.bridge && sameSession(row.bridge, target));
+			if (!row) throw new Error("Session changed; refresh before restarting");
+			return restartSession(row, hub, launchRows, dir);
+		},
 		recover: ({ instanceId }) => {
 			const record = recovery.interrupted(instanceId);
 			return launchSession({ cwd: record.cwd, label: record.name ?? "recovered", sessionFile: record.sessionFile }, launchRows(), dir);

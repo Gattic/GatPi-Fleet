@@ -19,8 +19,9 @@ export const CommandSchema = Type.Union([
 	object({ kind: Type.Literal("model"), provider: text(200), id: text(300) }),
 	object({ kind: Type.Literal("thinking"), level: Type.Union(THINKING_LEVELS.map((level) => Type.Literal(level))) }),
 	object({ kind: Type.Literal("abort") }), object({ kind: Type.Literal("shutdown") }), object({ kind: Type.Literal("compact") }),
-	// Removes an exited session's row; the managers act on it, not the bridge.
-	object({ kind: Type.Literal("dismiss") }),
+	object({ kind: Type.Literal("reload") }), object({ kind: Type.Literal("suggest") }),
+	// The managers act on these, not the bridge.
+	object({ kind: Type.Literal("restart") }), object({ kind: Type.Literal("dismiss") }),
 ]);
 export const CommandRequestSchema = object({ requestId: RequestId, epoch: RequestId, revision: Reference, command: CommandSchema });
 export const LaunchRequestSchema = object({ requestId: RequestId, epoch: RequestId, projectId: Reference, sessionRef: Type.Optional(Reference) });

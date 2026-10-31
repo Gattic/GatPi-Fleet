@@ -83,7 +83,7 @@ internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean
         GitCard(vm, session, state.fresh, enabled, can("prompt"))
         detail.error?.let { Notice(it, Pi.Error) }
         ExchangeCard(detail)
-        PromptCard(vm, session, detail.suggestion, detail.prompts, can("prompt"))
+        PromptCard(vm, session, detail.suggestion, detail.prompts, can("prompt"), can("suggest"))
         SessionGlassesCard(vm, detail)
         SideQuestionCard(vm, session, detail.asks, can("ask"))
         ToolsCard(detail.tools)
@@ -151,7 +151,7 @@ private fun ExchangeCard(detail: Detail) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?, prompts: List<String>, enabled: Boolean) {
+private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?, prompts: List<String>, enabled: Boolean, canSuggest: Boolean) {
     val drafts = vm.drafts
     val draft by drafts.text.collectAsStateWithLifecycle()
     val recall by drafts.recall.collectAsStateWithLifecycle()
@@ -161,6 +161,8 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
     var field by remember { mutableStateOf(TextFieldValue(drafts.text.value, TextRange(drafts.text.value.length))) }
     LaunchedEffect(drafts) { drafts.text.collect { text -> if (text != field.text) field = TextFieldValue(text, TextRange(text.length)) } }
     SectionCard("Prompt") {
+        FilledTonalButton(onClick = { vm.suggest(session) }, enabled = canSuggest) { Text("New prompt suggestion") }
+        Hint("Requests a fresh suggestion from pi; it may use the configured advisory model. Review it before sending.")
         suggestion?.let {
             OutlinedButton(onClick = { drafts.edit(it) }) {
                 Icon(Icons.Filled.Edit, null, Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.width(ButtonDefaults.IconSpacing)); Text("Edit suggested prompt")
@@ -281,8 +283,8 @@ private fun ManageCard(vm: DashViewModel, session: Session, models: List<String>
         Text("Run control", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val danger = ButtonDefaults.outlinedButtonColors(contentColor = Pi.Error)
-            listOf("abort" to "Abort", "compact" to "Compact", "shutdown" to "Close gracefully").forEach { (kind, label) ->
-                val destructive = kind != "compact"
+            listOf("abort" to "Abort", "compact" to "Compact", "reload" to "Reload", "restart" to "Restart", "shutdown" to "Close gracefully").forEach { (kind, label) ->
+                val destructive = kind in listOf("abort", "restart", "shutdown")
                 OutlinedButton(
                     onClick = { vm.confirm(session, kind) }, enabled = can(kind),
                     colors = if (destructive) danger else ButtonDefaults.outlinedButtonColors(),

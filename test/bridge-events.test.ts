@@ -5,7 +5,7 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import piDashBridge from "../src/bridge/index.ts";
 import { LineDecoder, MAX_PROMPTS, socketPath, type BridgeMessage, type SessionState } from "../src/protocol/index.ts";
 import { RecoveryJournal } from "../src/manager/recovery.ts";
@@ -23,9 +23,16 @@ function startBridge(t: TestContext, entries: unknown[] = []) {
 	const session = { id: "test", file: undefined as string | undefined };
 	const handlers = new Map<string, Handler>();
 	const bus = new Map<string, (data: unknown) => void>();
+	const commands = new Map<string, { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
+	const sent: { text: string; options: Parameters<ExtensionAPI["sendUserMessage"]>[1] }[] = [];
 	const pi = {
+		registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => commands.set(name, command),
+		sendUserMessage: (text: string, options: Parameters<ExtensionAPI["sendUserMessage"]>[1]) => sent.push({ text, options }),
 		on: (name: string, handler: Handler) => handlers.set(name, handler),
-		events: { on: (name: string, handler: (data: unknown) => void) => bus.set(name, handler) },
+		events: {
+			on: (name: string, handler: (data: unknown) => void) => bus.set(name, handler),
+			emit: (name: string, data: unknown) => bus.get(name)?.(data),
+		},
 		getSessionName: () => undefined,
 	} as unknown as ExtensionAPI;
 	const ctx = {
@@ -62,8 +69,67 @@ function startBridge(t: TestContext, entries: unknown[] = []) {
 			await closed;
 		}
 	}
-	return { handlers, snapshot, root, session, ctx, publish: (data: unknown) => bus.get("roadmap:changed")!(data) };
+	async function command(command: object) {
+		const target = await snapshot();
+		const socket = connect(socketPath(process.pid));
+		socket.setEncoding("utf8");
+		const decoder = new LineDecoder();
+		try {
+			socket.write(JSON.stringify({ type: "command", id: 1, target, command }) + "\n");
+			for await (const chunk of socket.iterator({ destroyOnReturn: false })) {
+				for (const message of decoder.push(String(chunk)) as BridgeMessage[]) if (message.type === "ack") return message;
+			}
+			throw new Error("bridge closed before acknowledgement");
+		} finally {
+			const closed = once(socket, "close");
+			socket.destroy();
+			await closed;
+		}
+	}
+	return { commands, sent, bus, command, handlers, snapshot, root, session, ctx, publish: (data: unknown) => bus.get("roadmap:changed")!(data) };
 }
+
+test("suggest requests the existing publisher, propagates rejection, and never submits a prompt", async (t) => {
+	const { command, bus, sent, snapshot, ctx } = startBridge(t);
+	const missing = await command({ kind: "suggest" });
+	assert.equal(missing.ok, false);
+	assert.match(missing.error!, /prompt-suggestions.*update/i);
+	let requests = 0;
+	bus.set("prompt-suggestion:request", (data) => {
+		requests++;
+		bus.get("prompt-suggestion:changed")!("Inspect the next task");
+		(data as { respond: (error: string | null) => void }).respond(null);
+	});
+	assert.equal((await command({ kind: "suggest" })).ok, true);
+	assert.equal((await snapshot()).suggestion, "Inspect the next task");
+	assert.deepEqual(sent, []);
+	assert.equal(requests, 1);
+	bus.set("prompt-suggestion:request", (data) => (data as { respond: (error: string | null) => void }).respond("Keep the desktop draft"));
+	assert.equal((await command({ kind: "suggest" })).error, "Keep the desktop draft");
+	t.mock.method(ctx, "isIdle", () => false);
+	assert.match((await command({ kind: "suggest" })).error!, /idle/);
+	assert.deepEqual(sent, []);
+});
+
+test("reload is acknowledged as a typed command and dispatches the command-context reload, never an agent prompt", async (t) => {
+	const { commands, sent, snapshot, ctx } = startBridge(t);
+	const target = await snapshot();
+	const socket = connect(socketPath(process.pid));
+	socket.setEncoding("utf8");
+	const decoder = new LineDecoder();
+	t.after(() => socket.destroy());
+	socket.write(JSON.stringify({ type: "command", id: 1, target, command: { kind: "reload" } }) + "\n");
+	for await (const chunk of socket.iterator({ destroyOnReturn: false })) {
+		const ack = (decoder.push(String(chunk)) as BridgeMessage[]).find((m) => m.type === "ack");
+		if (ack?.type === "ack") { assert.equal(ack.ok, true); break; }
+	}
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	assert.deepEqual(sent, [{ text: "/pi-dash-reload", options: { deliverAs: "followUp", expandPromptTemplates: true } }]);
+	let reloaded = false;
+	await commands.get("pi-dash-reload")!.handler("", { ...ctx, reload: async () => { reloaded = true; } } as ExtensionCommandContext);
+	assert.equal(reloaded, true);
+	await assert.rejects(commands.get("pi-dash-reload")!.handler("", { ...ctx, isIdle: () => false } as ExtensionCommandContext), /idle/);
+});
 
 test("bridge tracks file/name, retains reload recovery until replacement, and clears intentional session exits", async (t) => {
 	const { handlers, snapshot, root, session, ctx } = startBridge(t);

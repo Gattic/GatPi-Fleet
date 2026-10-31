@@ -35,6 +35,9 @@
         "rename": null,
         "model": null,
         "thinking": null,
+        "reload": null,
+        "restart": "Restart requires a saved conversation",
+        "suggest": null,
         "dismiss": "Only exited sessions can be dismissed"
       }
     }

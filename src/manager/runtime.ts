@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { cacheDir, socketDir } from "../protocol/index.ts";
 import { launchSession } from "./actions/launch.ts";
+import { restartSession } from "./actions/restart.ts";
 import { agentDir, RecoveryJournal, type InterruptedSession } from "./recovery.ts";
 import { BridgeHub, pidAlive } from "./collectors/bridges.ts";
 import { GpuMonitor } from "./collectors/gpu.ts";
@@ -101,6 +102,18 @@ export class ManagerRuntime {
 	}
 
 	private changed(): void { for (const listener of this.listeners) listener(); }
+
+	async restart(row: SessionRow): Promise<void> {
+		if (!row.bridge) throw new Error("Session has no bridge");
+		const { host, slot, key } = row;
+		const screen = host === undefined
+			? await restartSession(row, this.hub, () => {
+				this.store.applySample(this.sampler.sample(this.store.targets(), this.gpu.latest), this.gpu.latest, Date.now());
+				return hostRows(this.store.ordered(), undefined);
+			}, this.runtimeDir)
+			: await this.network.remote(host).request("restart", { target: { pid: row.pid, sessionId: row.bridge.sessionId, instanceId: row.bridge.instanceId } }, 25_000);
+		this.store.expectLaunch(screen, slot, key, host);
+	}
 
 	/** Removes an exited session's row here and in this user's other pi-dash processes (dashboard, gateway). */
 	async dismiss(row: SessionRow): Promise<void> {

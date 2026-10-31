@@ -141,6 +141,18 @@ test("a prompt from the dashboard runs a turn: working → tool → idle with us
 	assert.deepEqual(state.timeline.map((entry) => entry.state), ["idle", "working", "waiting"]);
 });
 
+test("a typed suggestion request refreshes the shared suggestion without writing or running a prompt", async () => {
+	const before = current();
+	const lines = sessionLines();
+	await hub.send(before, { kind: "suggest" });
+	await waitFor("requested suggestion", () => current().suggestion === "Run the focused tests next");
+	assert.equal(sessionLines(), lines, "suggesting never writes to the conversation");
+	assert.equal(current().lastPrompt, before.lastPrompt);
+	assert.equal(current().lastSettledAt, before.lastSettledAt);
+	assert.deepEqual(current().asks, before.asks);
+	assert.deepEqual(current().usage, before.usage);
+});
+
 test("interactive pi persists its exact identity and custom session directory for crash recovery", () => {
 	const journal = new RecoveryJournal(join(root, "agent"), () => undefined);
 	const record = journal.list()[0];
@@ -192,14 +204,17 @@ test("abort stops the run without reporting an error or replacing the latest rep
 	assert.equal(current().lastSaid, "echo: steered");
 });
 
-test("a reload rebuilds the latest reply from history, skipping the aborted run's tool-call text", async () => {
+test("a typed mobile reload preserves the conversation and rebuilds its latest reply without an agent turn", async () => {
 	const prompts = ["two\nlines", "sleep 1", "sleep 2", "steered", "sleep 30"];
 	assert.deepEqual(current().prompts, prompts, "each prompt once, where it was last sent, the steer included");
-	execFileSync("screen", ["-S", screenName, "-p", "0", "-X", "stuff", "/reload\r"]);
+	const before = current();
+	await hub.send(before, { kind: "reload" });
 	await waitFor("bye reload", () => byes.includes("reload"));
-	states.delete(pid);
-	await waitFor("snapshot after reload", () => states.get(pid));
+	await waitFor("snapshot after reload", () => states.get(pid)?.instanceId !== before.instanceId && states.get(pid));
 	const state = current();
+	assert.equal(state.sessionId, before.sessionId);
+	assert.equal(state.sessionFile, before.sessionFile);
+	assert.notEqual(state.instanceId, before.instanceId);
 	assert.equal(state.phase, "idle");
 	assert.equal(state.lastSaid, "echo: steered");
 	assert.ok(state.lastSettledAt, "a session with history is waiting on the user, not fresh");

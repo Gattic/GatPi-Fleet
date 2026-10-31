@@ -28,6 +28,7 @@ class DashViewModel @JvmOverloads constructor(
     val confirmation = MutableStateFlow<Confirmation?>(null)
     /** The project choices fetched for this visit to Projects; null until they arrive. */
     val projects = MutableStateFlow<Projects?>(null)
+    val projectFilter = MutableStateFlow("")
     val history = MutableStateFlow<List<History>>(emptyList())
     val project = MutableStateFlow<Project?>(null)
     /** The report and its receipt-time anchor survive Activity recreation together. */
@@ -61,6 +62,7 @@ class DashViewModel @JvmOverloads constructor(
         run { repository.command(session, command) }
     }
     fun ask(session: Session) { run { repository.command(session, JSONObject().put("kind", "ask").put("question", ask.value)) } }
+    fun suggest(session: Session) { run { repository.command(session, JSONObject().put("kind", "suggest")) } }
     /** Removes an exited session from the list, here and in pi-dash, then returns to the list. */
     fun dismiss(session: Session) { run { repository.command(session, JSONObject().put("kind", "dismiss")); back() } }
     fun confirm(session: Session, kind: String) {
@@ -68,6 +70,8 @@ class DashViewModel @JvmOverloads constructor(
             "abort" -> "Abort run?" to "Abort the current run? This does not close pi."
             "shutdown" -> "Close session?" to "Close gracefully after the current run and queued messages finish? Abort is a separate action."
             "compact" -> "Compact context?" to "Summarise this session's context now using its model? Only available while idle."
+            "reload" -> "Reload session?" to "Reload pi's extensions, skills, prompts, themes and context files without closing pi or clearing the conversation. Only available while idle. Select the reloaded session from Sessions afterward."
+            "restart" -> "Restart session?" to "Close pi gracefully, then resume this same saved conversation in a new pi process on the same host. Only available while idle. Select the restarted session from Sessions afterward."
             else -> error("Unsupported confirmation")
         }
         confirmation.value = Confirmation(title, "${session.label}\n${session.project}\n${session.statusLabel}\n\n$text", session, JSONObject().put("kind", kind))
@@ -80,7 +84,10 @@ class DashViewModel @JvmOverloads constructor(
             when {
                 c.dismissReceipt -> { repository.clearPending(); repository.message("Receipt dismissed after manual inspection; no command was replayed") }
                 c.git != null -> { closeGit(); repository.gitAction(c.git) }
-                c.target != null && c.command != null -> repository.command(c.target, c.command)
+                c.target != null && c.command != null -> {
+                    repository.command(c.target, c.command)
+                    if (c.command.getString("kind") in listOf("reload", "restart")) back()
+                }
                 c.project != null -> repository.launch(c.project, c.history)
             }
         }

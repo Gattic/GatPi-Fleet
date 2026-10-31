@@ -10,7 +10,7 @@ import type { FileUsage, UsageDelta } from "../manager/usage/types.ts";
 import type { Command, SessionIdentity, SessionPatch, SessionState } from "../protocol/index.ts";
 
 /** Bumped on any change to these messages; the bridge protocol version is checked separately. */
-export const RELAY_VERSION = 5;
+export const RELAY_VERSION = 6;
 
 export interface GpuSummary {
 	utilization: number;
@@ -40,6 +40,8 @@ export interface RelayOps {
 	sessions: { params: { cwd: string }; result: SessionSummary[] };
 	/** The new screen's name. A leading `~` in cwd is the relay host's home. */
 	launch: { params: LaunchOptions; result: string };
+	/** Gracefully close an idle session, then resume its saved conversation on this host. */
+	restart: { params: { target: SessionIdentity }; result: string };
 	/** Revalidate the host's lifecycle record before launching or dismissing it. */
 	recover: { params: { instanceId: string }; result: string };
 	dismissRecovery: { params: { instanceId: string }; result: null };

@@ -2,8 +2,11 @@ package dev.pidash.android.ui
 
 import android.app.Application
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -32,6 +35,33 @@ class PromptCardTest {
     private val storage = object : DraftStorage {
         override fun read() = saves.lastOrNull()
         override fun save(document: String) { saves += document }
+    }
+
+    @Test fun suggestionRequestIsGatedAndIncomingSuggestionsNeverReplaceADraft() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
+        val vm = DashViewModel(app, Drafts(storage) { session.id })
+        val current = mutableStateOf(session.copy(commands = mapOf("prompt" to null, "suggest" to null)))
+        val suggestion = mutableStateOf<String?>(null)
+        val enabled = mutableStateOf(true)
+        vm.drafts.edit("Keep my draft")
+        compose.setContent {
+            MaterialTheme { SessionScreen(vm, Dashboard(detail = detail(emptyList()).copy(session = current.value, suggestion = suggestion.value)), enabled.value) }
+        }
+        compose.onNodeWithText("New prompt suggestion").performScrollTo().assertIsEnabled()
+        compose.onNodeWithText("Edit suggested prompt").assertDoesNotExist()
+        compose.runOnIdle { suggestion.value = "Inspect the next task" }
+        compose.onNodeWithText("Edit suggested prompt").performScrollTo().assertIsDisplayed()
+        compose.runOnIdle { assertEquals("Keep my draft", vm.drafts.text.value) }
+        compose.onNodeWithText("Edit suggested prompt").performClick()
+        compose.runOnIdle { assertEquals("Inspect the next task", vm.drafts.text.value) }
+        compose.runOnIdle { suggestion.value = "Run focused tests" }
+        compose.runOnIdle { assertEquals("Inspect the next task", vm.drafts.text.value) }
+        compose.runOnIdle { enabled.value = false }
+        compose.onNodeWithText("New prompt suggestion").assertIsNotEnabled()
+        compose.runOnIdle { enabled.value = true; current.value = session.copy(commands = mapOf("suggest" to "Only while idle")) }
+        compose.onNodeWithText("New prompt suggestion").assertIsNotEnabled()
+        compose.runOnIdle { current.value = session }
+        compose.onNodeWithText("New prompt suggestion").assertIsNotEnabled()
     }
 
     @Test fun recalledPromptsAreOnlyShownAndTypingAddsToTheirEnd() {

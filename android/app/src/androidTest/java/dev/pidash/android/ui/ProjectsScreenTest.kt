@@ -5,6 +5,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.pidash.android.DashViewModel
 import dev.pidash.android.Project
@@ -45,6 +51,32 @@ class ProjectsScreenTest {
 
         vm.projects.value = Projects(emptyList(), emptyList())
         compose.onNodeWithText("No projects yet", substring = true).assertIsDisplayed()
+    }
+
+    @Test fun searchMatchesNamesPathsAndHostsAndCanBeCleared() {
+        val vm = vm()
+        val remote = Project("c", "box00", "remote", "/srv/special/remote")
+        vm.projects.value = Projects(listOf(first, second, remote), listOf(Unreachable("box01", "offline")))
+        compose.setContent { MaterialTheme { ProjectsScreen(vm, enabled = true) } }
+        val search = compose.onNodeWithText("Search projects")
+        search.performTextReplacement("  FIRST  ")
+        compose.onNodeWithText(first.path).assertIsDisplayed()
+        compose.onNodeWithText(second.path).assertDoesNotExist()
+        compose.onNodeWithText(remote.path).assertDoesNotExist()
+        search.performTextReplacement("special")
+        compose.onNodeWithText(remote.path).assertIsDisplayed()
+        compose.onNodeWithText(first.path).assertDoesNotExist()
+        search.performTextReplacement("BOX00")
+        compose.onNodeWithText(remote.path).assertIsDisplayed()
+        compose.onNodeWithText(first.path).assertDoesNotExist()
+        search.performTextReplacement("absent")
+        compose.onNodeWithText("No projects match your search.").assertIsDisplayed()
+        compose.onNodeWithText("box01: offline").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Clear project search").performClick()
+        compose.onNodeWithText("No projects match your search.").assertDoesNotExist()
+        compose.onNodeWithText(first.path).assertIsDisplayed()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(remote.path))
+        compose.onNodeWithText(remote.path).assertIsDisplayed()
     }
 
     @Test fun remoteHostsProjectsComeUnderTheirHostAndSilentHostsAreNamed() {

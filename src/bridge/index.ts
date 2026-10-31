@@ -20,6 +20,7 @@ import {
 	type PiUsage,
 	type PlanSnapshot,
 	PROMPT_SUGGESTION_CHANGED_EVENT,
+	PROMPT_SUGGESTION_REQUEST_EVENT,
 	PROTOCOL_VERSION,
 	ROADMAP_CHANGED_EVENT,
 	type SessionPatch,
@@ -234,6 +235,14 @@ let askSeq = 0;
 export default function piDashBridge(pi: ExtensionAPI): void {
 	let ctx: ExtensionContext | undefined;
 	let state: SessionState | undefined;
+	// Reload is command-context-only. Dispatch through a command, never through an agent prompt.
+	pi.registerCommand("pi-dash-reload", {
+		description: "Reload pi resources from pi-dash",
+		handler: async (_args, commandCtx) => {
+			if (!commandCtx.isIdle()) throw new Error("Reload only while idle");
+			await commandCtx.reload();
+		},
+	});
 	const recovery = new RecoveryJournal();
 	let recoveryStartedAt = 0;
 	let recoveryMetadata: string | undefined;
@@ -452,6 +461,25 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 			case "shutdown":
 				ctx.shutdown();
 				return;
+			case "reload":
+				if (!ctx.isIdle()) throw new Error("Reload only while idle");
+				if (state.asks.some((ask) => ask.status === "answering")) throw new Error("A side question is still answering");
+				// Let the ACK reach the controller before reload tears down this socket/runtime.
+				setImmediate(() => {
+					if (state && sameSession(state, target)) pi.sendUserMessage("/pi-dash-reload", { deliverAs: "followUp", expandPromptTemplates: true });
+				});
+				return;
+			case "suggest": {
+				if (!ctx.isIdle() || state.phase !== "idle") throw new Error("Request a prompt suggestion only while idle");
+				let handled = false;
+				let failure: string | null = null;
+				pi.events.emit(PROMPT_SUGGESTION_REQUEST_EVENT, {
+					respond: (error: string | null) => { handled = true; failure = error; },
+				});
+				if (!handled) throw new Error("prompt-suggestions request unavailable; update GatPi-Harness and reload this session");
+				if (failure !== null) throw new Error(failure);
+				return;
+			}
 			case "rename":
 				pi.setSessionName(command.name.trim());
 				return;

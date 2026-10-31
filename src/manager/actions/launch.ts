@@ -30,6 +30,10 @@ export function resumeBlocked(rows: readonly SessionRow[], cwd: string, file: st
 
 export interface LaunchOptions { cwd: string; label: string; sessionFile?: string }
 
+export function launchReservation(file: string, runtimeDir: string): string {
+	return join(runtimeDir, "launches", `${createHash("sha256").update(realpathSync(file)).digest("hex")}.json`);
+}
+
 /** Reservation remains until its screen exits, including if this controller dies. */
 export function launchSession(options: LaunchOptions, rows: readonly SessionRow[], runtimeDir = socketDir()): string {
 	const cwd = realpathSync(options.cwd);
@@ -45,7 +49,7 @@ export function launchSession(options: LaunchOptions, rows: readonly SessionRow[
 	if (file) {
 		const dir = join(runtimeDir, "launches");
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
-		reservation = join(dir, `${createHash("sha256").update(file).digest("hex")}.json`);
+		reservation = launchReservation(file, runtimeDir);
 		// Do not reclaim by age: two controllers can race while replacing a stale file.
 		// Normal exit removes it; after an abnormal exit the operator reconciles locally.
 		let fd: number;

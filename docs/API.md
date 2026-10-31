@@ -6,7 +6,7 @@ TypeBox request schemas, exported by `npm run api:generate` to
 checked-in schemas and snapshot and usage fixtures with current projections; Android
 JVM tests decode those same fixtures. Responses are projected in `sessions.ts` and
 `usage.ts`, not raw bridge objects. Any incompatible wire change must change the API
-version and both clients. The local bridge protocol is separately versioned (currently 5).
+version and both clients. The local bridge protocol is separately versioned (currently 6).
 
 Every route, including WebSocket upgrade and info, requires
 `Authorization: Bearer DEVICE_TOKEN` over TLS. Tokens never appear in URLs.
@@ -144,13 +144,25 @@ and bounded socket/device counts. There is no credential-independent health data
 
 Typed commands: prompt (32k characters; `steer`/`followUp` required while working),
 ask (4k), rename (120), model (`provider`, `id`), thinking (`level`), abort,
-shutdown, compact, dismiss. No unknown properties/commands are accepted. Dismiss is
+shutdown, compact, reload, restart, suggest, dismiss. No unknown properties/commands are accepted. Dismiss is
 the only command for an exited session and does not reach a bridge: it removes the
 session from the overview and from the dashboard (`d` there does the same for the
 gateway; both record dismissals in `$XDG_RUNTIME_DIR/pi-dash/dismissed/`). Prompts beginning
 with `/` are rejected: extension dialogs/slash commands require local pi. Prompts
 still grant the session its normal tool authority, so a paired phone is privileged.
 Compact requires idle state. Ask is refused while another side question is active.
+Reload and restart require idle state and no answering side question. Reload refreshes pi's
+resources without clearing its conversation. Restart also requires a saved session file:
+the session's host gracefully closes pi, waits up to 15 seconds for its process and launch
+reservation to exit, then launches `pi --session` with that same file in the same project.
+It never launches a replacement after an uncertain shutdown ACK or an exit timeout.
+A restart acceptance means screen accepted the replacement launch, not that pi finished startup.
+Both actions create a new session incarnation; reselect it from the overview.
+`{kind: "suggest"}` requires idle state and requests the existing GatPi-Harness publisher's
+manual retry via `prompt-suggestion:request`. The publisher responds synchronously with
+acceptance or an explicit error; a missing/older publisher fails the command. Acceptance
+starts generation, not an agent turn. The resulting `suggestion` arrives in session detail;
+no prompt, draft, or transcript is modified. Desktop Ctrl+R policy and editor gates apply.
 The bridge independently checks the exact target immediately before dispatch.
 
 `POST /api/v1/sessions` launches a new session in a listed project, on that

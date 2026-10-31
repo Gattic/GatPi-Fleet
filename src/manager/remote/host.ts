@@ -115,7 +115,7 @@ export class RemoteHost {
 		if (!child || this.status.kind !== "online") return Promise.reject(new Error(`${this.name} is ${this.status.kind}`));
 		const id = this.nextId++;
 		// A lost acknowledgement for a mutation is unknown, not a safe-to-retry failure.
-		const command = op === "command" || op === "launch" || op === "recover" || op === "dismissRecovery" || (op === "git" &&
+		const command = op === "command" || op === "launch" || op === "restart" || op === "recover" || op === "dismissRecovery" || (op === "git" &&
 			["pull", "push", "pushSetUpstream", "switchBranch"].includes((params as RelayOps["git"]["params"]).method));
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {

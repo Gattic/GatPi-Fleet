@@ -3,7 +3,7 @@
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 /** Directory holding one `<pid>.sock` per bridged pi process (mode 0700). */
 export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -124,6 +124,8 @@ export const ROADMAP_CHANGED_EVENT = "roadmap:changed";
 
 /** Published by the GatPi-Harness prompt-suggestions extension: the suggested next prompt, or null. */
 export const PROMPT_SUGGESTION_CHANGED_EVENT = "prompt-suggestion:changed";
+/** Request the publisher's Ctrl+R retry; respond(null) accepts, respond(error) rejects synchronously. */
+export const PROMPT_SUGGESTION_REQUEST_EVENT = "prompt-suggestion:request";
 
 export interface ToolRun {
 	id: string;
@@ -236,6 +238,8 @@ export type Command =
 	| { kind: "prompt"; text: string; deliverAs?: DeliverAs }
 	| { kind: "abort" }
 	| { kind: "shutdown" }
+	| { kind: "reload" }
+	| { kind: "suggest" }
 	| { kind: "rename"; name: string }
 	/** Only while idle. */
 	| { kind: "compact" }

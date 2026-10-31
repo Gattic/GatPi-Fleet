@@ -11,6 +11,7 @@ const handlers = new Map<string, (event: unknown, ctx?: ExtensionContext) => voi
 const pi = {
 	on: (name: string, handler: (event: unknown, ctx?: ExtensionContext) => void) => handlers.set(name, handler),
 	events: { on: () => {} },
+	registerCommand: () => {},
 	getSessionName: () => "Crash fixture",
 } as unknown as ExtensionAPI;
 const context = {
