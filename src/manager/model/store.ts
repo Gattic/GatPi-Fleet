@@ -273,7 +273,7 @@ export class Store {
 
 	private refreshStatus(row: SessionRow, now: number): void {
 		const previous = row.status;
-		row.status = deriveStatus({ bridge: row.bridge, connected: row.connected, exitedAt: row.exitedAt, cpu: rowCpu(row), childProcesses: row.resources?.childProcesses ?? 0 }, now);
+		row.status = deriveStatus({ bridge: row.bridge, connected: row.connected, exitedAt: row.exitedAt, cpu: rowCpu(row), childProcesses: row.resources?.childProcesses ?? 0, backgroundSince: row.resources?.background[0]?.startedAt }, now);
 		// Connecting (or reconnecting after /reload) reveals a state; it does not enter one.
 		const revealed = previous.kind === "unbridged" || previous.kind === "connecting";
 		if (previous.kind !== row.status.kind && !revealed && isAlert(row.status.kind)) row.alertUntil = now + ALERT_MS;

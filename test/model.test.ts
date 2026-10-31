@@ -73,6 +73,40 @@ test("a quiet tool with a live child process is working, not stalled", () => {
 	assert.equal(store.rows.get("10")?.status.kind, "stalled", "no child process left: the tool may be blocked");
 });
 
+for (const kind of ["job", "subagent"] as const) {
+	for (const remote of [undefined, "remote"]) {
+		test(`an idle session stays working while a ${kind} runs ${remote ? "remotely" : "locally"}`, () => {
+			const store = new Store(() => {});
+			const now = Date.now();
+			const key = remote ? `${remote}:10` : "10";
+			const first = { kind, label: "first", startedAt: now - 10_000, cpu: 0, rss: 1 };
+			const second = { kind, label: "second", startedAt: now - 5000, cpu: 0, rss: 1 };
+			const resources: ResourceSample = { directCpu: 0, indirectCpu: 0, directMem: 1, indirectMem: 1, directGpuMem: 0, indirectGpuMem: 0, consumers: [], childProcesses: 0, background: [first, second] };
+			const apply = (background: ResourceSample["background"]) => {
+				const sample = { resources: new Map([["10", { ...resources, background }]]), piProcesses: [{ pid: 10, startedAt: 1 }], host: { cpu: 0, cores: 1, memUsed: 0, memTotal: 1, load1: 0 } };
+				if (remote) store.applyRemoteSample(remote, sample, store.targets(remote), now);
+				else store.applySample(sample, undefined, now);
+			};
+			store.setState(10, bridge({ pid: 10, phase: "working" }), remote);
+			apply(resources.background);
+			store.setState(10, bridge({ pid: 10, lastSettledAt: now }), remote);
+			const row = store.rows.get(key)!;
+			assert.equal(row.status.kind, "working", "settling the main agent does not mean its background work is done");
+			assert.equal(row.status.since, first.startedAt);
+			assert.equal(row.alertUntil, undefined, "no needs-you alert while background work is running");
+			store.tick(now + STALL_MS * 2);
+			assert.equal(row.status.kind, "working", "quiet detached work does not need CPU or a direct child process");
+			apply([second]);
+			assert.equal(row.status.kind, "working", "one background task finishing is not enough");
+			assert.equal(row.lane.latest(), LANE.working);
+			apply([]);
+			assert.equal(row.status.kind, "needs-you", "only the final background task finishing needs attention");
+			assert.ok((row.alertUntil ?? 0) > now);
+			assert.equal(row.lane.latest(), LANE.waiting);
+		});
+	}
+}
+
 test("Series keeps the most recent samples in order", () => {
 	const series = new Series(3);
 	for (const value of [1, 2, 3, 4]) series.push(value);

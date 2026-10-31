@@ -20,6 +20,8 @@ export interface StatusInput {
 	cpu: number;
 	/** Live descendants of the pi process: the tool processes it is running. */
 	childProcesses: number;
+	/** Start of the oldest live background job or subagent, including detached work. */
+	backgroundSince?: number;
 }
 
 /**
@@ -61,6 +63,7 @@ export function deriveStatus(input: StatusInput, now: number): Status {
 		return { kind: "working", label: activityLabel(bridge.activity), since: bridge.activity?.since ?? bridge.phaseSince };
 	}
 	if (bridge.lastError) return { kind: "error", label: bridge.lastError.message, since: bridge.lastError.at };
+	if (input.backgroundSince !== undefined) return { kind: "working", label: "background work", since: input.backgroundSince };
 	if (bridge.lastSettledAt !== undefined) return { kind: "needs-you", label: "needs you", since: bridge.lastSettledAt };
 	return { kind: "ready", label: "ready", since: bridge.phaseSince };
 }

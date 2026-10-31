@@ -468,10 +468,11 @@ test("mobile contract fixtures and projections keep missing metrics missing and 
 	assert.deepEqual(schemas, JSON.parse(JSON.stringify({ command: CommandRequestSchema, git: GitRequestSchema, launch: LaunchRequestSchema, subscribe: SubscriptionSchema })));
 });
 
-test("the overview projects live background work with its command and drops it for an exited session", () => {
+test("mobile projections keep live background work working without attention and drop it for an exited session", () => {
 	const runtime = new ManagerRuntime();
 	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
 	const row = runtime.store.rows.get("11")!;
+	row.bridge!.lastSettledAt = 5;
 	row.resources = {
 		directCpu: 0.5, indirectCpu: 0.2, directMem: 1e8, indirectMem: 2e8, directGpuMem: 0, indirectGpuMem: 0,
 		consumers: [], childProcesses: 1,
@@ -480,11 +481,25 @@ test("the overview projects live background work with its command and drops it f
 			{ kind: "subagent", label: "coder", detail: "Review the parser", startedAt: 20, cpu: 0.1, rss: 5e7 },
 		],
 	};
+	runtime.store.tick(30);
+	const sessions = new Sessions(runtime);
+	for (const session of [sessions.overview()[0], sessions.detail(sessionRef(row))]) {
+		assert.equal(session.status.kind, "working", "the phone uses the same background-aware status as the dashboard");
+		assert.equal(session.attentionKey, null, "no needs-you notification for background work");
+	}
 	assert.deepEqual(summary(row).resources?.background, [
 		{ kind: "job", label: "nightly-build", detail: "npm run test", startedAt: 10, cpu: 0.3, memory: 1e8 },
 		{ kind: "subagent", label: "coder", detail: "Review the parser", startedAt: 20, cpu: 0.1, memory: 5e7 },
 	]);
-	row.exitedAt = 30;
+	const background = row.resources.background;
+	row.resources.background = [];
+	runtime.store.tick(31);
+	assert.equal(summary(row).status.kind, "needs-you");
+	assert.ok(summary(row).attentionKey);
+	row.resources.background = background;
+	row.exitedAt = 32;
+	runtime.store.tick(32);
+	assert.equal(summary(row).status.kind, "exited");
 	assert.deepEqual(summary(row).resources?.background, [], "an exited session has no live background work");
 });
 

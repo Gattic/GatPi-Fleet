@@ -5,7 +5,9 @@ and on the other machines of your network (over ssh).
 
 - **State at a glance**: working (with the current tool or thinking/writing), waiting for you,
   error / rate limited, stalled, exited. When a session starts needing you, its row is highlighted,
-  and `Tab` jumps to the session that has waited longest. An activity lane shows the last hour,
+  and `Tab` jumps to the session that has waited longest. Running background jobs and subagents
+  keep a session working rather than waiting for you, in both pi-dash and Android.
+  An activity lane shows the last hour,
   even right after pi-dash starts.
 - **Crash recovery**: interrupted sessions survive dashboard restarts. Press `e` to find them across
   projects and connected hosts, then confirm a resume of the exact saved conversation.
