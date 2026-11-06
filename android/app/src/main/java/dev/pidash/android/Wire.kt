@@ -5,6 +5,7 @@ import org.json.JSONObject
 
 fun JSONObject.text(key: String): String? = if (isNull(key)) null else getString(key)
 fun JSONObject.number(key: String): Double? = if (isNull(key)) null else getDouble(key)
+fun JSONObject.long(key: String): Long? = if (isNull(key)) null else getLong(key)
 fun JSONArray.objects(): List<JSONObject> = (0 until length()).map(::getJSONObject)
 
 data class Plan(val title: String, val complete: Int, val total: Int, val active: String)
@@ -48,14 +49,15 @@ data class Session(
 data class Ask(val id: Int, val question: String, val answer: String, val status: String, val error: String?, val cost: Double?)
 data class Tool(val name: String, val detail: String, val running: Boolean, val failed: Boolean)
 /** [prompts] are the session's earlier prompts to recall, oldest first. */
-data class Detail(val session: Session, val prompt: String?, val prompts: List<String>, val reply: String?, val suggestion: String?, val error: String?, val models: List<String>, val asks: List<Ask>, val tools: List<Tool>, val roadmap: Roadmap? = null) {
+data class Detail(val session: Session, val prompt: String?, val prompts: List<String>, val reply: String?, val suggestion: String?, val error: String?, val models: List<String>, val asks: List<Ask>, val tools: List<Tool>, val roadmap: Roadmap? = null, val context: SessionContext? = null) {
     companion object {
         fun parse(j: JSONObject) = Detail(Session.parse(j), j.text("lastPrompt"), j.getJSONArray("prompts").let { a -> (0 until a.length()).map(a::getString) },
             j.text("lastSaid"), j.text("suggestion"), j.text("error"),
             j.getJSONArray("models").let { a -> (0 until a.length()).map(a::getString) },
             j.getJSONArray("asks").objects().map { Ask(it.getInt("id"), it.getString("question"), it.getString("answer"), it.getString("status"), it.text("error"), it.number("cost")) },
             j.getJSONArray("tools").objects().map { Tool(it.getString("name"), it.getString("detail"), it.isNull("endedAt"), it.getBoolean("isError")) },
-            j.optJSONObject("roadmap")?.let(Roadmap::parse))
+            j.optJSONObject("roadmap")?.let(Roadmap::parse),
+            j.optJSONObject("context")?.let(SessionContext::parse))
     }
 }
 /** [host] is a remote host of the gateway's pi-dash, or null for the gateway's own machine. */
@@ -161,6 +163,78 @@ data class UsageReport(val at: Long, val indexing: Boolean, val quota: List<Quot
             }
             val hosts = j.getJSONArray("hosts").objects().map(RemoteUsageHost::parse)
             return UsageReport(j.getLong("at"), j.getBoolean("indexing"), quota, cooldowns, hosts, ranges)
+        }
+    }
+}
+data class ContextParts(val system: Double, val tools: Double, val injected: Double, val user: Double, val assistant: Double, val toolResults: Double, val summary: Double) {
+    val total: Double get() = system + tools + injected + user + assistant + toolResults + summary
+    companion object {
+        fun parse(j: JSONObject): ContextParts {
+            val parts = ContextParts(j.getDouble("system"), j.getDouble("tools"), j.getDouble("injected"), j.getDouble("user"),
+                j.getDouble("assistant"), j.getDouble("toolResults"), j.getDouble("summary"))
+            require(listOf(parts.system, parts.tools, parts.injected, parts.user, parts.assistant, parts.toolResults, parts.summary).all { it >= 0 })
+                { "Context parts are estimates and cannot be negative" }
+            return parts
+        }
+    }
+}
+data class ContextCounts(val user: Int, val assistant: Int, val toolResults: Int, val injected: Int, val imageBlocks: Int) {
+    companion object {
+        fun parse(j: JSONObject) = ContextCounts(j.getInt("user"), j.getInt("assistant"), j.getInt("toolResults"), j.getInt("injected"), j.getInt("imageBlocks"))
+    }
+}
+/** The host's estimate of what fills the window; [unattributed] is measured context its classifier did not place, null when unknown. */
+data class ContextBreakdown(val parts: ContextParts, val unattributed: Double?, val totalBasis: String, val imageTokens: Double, val counts: ContextCounts, val compactAt: Double?) {
+    companion object {
+        fun parse(j: JSONObject): ContextBreakdown {
+            val basis = j.getString("totalBasis")
+            require(basis == "measured" || basis == "estimate") { "Unsupported context total basis" }
+            return ContextBreakdown(ContextParts.parse(j.getJSONObject("parts")), j.number("unattributed"), basis, j.getDouble("imageTokens"),
+                ContextCounts.parse(j.getJSONObject("counts")), j.number("compactAt"))
+        }
+    }
+}
+/** A session's measured context, with [breakdown] absent when the host cannot estimate its composition. */
+data class SessionContext(val tokens: Double?, val window: Double?, val percent: Double?, val breakdown: ContextBreakdown?) {
+    companion object {
+        fun parse(j: JSONObject) = SessionContext(j.number("tokens"), j.number("window"), j.number("percent"),
+            j.optJSONObject("breakdown")?.let(ContextBreakdown::parse))
+    }
+}
+/** One session in a context scope; [tokens] null means unknown (or unbridged), never zero. */
+data class ContextRow(val id: String?, val label: String, val host: String?, val model: String?, val tokens: Double?, val window: Double?, val percent: Double?, val compactAt: Double?, val live: Boolean, val unbridged: Boolean, val at: Long?, val breakdown: ContextBreakdown?) {
+    companion object {
+        fun parse(j: JSONObject) = ContextRow(j.text("id"), j.getString("label"), j.text("host"), j.text("model"), j.number("tokens"), j.number("window"),
+            j.number("percent"), j.number("compactAt"), j.getBoolean("live"), j.getBoolean("unbridged"), j.long("at"),
+            j.optJSONObject("breakdown")?.let(ContextBreakdown::parse))
+    }
+}
+data class ContextHost(val host: String?, val tokens: Double)
+data class ContextModel(val model: String, val tokens: Double, val sessions: Int)
+/** Totals over a scope: composition covers sessions with a breakdown, fill covers sessions with a known window. */
+data class CumulativeContext(val parts: ContextParts, val compositionTokens: Double, val unattributed: Double?, val imageTokens: Double, val imageBlocks: Int, val fillTokens: Double, val fillWindows: Double, val near: Int, val unknown: Int, val unbridged: Int, val endedTokens: Double, val endedSessions: Int, val hosts: List<ContextHost>, val models: List<ContextModel>) {
+    companion object {
+        fun parse(j: JSONObject) = CumulativeContext(ContextParts.parse(j.getJSONObject("parts")), j.getDouble("compositionTokens"), j.number("unattributed"),
+            j.getDouble("imageTokens"), j.getInt("imageBlocks"), j.getDouble("fillTokens"), j.getDouble("fillWindows"), j.getInt("near"),
+            j.getInt("unknown"), j.getInt("unbridged"), j.getDouble("endedTokens"), j.getInt("endedSessions"),
+            j.getJSONArray("hosts").objects().map { ContextHost(it.text("host"), it.getDouble("tokens")) },
+            j.getJSONArray("models").objects().map { ContextModel(it.getString("model"), it.getDouble("tokens"), it.getInt("sessions")) })
+    }
+}
+data class ContextScopeReport(val scope: String, val rows: List<ContextRow>, val cumulative: CumulativeContext) {
+    companion object {
+        fun parse(j: JSONObject) = ContextScopeReport(j.getString("scope"), j.getJSONArray("rows").objects().map(ContextRow::parse), CumulativeContext.parse(j.getJSONObject("cumulative")))
+    }
+}
+/** The context tab as of [at]: open, today and 30-day scopes with per-session rows and cumulative totals. */
+data class ContextReport(val at: Long, val scopes: List<ContextScopeReport>) {
+    fun scope(id: String): ContextScopeReport = scopes.first { it.scope == id }
+    companion object {
+        val SCOPES = listOf("open", "today", "30d")
+        fun parse(j: JSONObject): ContextReport {
+            val scopes = j.getJSONArray("scopes").objects().map(ContextScopeReport::parse)
+            require(scopes.map { it.scope } == SCOPES) { "Unsupported context scopes" }
+            return ContextReport(j.getLong("at"), scopes)
         }
     }
 }

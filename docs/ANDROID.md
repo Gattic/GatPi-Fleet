@@ -244,13 +244,13 @@ pairing/drafts; revoke the old device token and re-pair afterward.
 
 ## 3. Session management
 
-The app has five tabs: **Sessions**, **Projects** (new/resume in any known project),
-**Usage**, **Glasses** and **Pairing**. Tapping a session opens its detail, grouped into
-status, latest exchange, prompt, glasses, side question, recent tools and session
-management. The **Jobs** chip on Sessions opens a read-only jobs page: every running
+The app has six tabs: **Sessions**, **Projects** (new/resume in any known project),
+**Usage**, **Context**, **Glasses** and **Pairing**. Tapping a session opens its detail, grouped into
+status/context breakdown, latest exchange, prompt, glasses, side question, recent tools and
+session management. The **Jobs** chip on Sessions opens a read-only jobs page: every running
 `bg_run` job and subagent across sessions, with its session, age, CPU/memory and the
 recorded command or task it runs. Tapping a job opens its session. The jobs page is a
-sub-page of Sessions, not a sixth tab.
+sub-page of Sessions, not a tab.
 
 The overview shows status, project, model, context and roadmap progress, plus a `BG`
 line naming the session's background jobs and subagents. Filter by text or attention. Detail contains bounded latest prompt/reply, recent tools,
@@ -282,6 +282,19 @@ and its remote hosts (a host that is offline, connecting or still indexing is ma
 are incomplete), while quotas and cooldowns are the gateway machine's own logins. It is fetched when you open the tab and with the
 refresh icon, both only while the connection is live; it does not update by itself, and
 shows when it was made.
+
+**Context** is pi-dash's context view: per-session measured tokens, window, fill and compact
+threshold, plus an estimated composition (system, tools, injected, user, assistant, tool results,
+summaries) and an explicit `unattributed` residual. Scope chips select `Open`, `Today` or `30 days`;
+the cumulative card shows weighted mean fill, composition, sessions at or above 80%, unknown and
+unbridged counts, and ended (fill-only) totals. `By host` and `By model` show the split. Totals are
+pi's measurements; parts are chars/4 estimates and are labelled as estimates. Unknown stays unknown,
+never zero; a positive residual is measured context the estimate did not place, and a negative one
+means the estimate overshot. Ended sessions fill only; a remote session needs an updated bridge for
+its composition and is marked `no breakdown` until then. Session detail also shows a per-session
+breakdown card. The tab is fetched when opened and with the refresh icon, only while the connection
+is live; it does not update by itself, and shows when it was made. No prompt or transcript text is
+sent to the phone for this view.
 
 Sessions of remote hosts are labelled `name@host`, and Projects groups each host's
 projects under its name (the gateway's own machine first; a host that did not answer

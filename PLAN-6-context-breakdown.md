@@ -1,8 +1,9 @@
 # pi-dash — Plan 6: per-session context breakdown and cumulative view
 
-Status: **implemented in `9585d32`** on `main`. Phase 5 (gateway/Android rendering) remains
-optional and was not implemented. Written against pi-dash at `42e1f6e` and the local pi
-checkout (`getContextUsage` / `estimateTokens` semantics cited below).
+Status: **implemented**. The terminal dashboard shipped in `9585d32`; the gateway context
+endpoint and Android context view are implemented on `feat/android-context-breakdown`. Written
+against pi-dash at `42e1f6e` and the local pi checkout (`getContextUsage` / `estimateTokens`
+semantics cited below).
 
 ## 1. Goal and definitions
 
@@ -68,8 +69,8 @@ sitting in these windows right now".
 | [`src/manager/usage/extract.ts`](src/manager/usage/extract.ts) line 68 | `UsageRecord.prompt` already computes `input + cacheRead + cacheWrite` per assistant message — the measured context size of that request. |
 | [`src/manager/usage/indexer.ts`](src/manager/usage/indexer.ts) | Incremental byte-level JSONL scanner, worker thread, `CACHE_VERSION = 1`, 30-day retention, hourly buckets. It currently aggregates `prompt` into buckets and discards the latest value. |
 | [`src/dashboard/ui/views/detail.ts`](src/dashboard/ui/views/detail.ts) line 111, [`overview.ts`](src/dashboard/ui/views/overview.ts) line 110 | Only the ctx gauge is rendered; the detail view is already dense (fixed sections + charts + tools + SAID). |
-| [`src/server/sessions.ts`](src/server/sessions.ts) line 55 | The gateway projects only `contextPercent`; Android has no breakdown. |
-| [`docs/API.md`](docs/API.md) | Any gateway shape change is a wire change: version, fixtures, both clients, docs. Deferred to an optional phase. |
+| [`src/server/sessions.ts`](src/server/sessions.ts) | The gateway now projects `context` (tokens, window, percent, optional breakdown) in selected detail; Android decodes and renders it. |
+| [`docs/API.md`](docs/API.md) | The gateway shape change is additive: `GET /api/v1/context`, a `context` capability and optional `context` in detail; fixtures, both clients and docs updated without a version bump. |
 
 Local scale to design for: `~/.pi/agent/sessions` is ~9.2 GB; the largest single session file is
 ~500 MB. Live composition is cheap because the bridge holds the session in memory; reconstructing
@@ -290,7 +291,7 @@ Each phase leaves a working dashboard.
 | **2 — Detail block** | §4.1, fixed-height, inside the existing `spare` budget. | Render tests for measured, null-after-compaction, estimate-only, no-breakdown and narrow widths; no SAID regression. | 0.5–1 d |
 | **3 — Context view + cumulative** | §4.2/§4.3, `K` key, scope toggle, host/model splits, README keys. | Render fixtures with 0/1/many sessions, remote hosts, unbridged and unknown rows; cumulative totals match a hand-computed fixture; `docs`/README updated. | 1–1.5 d |
 | **4 — Indexer + ended sessions** | §3.3 fields, `CACHE_VERSION = 2`, §3.4 window lookup, ended rows fill-only. | Extractor keeps latest/peak/model/requests; incremental scan still appends correctly and survives rewrites; cache rebuild completes in the worker; unknown model → null. | 1–1.5 d |
-| **5 — Gateway + Android (optional)** | Add breakdown to the selected-detail projection (`docs/API.md`, fixture, Kotlin decode + UI), keep `contextPercent` for overview. | Schema snapshot + fixture generated through the real projection; Android JVM decode tests; host tests; docs updated; API version decision recorded. | 2–3 d |
+| **5 — Gateway + Android** | **Implemented:** breakdown in selected detail, `GET /api/v1/context`, fixture, Kotlin decode + Context tab and detail card; `contextPercent` kept for overview. | Schema snapshot + fixture generated through the real projection; Android JVM decode tests; host tests; docs updated; API version decision recorded. | 2–3 d |
 | **6 — Docs and close-out** | README section, claim limits, one focused diff review. | `npm run check`, `npm test`, `npm run test:e2e`; no unlabelled estimate or invented zero anywhere in the UI. | 0.5 d |
 
 TUI scope (phases 0–4, 6): roughly **4.5–6.5 engineering days**. Android parity adds **2–3 days** and

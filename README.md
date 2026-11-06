@@ -33,7 +33,8 @@ and on the other machines of your network (over ssh).
   composition, weighted mean fill and `open` / `today` / `30d` scopes. Totals are measured; parts
   are pi's chars/4 estimates and are labelled `est.`. An unknown total (for example right after
   compaction) stays unknown, never zero. Ended sessions show their last-known context and window;
-  composition is live-only.
+  composition is live-only. Android's **Context** tab shows the same `open` / `today` / `30d`
+  scopes and cumulative composition, with a per-session breakdown card in session detail.
 - **Conversation**: the last prompt, the recent tool calls with their arguments, the latest reply
   (previewed under the session list; whole, as Markdown, scrollable, or full screen), and the
   suggested next prompt from the GatPi-Harness prompt suggestions.

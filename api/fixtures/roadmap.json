@@ -94,6 +94,7 @@
     ]
   },
   "lastPrompt": null,
+  "context": null,
   "prompts": [],
   "lastSaid": null,
   "suggestion": null,

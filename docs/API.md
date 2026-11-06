@@ -18,7 +18,7 @@ Errors use HTTP status plus `{ "error": "description" }`.
 
 | Method/path | Response |
 |---|---|
-| `GET /api/v1/info` | `version`, `epoch`, host `label`, `capabilities` (`sessions`, `commands`, `launch`, `usage`, `git`, `g1-display`) |
+| `GET /api/v1/info` | `version`, `epoch`, host `label`, `capabilities` (`sessions`, `commands`, `launch`, `usage`, `git`, `context`, `g1-display`) |
 | `GET /api/v1/sessions` | `sessions` overview array (epoch is supplied by info/the stream) |
 | `GET /api/v1/sessions/:id` | Selected detail object |
 | `GET /api/v1/sessions/:id/git` | Git menu: `epoch`, `revision`, `location`, `head`, nullable `branch`/`upstream`/`pushRemote`, `ahead`/`behind`, `tree`, working-session `warning`, editable `commitPrompt`, and `actions` (`kind`, `label`, nullable `blocked`/`description`) |
@@ -27,6 +27,7 @@ Errors use HTTP status plus `{ "error": "description" }`.
 | `GET /api/v1/projects` | `projects`: opaque `id`, `host` (remote host name, or null for the gateway's machine), `label`, `path`; per host (the gateway's machine, then `hosts.json` order) open projects first, then most recently active. `unreachable`: `host`, `error` for each remote host that did not answer |
 | `GET /api/v1/projects/:id/sessions` | `sessions`: opaque `id`, title, lastActive, blocked reason or null |
 | `GET /api/v1/usage` | The dashboard's usage view as data (below) |
+| `GET /api/v1/context` | The dashboard's context view as data: `open`, `today` and `30d` scopes with per-session rows and cumulative totals (below) |
 | `GET /api/v1/commands/:requestId` | Receipt, or unknown if absent |
 
 Sessions include those of the remote hosts in pi-dash's `hosts.json` (labelled `name@host`),
@@ -83,6 +84,21 @@ for each machine, the gateway's own first (`host` null) and then each remote hos
 the top-level `hosts`, with or without usage. An open session's label is its overview label; any
 other is `project › name`, `project › first prompt` or just `project`, with `@host` after the project
 for a remote host's session (at most 200 characters).
+
+`GET /api/v1/context` is fetched, not streamed. `at` is the host time it was made. `scopes`
+has `open`, `today` and `30d` in that order, each with `scope`, `rows` and `cumulative`. A row
+carries `id` (nullable), `label`, nullable `host`/`model`, measured `tokens`/`window`/`percent`,
+nullable `compactAt`, `live`, `unbridged`, nullable `at`, and optional `breakdown` (same shape as
+session state). `null` tokens mean unknown, never zero. Ended sessions fill only and may lack a
+window until the host's catalog supplies it. `cumulative` has estimated `parts`, `compositionTokens`
+(measured totals of rows with a breakdown), nullable `unattributed` (residual), `imageTokens`,
+`imageBlocks`, `fillTokens`/`fillWindows` (known windows only), `near` (≥80%), `unknown`, `unbridged`,
+`endedTokens`/`endedSessions`, and `hosts` (`{ host, tokens }`, gateway machine first) and `models`
+(`{ model, tokens, sessions }`). Parts are estimates (chars/4); totals are measurements. No prompt,
+transcript or tool-output text is projected. The endpoint is additive; the `info` capability is
+`context`.
+
+Selected detail also carries `context`: `tokens`, `window`, `percent` and nullable `breakdown` for the session's measured context and estimated composition, or null when the bridge has no measurement.
 
 Selected detail adds nullable `roadmap`: a display-only projection of the publisher's nested
 viewer snapshot (`id`, `title`, `lifecycle`, `updatedAt`, workflow `complete`/`total`/`blocked`,

@@ -280,7 +280,7 @@ private fun cost(dollars: Double): String = when {
     else -> "%.2f"
 }.format(dollars)
 
-private fun tokens(count: Double): String {
+internal fun tokens(count: Double): String {
     for ((unit, suffix) in listOf(1e9 to "B", 1e6 to "M", 1e3 to "k")) {
         if (count < unit) continue
         val value = count / unit
@@ -300,4 +300,4 @@ internal fun duration(ms: Long): String {
     return "${hours / 24}d${hours % 24}h"
 }
 
-private fun clock(at: Long): String = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
+internal fun clock(at: Long): String = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))

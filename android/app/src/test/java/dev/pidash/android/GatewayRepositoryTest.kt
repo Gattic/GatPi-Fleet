@@ -137,6 +137,19 @@ class GatewayRepositoryTest {
         assertNull("the launch receipt came back", app.pending())
     }
 
+    @Test fun contextIncludesScopesAndEstimatedParts() {
+        val gateway = Gateway().apply { context = javaClass.classLoader!!.getResource("context.json")!!.readText() }
+        val app = App(gateway.url).open()
+        waitFor(10.0, "online") { app.onlineThrough(gateway) }
+        val report = app.context()
+        assertEquals(ContextReport.SCOPES, report.scopes.map { it.scope })
+        val open = report.scope("open")
+        assertEquals("pi-dash", open.rows.first().label)
+        assertEquals(18_000.0, open.rows.first().breakdown!!.unattributed!!, 0.0)
+        assertNull(open.rows[2].tokens)
+        assertEquals(206_000.0, open.cumulative.fillTokens, 0.0)
+    }
+
     @Test fun usageIncludesRemoteHostsWhenTheGatewayReportsThem() {
         val gateway = Gateway().apply { usage = javaClass.classLoader!!.getResource("usage.json")!!.readText() }
         val app = App(gateway.url).open()
@@ -226,6 +239,7 @@ class GatewayRepositoryTest {
         fun pair(document: String) = onMain { repository.pair(document) }
         fun projects() = onMain { repository.projects() }
         fun usage() = onMain { repository.usage() }
+        fun context() = onMain { repository.context() }
         fun launch(project: Project) = onMain { repository.launch(project, null) }
         fun pending() = repository.pending.value
         fun session() = repository.state.value.sessions.single()
@@ -257,6 +271,8 @@ class GatewayRepositoryTest {
         var loseGitReply = false
         /** What `GET /api/v1/usage` returns. */
         var usage = "{}"
+        /** What `GET /api/v1/context` returns. */
+        var context = "{}"
         private val streams = ConcurrentHashMap.newKeySet<WebSocket>()
         private var closed = false
         private val stream = object : WebSocketListener() {
@@ -288,6 +304,7 @@ class GatewayRepositoryTest {
                         "/api/v1/events" -> MockResponse().withWebSocketUpgrade(stream)
                         "/api/v1/info" -> MockResponse().setBody("""{"version":1}""")
                         "/api/v1/usage" -> MockResponse().setBody(usage)
+                        "/api/v1/context" -> MockResponse().setBody(context)
                         "/api/v1/projects" -> MockResponse().setBody("""{"projects":[{"id":"p","host":null,"label":"project","path":"/project"}],"unreachable":[]}""")
                         "/api/v1/sessions" -> {
                             val id = JSONObject(request.body.readUtf8()).getString("requestId")

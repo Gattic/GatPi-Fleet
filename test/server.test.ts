@@ -23,6 +23,7 @@ import { Receipts } from "../src/server/receipts.ts";
 import { SessionGit } from "../src/server/git.ts";
 import { clean, ref, sessionRef, Sessions, summary } from "../src/server/sessions.ts";
 import { usageFixture } from "../scripts/usage-fixture.ts";
+import { contextFixture } from "../scripts/context-fixture.ts";
 import { roadmapFixture } from "../scripts/roadmap-fixture.ts";
 
 const RELAY = fileURLToPath(new URL("../src/relay/main.ts", import.meta.url));
@@ -46,6 +47,15 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	t.after(() => runtime.close());
 	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: ["private earlier\nprompt", "x".repeat(32_001), "private prompt"], lastSaid: "private reply", lastPrompt: "private prompt" };
 	state.plan = roadmapFixture();
+	state.context = {
+		tokens: 1000, window: 200_000, percent: 0.5,
+		breakdown: {
+			parts: { system: 100, tools: 200, injected: 0, user: 50, assistant: 100, toolResults: 50, summary: 0 },
+			unattributed: 500, totalBasis: "measured", imageTokens: 0,
+			counts: { user: 1, assistant: 1, toolResults: 1, injected: 0, imageBlocks: 0 },
+			compactAt: 183_616, history: [1000], at: 2,
+		},
+	};
 	let commands = 0;
 	let bridgeSocket: Socket;
 	const bridge = createServer((s) => {
@@ -87,13 +97,17 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	// Without an allowlist, project listing, history and launch keep the same device and native-client checks.
 	// The launch body names an unlisted project, so even a regression here could not start pi.
 	const unlisted = { requestId: randomUUID(), epoch: info.epoch, projectId: ref(tmpdir()) };
-	for (const [path, data] of [["/api/v1/projects", undefined], [`/api/v1/projects/${ref(project)}/sessions`, undefined], ["/api/v1/sessions", unlisted], ["/api/v1/usage", undefined]] as const) {
+	for (const [path, data] of [["/api/v1/projects", undefined], [`/api/v1/projects/${ref(project)}/sessions`, undefined], ["/api/v1/sessions", unlisted], ["/api/v1/usage", undefined], ["/api/v1/context", undefined]] as const) {
 		assert.equal((await get(path, data, "")).status, 401, path);
 		assert.equal((await get(path, data, `Bearer ${"A".repeat(43)}`)).status, 401, path);
 		assert.equal((await get(path, data, auth, "https://evil.invalid")).status, 403, path);
 	}
 	assert.deepEqual((await get("/api/v1/projects")).data.projects.map((p: { path: string }) => p.path), [project]);
 	assert.deepEqual((await get("/api/v1/usage")).data.ranges.map((r: { range: string }) => r.range), ["today", "7d", "30d"]);
+	const context = (await get("/api/v1/context")).data;
+	assert.deepEqual(context.scopes.map((s: { scope: string }) => s.scope), ["open", "today", "30d"]);
+	assert.equal(context.scopes[0].rows[0].breakdown.parts.tools, 200);
+	assert.equal(context.scopes[0].rows[0].unbridged, false);
 	const stream = (headers: Record<string, string>) => new Promise((resolve, reject) => {
 		const socket = new WebSocket(`wss://127.0.0.1:${port}/api/v1/events`, { ca, headers });
 		socket.on("open", () => { socket.terminate(); resolve("open"); }); socket.on("error", reject);
@@ -108,6 +122,8 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	const detail = (await get(`/api/v1/sessions/${id}`)).data;
 	assert.equal(detail.lastSaid, "private reply");
 	assert.deepEqual(detail.roadmap.entries, state.plan.viewer!.entries);
+	assert.deepEqual(detail.context.breakdown.parts, { system: 100, tools: 200, injected: 0, user: 50, assistant: 100, toolResults: 50, summary: 0 });
+	assert.equal(detail.context.tokens, 1000);
 	assert.equal(overview[0].roadmap, undefined, "nested notes stay out of overview broadcasts");
 	assert.deepEqual(detail.prompts, ["private earlier\nprompt", "private prompt"], "only prompts short enough to send again");
 	const frames: any[] = [];
@@ -548,4 +564,40 @@ test("the usage tab gets the dashboard's usage view as data", (t) => {
 	assert.deepEqual(report.quota![1].windows.map((w) => w.label), ["7d"]);
 	assert.equal(report.quota![1].message, "Usage endpoint HTTP 429");
 	assert.deepEqual(report.cooldowns, [{ provider: "anthropic", until: report.at + 3_600_000 }], "expired cooldowns are omitted, not converted to quota balances");
+});
+
+test("the context tab gets measured totals, estimated parts and cumulative scopes as data", () => {
+	const report = contextFixture();
+	const fixture = JSON.parse(readFileSync(new URL("../api/fixtures/context.json", import.meta.url), "utf8"));
+	assert.deepEqual(fixture, JSON.parse(JSON.stringify(report)), "regenerate with npm run api:generate");
+	const [open, today, all] = report.scopes;
+	assert.deepEqual(report.scopes.map((scope) => scope.scope), ["open", "today", "30d"]);
+	assert.deepEqual(open.rows.map((row) => [row.label, row.tokens, row.window, row.percent]), [
+		["pi-dash", 166_000, 200_000, 83],
+		["legacy", 40_000, 200_000, 20],
+		["Site redesign", null, 200_000, null],
+	]);
+	assert.equal(open.rows[0].breakdown?.unattributed, 18_000);
+	assert.equal(open.rows[1].breakdown, null, "an older bridge keeps its measured total without a composition");
+	assert.equal(open.rows[2].breakdown?.totalBasis, "estimate");
+	assert.equal(open.rows[2].breakdown?.unattributed, null, "an unknown total stays unknown");
+	assert.deepEqual(open.cumulative.parts, { system: 14_000, tools: 17_000, injected: 30_000, user: 7_000, assistant: 18_000, toolResults: 70_000, summary: 2_000 });
+	assert.equal(open.cumulative.compositionTokens, 166_000);
+	assert.equal(open.cumulative.fillTokens, 206_000);
+	assert.equal(open.cumulative.fillWindows, 400_000);
+	assert.deepEqual([open.cumulative.near, open.cumulative.unknown, open.cumulative.unbridged], [1, 1, 0]);
+	assert.equal(open.cumulative.endedTokens, 0);
+	assert.equal(today.rows.length, 4);
+	assert.deepEqual(today.rows[1].label, "site \u203a Fix the header");
+	assert.equal(today.rows[1].window, null, "an ended session's window is unknown until the catalog supplies it");
+	assert.equal(today.cumulative.endedTokens, 90_000);
+	assert.equal(today.cumulative.endedSessions, 1);
+	assert.equal(today.cumulative.unknown, 1);
+	assert.equal(today.cumulative.fillTokens, 206_000);
+	assert.equal(today.cumulative.fillWindows, 400_000);
+	assert.equal(all.rows.length, 5);
+	assert.equal(all.cumulative.endedTokens, 90_000);
+	assert.equal(all.cumulative.unknown, 2);
+	assert.deepEqual(open.cumulative.hosts, [{ host: null, tokens: 206_000 }]);
+	assert.deepEqual(today.cumulative.models, [{ model: "claude-opus-5-5", tokens: 90_000, sessions: 1 }], "only the ended fixture row carries a model");
 });

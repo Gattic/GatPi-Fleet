@@ -204,6 +204,7 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Se
     }
     suspend fun projects(): Projects = Projects.parse(read("/api/v1/projects"))
     suspend fun usage(): UsageReport = UsageReport.parse(read("/api/v1/usage"))
+    suspend fun context(): ContextReport = ContextReport.parse(read("/api/v1/context"))
     suspend fun history(project: Project): List<History> = read("/api/v1/projects/${project.id}/sessions").getJSONArray("sessions").objects().map { History(it.getString("id"), it.getString("title"), it.text("blocked")) }
     suspend fun command(target: Session, command: JSONObject) {
         require(target.id == mutable.value.selected) { "Selection changed; review the action again" }

@@ -67,7 +67,7 @@ fun DashScreen(vm: DashViewModel = viewModel()) {
         topBar = {
             when (screen) {
                 Screen.Session -> SessionTopBar(state.detail?.session, state.fresh, vm::back)
-                Screen.Jobs -> JobsTopBar(vm::back)
+                Screen.Jobs -> SimpleTopBar("Jobs", "Background work from running sessions", vm::back)
                 else -> DashTopBar(host, state.fresh)
             }
         },
@@ -89,6 +89,7 @@ fun DashScreen(vm: DashViewModel = viewModel()) {
                     Screen.Jobs -> JobsScreen(vm, state)
                     Screen.Projects -> ProjectsScreen(vm, actionsEnabled)
                     Screen.Usage -> UsageScreen(vm, state.fresh)
+                    Screen.Context -> ContextScreen(vm, state.fresh)
                     Screen.Glasses -> GlassesScreen(vm)
                     Screen.Pairing -> PairingScreen(vm, host)
                 }
@@ -132,13 +133,13 @@ private fun SessionTopBar(session: Session?, fresh: Boolean, onBack: () -> Unit)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun JobsTopBar(onBack: () -> Unit) {
+private fun SimpleTopBar(title: String, subtitle: String, onBack: () -> Unit) {
     TopAppBar(
         navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to sessions") } },
         title = {
             Column {
-                Text("Jobs", style = MaterialTheme.typography.titleLarge)
-                Text("Background work from running sessions", style = MaterialTheme.typography.labelMedium,
+                Text(title, style = MaterialTheme.typography.titleLarge)
+                Text(subtitle, style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         },
@@ -195,19 +196,21 @@ private fun DashNavigation(screen: Screen, fresh: Boolean, vm: DashViewModel) {
         Destination(Screen.Sessions, "Sessions", Icons.AutoMirrored.Filled.List),
         Destination(Screen.Projects, "Projects", ImageVector.vectorResource(R.drawable.ic_folder)),
         Destination(Screen.Usage, "Usage", ImageVector.vectorResource(R.drawable.ic_usage)),
+        Destination(Screen.Context, "Context", ImageVector.vectorResource(R.drawable.ic_context)),
         Destination(Screen.Glasses, "Glasses", ImageVector.vectorResource(R.drawable.ic_glasses)),
         Destination(Screen.Pairing, "Pairing", Icons.Filled.Lock),
     )
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
         for (destination in destinations) {
-            // Project choices and usage are fetched from the host, so they need a live connection.
-            val fetched = destination.screen == Screen.Projects || destination.screen == Screen.Usage
+            // Project choices, usage and context are fetched from the host, so they need a live connection.
+            val fetched = destination.screen in listOf(Screen.Projects, Screen.Usage, Screen.Context)
             NavigationBarItem(
                 selected = screen == destination.screen,
                 onClick = {
                     when (destination.screen) {
                         Screen.Projects -> vm.openProjects()
                         Screen.Usage -> vm.openUsage()
+                        Screen.Context -> vm.openContext()
                         else -> vm.screen.value = destination.screen
                     }
                 },

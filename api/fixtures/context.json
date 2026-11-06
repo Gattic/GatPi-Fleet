@@ -1,0 +1,413 @@
+{
+  "at": 1768478400000,
+  "scopes": [
+    {
+      "scope": "open",
+      "rows": [
+        {
+          "id": "c18920aa635c35c561e04262ad764b95",
+          "label": "pi-dash",
+          "host": null,
+          "model": null,
+          "tokens": 166000,
+          "window": 200000,
+          "percent": 83,
+          "compactAt": 183616,
+          "live": true,
+          "unbridged": false,
+          "at": 1768478340000,
+          "breakdown": {
+            "parts": {
+              "system": 12000,
+              "tools": 14000,
+              "injected": 30000,
+              "user": 6000,
+              "assistant": 16000,
+              "toolResults": 68000,
+              "summary": 2000
+            },
+            "unattributed": 18000,
+            "totalBasis": "measured",
+            "imageTokens": 0,
+            "counts": {
+              "user": 2,
+              "assistant": 3,
+              "toolResults": 4,
+              "injected": 1,
+              "imageBlocks": 0
+            },
+            "compactAt": 183616
+          }
+        },
+        {
+          "id": "1de29cb615f97fdff2d906eef9fe3273",
+          "label": "legacy",
+          "host": null,
+          "model": null,
+          "tokens": 40000,
+          "window": 200000,
+          "percent": 20,
+          "compactAt": null,
+          "live": true,
+          "unbridged": false,
+          "at": null,
+          "breakdown": null
+        },
+        {
+          "id": "cf66f1a6b9109c76947bde5a189b64b5",
+          "label": "Site redesign",
+          "host": null,
+          "model": null,
+          "tokens": null,
+          "window": 200000,
+          "percent": null,
+          "compactAt": 183616,
+          "live": true,
+          "unbridged": false,
+          "at": 1768478340000,
+          "breakdown": {
+            "parts": {
+              "system": 2000,
+              "tools": 3000,
+              "injected": 0,
+              "user": 1000,
+              "assistant": 2000,
+              "toolResults": 2000,
+              "summary": 0
+            },
+            "unattributed": null,
+            "totalBasis": "estimate",
+            "imageTokens": 0,
+            "counts": {
+              "user": 2,
+              "assistant": 3,
+              "toolResults": 4,
+              "injected": 1,
+              "imageBlocks": 0
+            },
+            "compactAt": 183616
+          }
+        }
+      ],
+      "cumulative": {
+        "parts": {
+          "system": 14000,
+          "tools": 17000,
+          "injected": 30000,
+          "user": 7000,
+          "assistant": 18000,
+          "toolResults": 70000,
+          "summary": 2000
+        },
+        "compositionTokens": 166000,
+        "unattributed": 18000,
+        "imageTokens": 0,
+        "imageBlocks": 0,
+        "fillTokens": 206000,
+        "fillWindows": 400000,
+        "near": 1,
+        "unknown": 1,
+        "unbridged": 0,
+        "endedTokens": 0,
+        "endedSessions": 0,
+        "hosts": [
+          {
+            "host": null,
+            "tokens": 206000
+          }
+        ],
+        "models": []
+      }
+    },
+    {
+      "scope": "today",
+      "rows": [
+        {
+          "id": "c18920aa635c35c561e04262ad764b95",
+          "label": "pi-dash",
+          "host": null,
+          "model": null,
+          "tokens": 166000,
+          "window": 200000,
+          "percent": 83,
+          "compactAt": 183616,
+          "live": true,
+          "unbridged": false,
+          "at": 1768478340000,
+          "breakdown": {
+            "parts": {
+              "system": 12000,
+              "tools": 14000,
+              "injected": 30000,
+              "user": 6000,
+              "assistant": 16000,
+              "toolResults": 68000,
+              "summary": 2000
+            },
+            "unattributed": 18000,
+            "totalBasis": "measured",
+            "imageTokens": 0,
+            "counts": {
+              "user": 2,
+              "assistant": 3,
+              "toolResults": 4,
+              "injected": 1,
+              "imageBlocks": 0
+            },
+            "compactAt": 183616
+          }
+        },
+        {
+          "id": null,
+          "label": "site › Fix the header",
+          "host": null,
+          "model": "anthropic/claude-opus-5-5",
+          "tokens": 90000,
+          "window": null,
+          "percent": null,
+          "compactAt": null,
+          "live": false,
+          "unbridged": false,
+          "at": 1768471200000,
+          "breakdown": null
+        },
+        {
+          "id": "1de29cb615f97fdff2d906eef9fe3273",
+          "label": "legacy",
+          "host": null,
+          "model": null,
+          "tokens": 40000,
+          "window": 200000,
+          "percent": 20,
+          "compactAt": null,
+          "live": true,
+          "unbridged": false,
+          "at": null,
+          "breakdown": null
+        },
+        {
+          "id": "cf66f1a6b9109c76947bde5a189b64b5",
+          "label": "Site redesign",
+          "host": null,
+          "model": null,
+          "tokens": null,
+          "window": 200000,
+          "percent": null,
+          "compactAt": 183616,
+          "live": true,
+          "unbridged": false,
+          "at": 1768478340000,
+          "breakdown": {
+            "parts": {
+              "system": 2000,
+              "tools": 3000,
+              "injected": 0,
+              "user": 1000,
+              "assistant": 2000,
+              "toolResults": 2000,
+              "summary": 0
+            },
+            "unattributed": null,
+            "totalBasis": "estimate",
+            "imageTokens": 0,
+            "counts": {
+              "user": 2,
+              "assistant": 3,
+              "toolResults": 4,
+              "injected": 1,
+              "imageBlocks": 0
+            },
+            "compactAt": 183616
+          }
+        }
+      ],
+      "cumulative": {
+        "parts": {
+          "system": 14000,
+          "tools": 17000,
+          "injected": 30000,
+          "user": 7000,
+          "assistant": 18000,
+          "toolResults": 70000,
+          "summary": 2000
+        },
+        "compositionTokens": 166000,
+        "unattributed": 18000,
+        "imageTokens": 0,
+        "imageBlocks": 0,
+        "fillTokens": 206000,
+        "fillWindows": 400000,
+        "near": 1,
+        "unknown": 1,
+        "unbridged": 0,
+        "endedTokens": 90000,
+        "endedSessions": 1,
+        "hosts": [
+          {
+            "host": null,
+            "tokens": 296000
+          }
+        ],
+        "models": [
+          {
+            "model": "claude-opus-5-5",
+            "tokens": 90000,
+            "sessions": 1
+          }
+        ]
+      }
+    },
+    {
+      "scope": "30d",
+      "rows": [
+        {
+          "id": "c18920aa635c35c561e04262ad764b95",
+          "label": "pi-dash",
+          "host": null,
+          "model": null,
+          "tokens": 166000,
+          "window": 200000,
+          "percent": 83,
+          "compactAt": 183616,
+          "live": true,
+          "unbridged": false,
+          "at": 1768478340000,
+          "breakdown": {
+            "parts": {
+              "system": 12000,
+              "tools": 14000,
+              "injected": 30000,
+              "user": 6000,
+              "assistant": 16000,
+              "toolResults": 68000,
+              "summary": 2000
+            },
+            "unattributed": 18000,
+            "totalBasis": "measured",
+            "imageTokens": 0,
+            "counts": {
+              "user": 2,
+              "assistant": 3,
+              "toolResults": 4,
+              "injected": 1,
+              "imageBlocks": 0
+            },
+            "compactAt": 183616
+          }
+        },
+        {
+          "id": null,
+          "label": "site › Fix the header",
+          "host": null,
+          "model": "anthropic/claude-opus-5-5",
+          "tokens": 90000,
+          "window": null,
+          "percent": null,
+          "compactAt": null,
+          "live": false,
+          "unbridged": false,
+          "at": 1768471200000,
+          "breakdown": null
+        },
+        {
+          "id": "1de29cb615f97fdff2d906eef9fe3273",
+          "label": "legacy",
+          "host": null,
+          "model": null,
+          "tokens": 40000,
+          "window": 200000,
+          "percent": 20,
+          "compactAt": null,
+          "live": true,
+          "unbridged": false,
+          "at": null,
+          "breakdown": null
+        },
+        {
+          "id": null,
+          "label": "notes › Draft release notes",
+          "host": null,
+          "model": null,
+          "tokens": null,
+          "window": null,
+          "percent": null,
+          "compactAt": null,
+          "live": false,
+          "unbridged": false,
+          "at": null,
+          "breakdown": null
+        },
+        {
+          "id": "cf66f1a6b9109c76947bde5a189b64b5",
+          "label": "Site redesign",
+          "host": null,
+          "model": null,
+          "tokens": null,
+          "window": 200000,
+          "percent": null,
+          "compactAt": 183616,
+          "live": true,
+          "unbridged": false,
+          "at": 1768478340000,
+          "breakdown": {
+            "parts": {
+              "system": 2000,
+              "tools": 3000,
+              "injected": 0,
+              "user": 1000,
+              "assistant": 2000,
+              "toolResults": 2000,
+              "summary": 0
+            },
+            "unattributed": null,
+            "totalBasis": "estimate",
+            "imageTokens": 0,
+            "counts": {
+              "user": 2,
+              "assistant": 3,
+              "toolResults": 4,
+              "injected": 1,
+              "imageBlocks": 0
+            },
+            "compactAt": 183616
+          }
+        }
+      ],
+      "cumulative": {
+        "parts": {
+          "system": 14000,
+          "tools": 17000,
+          "injected": 30000,
+          "user": 7000,
+          "assistant": 18000,
+          "toolResults": 70000,
+          "summary": 2000
+        },
+        "compositionTokens": 166000,
+        "unattributed": 18000,
+        "imageTokens": 0,
+        "imageBlocks": 0,
+        "fillTokens": 206000,
+        "fillWindows": 400000,
+        "near": 1,
+        "unknown": 2,
+        "unbridged": 0,
+        "endedTokens": 90000,
+        "endedSessions": 1,
+        "hosts": [
+          {
+            "host": null,
+            "tokens": 296000
+          }
+        ],
+        "models": [
+          {
+            "model": "claude-opus-5-5",
+            "tokens": 90000,
+            "sessions": 1
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -2,9 +2,7 @@
 // every part is an estimate, so the UI must label estimates and never invent a zero.
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { SessionRow } from "../../../manager/model/store.ts";
-import { rowLabel } from "../../../manager/model/store.ts";
-import { ownerKey, ownerSessionId, USAGE_RETENTION_MS } from "../../../manager/usage/usage-index.ts";
-import { sessionTitle, startOfToday } from "../../../manager/usage/report.ts";
+import { cumulativeContext, contextRows as contextRowsOf, CONTEXT_SCOPES, partsTotal as sumParts, type ContextScope, type ContextSessionRow, type CumulativeContext } from "../../../manager/context/report.ts";
 import type { ContextBreakdown, ContextParts } from "../../../protocol/index.ts";
 import { gauge, hbar, stackedBar } from "../charts.ts";
 import { ELLIPSIS, fit, fitRight, fmtTokens } from "../format.ts";
@@ -30,20 +28,16 @@ export const CONTEXT_PARTS: readonly PartSpec[] = [
 
 const INDENT = " ".repeat(FIELD_WIDTH);
 
-export function partsTotal(parts: ContextParts): number {
-	return CONTEXT_PARTS.reduce((sum, part) => sum + parts[part.key], 0);
-}
-
 /** Stacked bar over the window; a positive residual is drawn after the estimated parts. */
 export function contextBar(breakdown: ContextBreakdown, window: number, width: number): string {
 	const segments = CONTEXT_PARTS.map((part) => ({ value: breakdown.parts[part.key], paint: part.paint }));
 	if (breakdown.unattributed !== null && breakdown.unattributed > 0) segments.push({ value: breakdown.unattributed, paint: theme.border });
-	return stackedBar(segments, window > 0 ? window : partsTotal(breakdown.parts), width);
+	return stackedBar(segments, window > 0 ? window : sumParts(breakdown.parts), width);
 }
 
 /** Percentages are shares of the estimated parts, so they sum to 100. */
 function legend(breakdown: ContextBreakdown, width: number): string {
-	const total = partsTotal(breakdown.parts);
+	const total = sumParts(breakdown.parts);
 	const parts = CONTEXT_PARTS.filter((part) => breakdown.parts[part.key] > 0);
 	if (!parts.length) return fit(`${INDENT}${theme.dim("est.")} ${theme.dim("no projected parts")}`, width);
 	const share = (part: PartSpec) => `${Math.round((breakdown.parts[part.key] / total) * 100)}%`;
@@ -58,7 +52,7 @@ function residual(breakdown: ContextBreakdown): string {
 	const value = breakdown.unattributed;
 	const sign = value < 0 ? "−" : "+";
 	const amount = `${sign}${fmtTokens(Math.abs(value))}`;
-	const percent = breakdown.totalBasis === "measured" ? Math.round((value / Math.max(1, partsTotal(breakdown.parts) + value)) * 100) : null;
+	const percent = breakdown.totalBasis === "measured" ? Math.round((value / Math.max(1, sumParts(breakdown.parts) + value)) * 100) : null;
 	return `${theme.muted("unattributed")} ${theme.text(amount)}${percent === null ? "" : theme.dim(` (${percent}%)`)}`;
 }
 
@@ -114,73 +108,11 @@ export function contextLines(row: SessionRow, width: number): string[] {
 	];
 }
 
-export type ContextScope = "open" | "today" | "30d";
-export const CONTEXT_SCOPES: readonly ContextScope[] = ["open", "today", "30d"];
-
-interface ContextSessionRow {
-	label: string;
-	host?: string;
-	model?: string;
-	tokens: number | null;
-	window: number | null;
-	percent: number | null;
-	compactAt: number | null;
-	breakdown?: ContextBreakdown;
-	live: boolean;
-	unbridged: boolean;
-	at?: number;
-}
+export { CONTEXT_SCOPES, type ContextScope } from "../../../manager/context/report.ts";
 
 /** Every session in scope: open rows from the store, ended rows from the usage index (fill only). */
 export function contextRows(ctx: ViewContext, scope: ContextScope): ContextSessionRow[] {
-	const rows: ContextSessionRow[] = [];
-	const openOwners = new Map<string, string>();
-	for (const row of ctx.store.ordered()) {
-		if (row.exitedAt !== undefined) continue;
-		if (!row.bridge) {
-			rows.push({ label: rowLabel(row), tokens: null, window: null, percent: null, compactAt: null, live: true, unbridged: true, host: row.host });
-			continue;
-		}
-		openOwners.set(ownerKey(row.host, row.bridge.sessionId), rowLabel(row));
-		const context = row.bridge.context;
-		rows.push({
-			label: rowLabel(row),
-			host: row.host,
-			model: row.bridge.model,
-			tokens: context?.tokens ?? null,
-			window: context?.window ?? null,
-			percent: context?.percent ?? null,
-			compactAt: context?.breakdown?.compactAt ?? null,
-			breakdown: context?.breakdown,
-			live: true,
-			unbridged: false,
-		});
-	}
-	if (scope !== "open") {
-		const since = scope === "today" ? startOfToday(ctx.now) : ctx.now - USAGE_RETENTION_MS;
-		for (const file of ctx.usage.files.values()) {
-			if (file.kind !== "session" || file.mtimeMs < since) continue;
-			const owner = ownerSessionId(file);
-			if (owner && openOwners.has(owner)) continue;
-			const { project, title } = sessionTitle(file);
-			const context = file.context;
-			const window = context ? ctx.windows.window(context.model) : null;
-			const tokens = context?.tokens ?? null;
-			rows.push({
-				label: title ? `${project} › ${title}` : project,
-				host: file.host,
-				model: context?.model,
-				tokens,
-				window,
-				percent: tokens !== null && window !== null && window > 0 ? (tokens / window) * 100 : null,
-				compactAt: null,
-				live: false,
-				unbridged: false,
-				at: context?.at,
-			});
-		}
-	}
-	return rows.sort((a, b) => (b.tokens ?? -1) - (a.tokens ?? -1) || a.label.localeCompare(b.label));
+	return contextRowsOf({ store: ctx.store, usage: ctx.usage, windows: ctx.windows, hostOrder: [...ctx.remotes.keys()], now: ctx.now }, scope);
 }
 
 export function contextRowCount(ctx: ViewContext, scope: ContextScope): number {
@@ -191,95 +123,6 @@ export function contextRowCount(ctx: ViewContext, scope: ContextScope): number {
 export function contextVisibleRows(width: number, height: number): number {
 	const content = Math.max(1, height - 1 - 4);
 	return width < 100 ? Math.max(1, content - 6) : Math.max(1, content - 1);
-}
-
-interface CumulativeContext {
-	parts: ContextParts;
-	compositionTokens: number;
-	unattributed: number | null;
-	imageTokens: number;
-	imageBlocks: number;
-	fillTokens: number;
-	fillWindows: number;
-	near: number;
-	unknown: number;
-	unbridged: number;
-	endedTokens: number;
-	endedSessions: number;
-	hosts: { host?: string; tokens: number }[];
-	models: { model: string; tokens: number; sessions: number }[];
-}
-
-function cumulative(rows: readonly ContextSessionRow[], ctx: ViewContext): CumulativeContext {
-	const parts: ContextParts = { system: 0, tools: 0, injected: 0, user: 0, assistant: 0, toolResults: 0, summary: 0 };
-	let compositionTokens = 0;
-	let unattributed: number | null = null;
-	let imageTokens = 0;
-	let imageBlocks = 0;
-	let fillTokens = 0;
-	let fillWindows = 0;
-	let near = 0;
-	let unknown = 0;
-	let unbridged = 0;
-	let endedTokens = 0;
-	let endedSessions = 0;
-	const hosts = new Map<string | undefined, number>();
-	const models = new Map<string, { tokens: number; sessions: number }>();
-	for (const row of rows) {
-		if (row.breakdown) {
-			for (const part of CONTEXT_PARTS) parts[part.key] += row.breakdown.parts[part.key];
-			if (row.tokens !== null) compositionTokens += row.tokens;
-			if (row.breakdown.unattributed !== null) unattributed = (unattributed ?? 0) + row.breakdown.unattributed;
-			imageTokens += row.breakdown.imageTokens;
-			imageBlocks += row.breakdown.counts.imageBlocks;
-		}
-		if (row.tokens !== null && row.window !== null && row.window > 0) {
-			fillTokens += row.tokens;
-			fillWindows += row.window;
-		}
-		if (row.percent !== null && row.percent >= 80) near++;
-		if (row.tokens === null && !row.unbridged) unknown++;
-		if (row.unbridged) unbridged++;
-		if (!row.live && row.tokens !== null) {
-			endedTokens += row.tokens;
-			endedSessions++;
-		}
-		if (row.tokens !== null) {
-			hosts.set(row.host, (hosts.get(row.host) ?? 0) + row.tokens);
-			if (row.model) {
-				const model = row.model.split("/").pop() ?? row.model;
-				const entry = models.get(model) ?? { tokens: 0, sessions: 0 };
-				entry.tokens += row.tokens;
-				entry.sessions++;
-				models.set(model, entry);
-			}
-		}
-	}
-	const hostOrder = [undefined, ...ctx.remotes.keys()];
-	const orderedHosts = [...hosts.entries()]
-		.filter(([, tokens]) => tokens > 0)
-		.sort((a, b) => {
-			const ai = hostOrder.indexOf(a[0]);
-			const bi = hostOrder.indexOf(b[0]);
-			return (ai < 0 ? hostOrder.length : ai) - (bi < 0 ? hostOrder.length : bi) || (a[0] ?? "").localeCompare(b[0] ?? "");
-		})
-		.map(([host, tokens]) => ({ host, tokens }));
-	return {
-		parts,
-		compositionTokens,
-		unattributed,
-		imageTokens,
-		imageBlocks,
-		fillTokens,
-		fillWindows,
-		near,
-		unknown,
-		unbridged,
-		endedTokens,
-		endedSessions,
-		hosts: orderedHosts,
-		models: [...models.entries()].map(([model, entry]) => ({ model, ...entry })).sort((a, b) => b.tokens - a.tokens),
-	};
 }
 
 function scopeLabel(scope: ContextScope, rows: readonly ContextSessionRow[]): string {
@@ -347,7 +190,7 @@ function sessionColumn(rows: readonly ContextSessionRow[], width: number, visibl
 }
 
 function cumulativeColumn(ctx: ViewContext, scope: ContextScope, total: CumulativeContext, width: number): string[] {
-	const partsTotal = partsTotalOf(total.parts);
+	const partsTotal = sumParts(total.parts);
 	const lines = [fit(`${theme.muted("CUMULATIVE")} ${theme.dim(scope === "open" ? "(open sessions)" : scope === "today" ? "(open + ended today)" : "(retained 30 days)")}`, width)];
 	for (const part of CONTEXT_PARTS) {
 		const value = total.parts[part.key];
@@ -371,12 +214,8 @@ function cumulativeColumn(ctx: ViewContext, scope: ContextScope, total: Cumulati
 	return lines;
 }
 
-function partsTotalOf(parts: ContextParts): number {
-	return CONTEXT_PARTS.reduce((sum, part) => sum + parts[part.key], 0);
-}
-
 function narrowSummary(scope: ContextScope, total: CumulativeContext): string[] {
-	const partsTotal = partsTotalOf(total.parts);
+	const partsTotal = sumParts(total.parts);
 	const top = CONTEXT_PARTS
 		.map((part) => ({ part, value: total.parts[part.key] }))
 		.filter(({ value }) => value > 0)
@@ -394,8 +233,8 @@ function narrowSummary(scope: ContextScope, total: CumulativeContext): string[] 
 
 export function renderContext(ctx: ViewContext, width: number, height: number, scope: ContextScope, offset: number): string[] {
 	const rows = contextRows(ctx, scope);
-	const total = cumulative(rows, ctx);
-	const partsTotal = partsTotalOf(total.parts);
+	const total = cumulativeContext(rows, [...ctx.remotes.keys()]);
+	const partsTotal = sumParts(total.parts);
 	const barWidth = Math.max(4, Math.min(24, Math.floor(width * 0.2)));
 	const legend = CONTEXT_PARTS.filter((part) => total.parts[part.key] > 0)
 		.map((part) => `${theme.muted(part.label)} ${theme.text(`${percentOf(total.parts[part.key], partsTotal) ?? 0}%`)}`)

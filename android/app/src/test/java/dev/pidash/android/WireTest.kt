@@ -108,6 +108,58 @@ class WireTest {
         json.put("quota", org.json.JSONArray())
         assertEquals(emptyList<QuotaAccount>(), UsageReport.parse(json).quota)
     }
+    @Test fun readsTheActualHostContextFixtureWithMeasuredTotalsAndEstimatedParts() {
+        val report = ContextReport.parse(JSONObject(javaClass.classLoader!!.getResource("context.json")!!.readText()))
+        assertEquals(listOf("open", "today", "30d"), report.scopes.map { it.scope })
+        val open = report.scope("open")
+        assertEquals(listOf("pi-dash", "legacy", "Site redesign"), open.rows.map { it.label })
+        assertEquals(166_000.0, open.rows[0].tokens!!, 0.0)
+        assertEquals(200_000.0, open.rows[0].window!!, 0.0)
+        assertEquals(83.0, open.rows[0].percent!!, 0.0)
+        assertEquals(18_000.0, open.rows[0].breakdown!!.unattributed!!, 0.0)
+        assertEquals("measured", open.rows[0].breakdown!!.totalBasis)
+        assertNull("an older bridge keeps its measured total without a composition", open.rows[1].breakdown)
+        assertNull("an unknown total stays unknown, not zero", open.rows[2].tokens)
+        assertEquals("estimate", open.rows[2].breakdown!!.totalBasis)
+        assertNull(open.rows[2].breakdown!!.unattributed)
+        assertEquals(206_000.0, open.cumulative.fillTokens, 0.0)
+        assertEquals(400_000.0, open.cumulative.fillWindows, 0.0)
+        assertEquals(listOf(1, 1, 0), listOf(open.cumulative.near, open.cumulative.unknown, open.cumulative.unbridged))
+        assertEquals(166_000.0, open.cumulative.compositionTokens, 0.0)
+        assertEquals(listOf(ContextHost(null, 206_000.0)), open.cumulative.hosts)
+        assertEquals(0, open.cumulative.endedSessions)
+        val today = report.scope("today")
+        assertEquals("site \u203a Fix the header", today.rows[1].label)
+        assertNull("an ended session's window is unknown until the catalog supplies it", today.rows[1].window)
+        assertEquals(90_000.0, today.cumulative.endedTokens, 0.0)
+        assertEquals(1, today.cumulative.endedSessions)
+        assertEquals(listOf(ContextModel("claude-opus-5-5", 90_000.0, 1)), today.cumulative.models)
+        assertEquals(5, report.scope("30d").rows.size)
+    }
+    @Test fun aContextReportWithoutAllThreeScopesIsRejected() {
+        val json = JSONObject(javaClass.classLoader!!.getResource("context.json")!!.readText())
+        json.put("scopes", JSONArray())
+        assertThrows(IllegalArgumentException::class.java) { ContextReport.parse(json) }
+        json.put("scopes", JSONObject(javaClass.classLoader!!.getResource("context.json")!!.readText()).getJSONArray("scopes").let { a ->
+            JSONArray().put(a.getJSONObject(0)).put(a.getJSONObject(1)).put(a.getJSONObject(1).put("scope", "7d"))
+        })
+        assertThrows(IllegalArgumentException::class.java) { ContextReport.parse(json) }
+    }
+    @Test fun detailCarriesTheSessionContextBreakdownWhenTheBridgeReportsIt() {
+        val session = fixture().getJSONArray("sessions").getJSONObject(0)
+        session.put("prompts", JSONArray()).put("models", JSONArray()).put("asks", JSONArray()).put("tools", JSONArray())
+        session.put("context", JSONObject().put("tokens", 1000.0).put("window", 200_000.0).put("percent", 0.5).put("breakdown",
+            JSONObject().put("parts", JSONObject().put("system", 100.0).put("tools", 200.0).put("injected", 0.0).put("user", 50.0)
+                .put("assistant", 100.0).put("toolResults", 50.0).put("summary", 0.0))
+                .put("unattributed", 500.0).put("totalBasis", "measured").put("imageTokens", 0.0)
+                .put("counts", JSONObject().put("user", 1).put("assistant", 1).put("toolResults", 1).put("injected", 0).put("imageBlocks", 0))
+                .put("compactAt", 183_616.0)))
+        val context = Detail.parse(session).context!!
+        assertEquals(1000.0, context.tokens!!, 0.0)
+        assertEquals(200.0, context.breakdown!!.parts.tools, 0.0)
+        assertEquals(500.0, context.breakdown!!.unattributed!!, 0.0)
+        assertEquals("measured", context.breakdown!!.totalBasis)
+    }
     @Test fun rejectsOutOfOrderFramesAndIncompatibleVersions() {
         val initial = fixture()
         val state = reduceFrame(Dashboard(), initial, 1)

@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-enum class Screen { Sessions, Session, Jobs, Projects, Usage, Glasses, Pairing }
+enum class Screen { Sessions, Session, Jobs, Projects, Usage, Context, Glasses, Pairing }
 
 data class Confirmation(val title: String, val description: String, val target: Session? = null, val command: JSONObject? = null, val project: Project? = null, val history: History? = null, val dismissReceipt: Boolean = false, val git: GitConfirmation? = null)
 
@@ -35,6 +35,9 @@ class DashViewModel @JvmOverloads constructor(
     val usage = MutableStateFlow<UsageSnapshot?>(null)
     val usageRange = MutableStateFlow(UsageReport.RANGES.first())
     val usageMetric = MutableStateFlow(Metric.Cost)
+    /** The context report and its selected scope; both survive Activity recreation. */
+    val context = MutableStateFlow<ContextReport?>(null)
+    val contextScope = MutableStateFlow(ContextReport.SCOPES.first())
     val git = MutableStateFlow<GitView?>(null)
     private var gitVisit = 0
     val busy = MutableStateFlow(false)
@@ -149,6 +152,13 @@ class DashViewModel @JvmOverloads constructor(
         val report = repository.usage()
         usage.value = UsageSnapshot(report, SystemClock.elapsedRealtime())
     } }
+    fun openContext() {
+        screen.value = Screen.Context
+        // An earlier visit's report may be long outdated, or another host's after re-pairing.
+        context.value = null
+        refreshContext()
+    }
+    fun refreshContext() { run { context.value = repository.context() } }
     /** Expands one project's resumable history in place; selecting it again collapses it. */
     fun history(p: Project) {
         if (project.value == p) { project.value = null; return }

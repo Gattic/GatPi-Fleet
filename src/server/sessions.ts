@@ -7,7 +7,7 @@ import { isAlert } from "../manager/model/status.ts";
 import { launchSession, resumeBlocked } from "../manager/actions/launch.ts";
 import { listProjects, listSessions, type Project, type SessionSummary } from "../manager/actions/sessions.ts";
 import type { ManagerRuntime } from "../manager/runtime.ts";
-import { MAX_PROMPTS } from "../protocol/index.ts";
+import { MAX_PROMPTS, type ContextBreakdown, type SessionState } from "../protocol/index.ts";
 import { ApiError, type CommandRequest, type LaunchRequest, MAX_PROMPT } from "./contract.ts";
 
 type CommandKind = CommandRequest["command"]["kind"];
@@ -42,6 +42,28 @@ export function disabled(row: SessionRow, kind: CommandKind): string | null {
 	if (kind === "compact" && row.bridge.phase !== "idle") return "Compact only while idle";
 	if (kind === "ask" && row.bridge.asks.some((ask) => ask.status === "answering")) return "A side question is still answering";
 	return null;
+}
+
+export function breakdownProjection(breakdown: ContextBreakdown) {
+	return {
+		parts: breakdown.parts,
+		unattributed: breakdown.unattributed,
+		totalBasis: breakdown.totalBasis,
+		imageTokens: breakdown.imageTokens,
+		counts: breakdown.counts,
+		compactAt: breakdown.compactAt,
+	};
+}
+
+/** The session's measured context and estimated composition; null when the bridge has no measurement. */
+export function contextProjection(context: SessionState["context"]) {
+	if (!context) return null;
+	return {
+		tokens: context.tokens,
+		window: context.window,
+		percent: context.percent,
+		breakdown: context.breakdown ? breakdownProjection(context.breakdown) : null,
+	};
 }
 
 export function summary(row: SessionRow, gpuAvailable = false) {
@@ -100,6 +122,7 @@ export class Sessions {
 				})),
 			} : null,
 			lastPrompt: clean(b?.lastPrompt, 200),
+			context: contextProjection(b?.context),
 			// Only prompts short enough for the phone to send again.
 			prompts: b?.prompts.slice(-MAX_PROMPTS).filter((p) => p.length <= MAX_PROMPT).map((p) => clean(p, MAX_PROMPT)) ?? [],
 			lastSaid: clean(b?.lastSaid, 32_000), suggestion: clean(b?.suggestion, 2000),

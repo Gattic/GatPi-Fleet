@@ -12,6 +12,7 @@ import { API_VERSION, ApiError, MAX_BODY, MAX_FRAME, commandRequest, gitRequest,
 import type { ServerConfig } from "./config.ts";
 import { Receipts, type Receipt } from "./receipts.ts";
 import { Sessions } from "./sessions.ts";
+import { contextReport } from "./context.ts";
 import { usageReport } from "./usage.ts";
 import { SessionGit } from "./git.ts";
 
@@ -137,8 +138,9 @@ export class Gateway {
 		const path = url.pathname;
 		if (req.method === "GET") {
 			let result: unknown;
-			if (path === "/api/v1/info") result = { version: API_VERSION, epoch: this.epoch, label: this.config.label, capabilities: ["sessions", "commands", "launch", "usage", "git", "g1-display"] };
+			if (path === "/api/v1/info") result = { version: API_VERSION, epoch: this.epoch, label: this.config.label, capabilities: ["sessions", "commands", "launch", "usage", "git", "context", "g1-display"] };
 			else if (path === "/api/v1/sessions") result = { sessions: this.sessions.overview() };
+			else if (path === "/api/v1/context") result = contextReport(this.sessions.runtime);
 			else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}\/git$/.test(path)) result = { epoch: this.epoch, ...await this.git.menu(path.split("/")[4]) };
 			else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}\/git\/branches$/.test(path)) result = await this.git.branches(path.split("/")[4]);
 			else if (/^\/api\/v1\/sessions\/[a-f0-9]{32}\/git\/status$/.test(path)) result = await this.git.status(path.split("/")[4]);
