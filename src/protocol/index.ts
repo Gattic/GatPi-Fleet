@@ -178,6 +178,37 @@ export interface SessionIdentity {
 	instanceId: string;
 }
 
+/** Estimated composition of a session's model context. Every part is an estimate. */
+export interface ContextParts {
+	system: number;
+	tools: number;
+	injected: number;
+	user: number;
+	assistant: number;
+	toolResults: number;
+	summary: number;
+}
+
+/**
+ * The breakdown of `SessionState.context`. `tokens`, `window` and `percent` stay pi's measurement;
+ * the parts come from pi's chars/4 estimator, so `unattributed` is a real residual, not noise to hide.
+ */
+export interface ContextBreakdown {
+	parts: ContextParts;
+	/** `tokens − Σ parts` when `tokens` is known; null while the total is unknown (after compaction). */
+	unattributed: number | null;
+	/** Whether the total came from pi or is only the projection estimate. */
+	totalBasis: "measured" | "estimate";
+	/** Image tokens, already counted inside their owning category; informational only. */
+	imageTokens: number;
+	counts: { user: number; assistant: number; toolResults: number; injected: number; imageBlocks: number };
+	/** `window − reserveTokens`; null when compaction is disabled or the window is unknown. */
+	compactAt: number | null;
+	/** Context tokens of the latest requests, oldest first, at most 32. */
+	history: number[];
+	at: number;
+}
+
 export interface SessionState extends SessionIdentity {
 	/** GNU screen session (`$STY`) and window hosting this pi, when inside screen. */
 	sty?: string;
@@ -207,7 +238,7 @@ export interface SessionState extends SessionIdentity {
 	suggestion?: string;
 	lastError?: { message: string; at: number };
 	rateLimited?: { at: number; retryAfter?: string };
-	context?: { tokens: number | null; window: number; percent: number | null };
+	context?: { tokens: number | null; window: number; percent: number | null; breakdown?: ContextBreakdown };
 	usage: { direct: UsageTotals; indirect: UsageTotals };
 	/** Per-minute usage (direct + indirect) for the last two hours. */
 	usageMinutes: UsageMinute[];

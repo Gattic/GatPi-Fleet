@@ -10,6 +10,7 @@ import { launchSession, resumeBlocked } from "../../manager/actions/launch.ts";
 import { readHardcopy, requestHardcopy } from "../../manager/actions/peek.ts";
 import { listProjects, listSessions, type Project, type SessionSummary } from "../../manager/actions/sessions.ts";
 import type { GpuMonitor } from "../../manager/collectors/gpu.ts";
+import type { ContextWindows } from "../../manager/context/windows.ts";
 import { buildHermesSnapshot, feedbackFor, type HermesAdviceCard, type HermesAdvisorClient, type HermesCardAction } from "../hermes/advisor.ts";
 import type { QuotaMonitor } from "../../manager/collectors/quota.ts";
 import { isAlert } from "../../manager/model/status.ts";
@@ -26,6 +27,7 @@ import { TextPane } from "./text-pane.ts";
 import { keyHints, theme } from "./theme.ts";
 import { GitView } from "./git-view.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
+import { CONTEXT_SCOPES, contextRowCount, contextVisibleRows, renderContext, type ContextScope } from "./views/context.ts";
 import { jobPageSize, jobRows, renderJobs } from "./views/jobs.ts";
 import { renderOverview } from "./views/overview.ts";
 import { roadmapText } from "./views/roadmap.ts";
@@ -38,6 +40,7 @@ export interface Services {
 	/** Sends commands to sessions on this machine and on the remote hosts. */
 	network: Network;
 	usage: UsageIndex;
+	windows: ContextWindows;
 	quota: QuotaMonitor;
 	gpu: GpuMonitor;
 	advisor: HermesAdvisorClient;
@@ -59,10 +62,11 @@ const GIT_MESSAGE_LIMIT = 500;
 
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["u", "usage"], ["J", "jobs"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["Tab", "next ◆"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["J", "jobs"], ["?", "help"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["u", "usage"], ["K", "context"], ["J", "jobs"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["Tab", "next ◆"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["K", "context"], ["J", "jobs"], ["?", "help"]],
 	jobs: [["Esc", "back"], ["j/k", "scroll"], ["PgUp/PgDn", "page"], ["?", "help"]],
-	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["?", "help"]],
+	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["K", "context"], ["?", "help"]],
+	context: [["Esc", "back"], ["a", "scope"], ["j/k", "scroll"], ["PgUp/PgDn", "page"], ["⏎", "detail"], ["?", "help"]],
 };
 
 export class App implements Component {
@@ -75,6 +79,8 @@ export class App implements Component {
 	private flash?: { text: string; error: boolean; until: number };
 	private spinnerIndex = 0;
 	private jobsOffset = 0;
+	private contextScope: ContextScope = "open";
+	private contextOffset = 0;
 	private overlay?: OverlayHandle;
 	private peekTimer?: NodeJS.Timeout;
 	private peekFile?: string;
@@ -138,19 +144,24 @@ export class App implements Component {
 		this.services.store.acknowledge(row.key);
 	}
 
-	render(width: number): string[] {
-		const height = Math.max(5, this.services.tui.terminal.rows);
-		const now = Date.now();
-		const ctx: ViewContext = {
+	private viewContext(now = Date.now()): ViewContext {
+		return {
 			store: this.services.store,
 			remotes: this.services.network.remotes,
 			usage: this.services.usage,
+			windows: this.services.windows,
 			quota: this.services.quota,
 			gpu: this.services.gpu,
 			now,
 			spinner: SPINNER[this.spinnerIndex],
 			selected: this.selected(),
 		};
+	}
+
+	render(width: number): string[] {
+		const height = Math.max(5, this.services.tui.terminal.rows);
+		const now = Date.now();
+		const ctx = this.viewContext(now);
 		const detail = this.view === "detail" ? renderDetail(ctx, width, height, this.said) : undefined;
 		this.saidArea = detail?.said;
 		const interrupted = this.services.interruptedSessions().length;
@@ -161,7 +172,9 @@ export class App implements Component {
 				? renderUsage(ctx, width, height, this.range, this.metric)
 				: this.view === "jobs"
 					? renderJobs(ctx, width, height, this.jobsOffset)
-					: renderOverview(ctx, width, height - Number(banner));
+					: this.view === "context"
+						? renderContext(ctx, width, height, this.contextScope, this.contextOffset)
+						: renderOverview(ctx, width, height - Number(banner));
 		if (banner) body.splice(1, 0, fit(theme.waiting(` ! ${interrupted} interrupted session${interrupted === 1 ? "" : "s"} · e to review / resume`), width));
 		while (body.length < height - 1) body.push("");
 		const lines = [...body, this.footer(width, now)];
@@ -207,6 +220,19 @@ export class App implements Component {
 			this.jobsOffset = this.clampJobsOffset(this.jobsOffset + (matchesKey(data, Key.pageUp) ? -page : page));
 		} else if (this.view === "jobs" && (/^[1-9]$/.test(data) || matchesKey(data, Key.tab))) {
 			// The jobs page is read-only; session selection keys do not apply here.
+		} else if (data === "K") {
+			this.view = this.view === "context" ? "overview" : "context";
+			this.contextOffset = 0;
+		} else if (this.view === "context" && (matchesKey(data, Key.up) || data === "k" || matchesKey(data, Key.down) || data === "j")) {
+			const delta = matchesKey(data, Key.up) || data === "k" ? -1 : 1;
+			this.contextOffset = this.clampContextOffset(this.contextOffset + delta);
+		} else if (this.view === "context" && (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown))) {
+			const page = contextVisibleRows(this.services.tui.terminal.columns, this.services.tui.terminal.rows);
+			this.contextOffset = this.clampContextOffset(this.contextOffset + (matchesKey(data, Key.pageUp) ? -page : page));
+		} else if (this.view === "context" && data === "a") {
+			const index = CONTEXT_SCOPES.indexOf(this.contextScope);
+			this.contextScope = CONTEXT_SCOPES[(index + 1) % CONTEXT_SCOPES.length];
+			this.contextOffset = 0;
 		} else if (/^[1-9]$/.test(data)) {
 			this.select(store.bySlot(Number(data)));
 		} else if (matchesKey(data, Key.tab)) {
@@ -217,7 +243,8 @@ export class App implements Component {
 			const delta = matchesKey(data, Key.up) || data === "k" ? -1 : 1;
 			this.select(rows[Math.max(0, Math.min(rows.length - 1, index + delta))]);
 		} else if (matchesKey(data, Key.enter)) {
-			if (this.view !== "jobs") this.view = this.view === "detail" ? "overview" : "detail";
+			if (this.view === "context") this.view = "detail";
+			else if (this.view !== "jobs") this.view = this.view === "detail" ? "overview" : "detail";
 		} else if (matchesKey(data, Key.escape)) {
 			this.view = "overview";
 		} else if (data === "u") {
@@ -249,6 +276,12 @@ export class App implements Component {
 		const count = jobRows(this.services.store.ordered()).length;
 		const page = jobPageSize(this.services.tui.terminal.rows);
 		return Math.max(0, Math.min(offset, Math.max(0, count - page)));
+	}
+
+	private clampContextOffset(offset: number): number {
+		const rows = contextRowCount(this.viewContext(), this.contextScope);
+		const visible = contextVisibleRows(this.services.tui.terminal.columns, this.services.tui.terminal.rows);
+		return Math.max(0, Math.min(offset, Math.max(0, rows - visible)));
 	}
 
 	/** Sessions that need attention (needs you, error, stalled), longest waiting first; each press selects the next one. */

@@ -21,6 +21,8 @@ export interface FileUsage {
 	mtimeMs: number;
 	/** Bytes indexed so far (always at a line boundary). */
 	offset: number;
+	/** Latest measured request context from the newest assistant usage; retained per file, not per hour. */
+	context?: { tokens: number; at: number; model: string; peak: number; requests: number };
 	/** hour (epoch ms / 3.6e6) → model key → usage. */
 	hours: Record<string, Record<string, UsageBucket>>;
 }

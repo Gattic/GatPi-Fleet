@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { type FileMeta, scanBuffer, type UsageRecord } from "../src/manager/usage/extract.ts";
 import { UsageIndexer } from "../src/manager/usage/indexer.ts";
+import { ContextWindows } from "../src/manager/context/windows.ts";
 import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 
 const T0 = Date.parse("2026-10-03T10:00:00.000Z");
@@ -91,6 +92,59 @@ test("UsageIndexer indexes incrementally, handles rewrites, and enforces retenti
 	const later = T0 + 31 * 86_400_000;
 	const expired = reloaded.scan(request, later);
 	assert.deepEqual(expired.removed, [file], "files older than the retention window are dropped");
+});
+
+test("the indexer keeps the latest assistant context, peak, model and request count", (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-context-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const sessions = join(root, "sessions");
+	const dir = join(sessions, "--proj--");
+	mkdirSync(dir, { recursive: true });
+	const file = join(dir, "s1.jsonl");
+	const message = (id: string, role: string, at: number, extra: object) => JSON.stringify({ type: "message", id, parentId: null, timestamp: new Date(at).toISOString(), message: { role, timestamp: at, ...extra } });
+	const assistant = (id: string, at: number, tokens: number, model: string) => message(id, "assistant", at, {
+		content: [{ type: "text", text: "ok" }], api: "anthropic-messages", provider: model.split("/")[0], model: model.split("/")[1],
+		usage: { ...usage(tokens, 0, 0, 0), totalTokens: tokens }, stopReason: "stop",
+	});
+	const lines = [
+		JSON.stringify({ type: "session", version: 3, id: "s1", timestamp: new Date(T0).toISOString(), cwd: "/proj" }),
+		message("u1", "user", T0 + 1000, { content: "go" }),
+		assistant("a1", T0 + 2000, 1000, "anthropic/opus"),
+		message("t1", "toolResult", T0 + 2500, { toolCallId: "c1", toolName: "bash", content: [], usage: { ...usage(50, 0, 0, 0), totalTokens: 50 }, isError: false }),
+		assistant("a2", T0 + 3000, 3000, "anthropic/opus"),
+		assistant("a3", T0 + 4000, 2000, "openai/gpt"),
+	];
+	writeFileSync(file, `${lines.join("\n")}\n`);
+	const request = { type: "scan" as const, sessionRoot: sessions, subagentCwds: [], retentionMs: 30 * 86_400_000 };
+	const indexer = new UsageIndexer();
+	indexer.scan(request, T0 + 10_000);
+	assert.deepEqual(indexer.files.get(file)?.context, { tokens: 2000, at: T0 + 4000, model: "openai/gpt", peak: 3000, requests: 3 }, "tool usage is not a request");
+
+	appendFileSync(file, `${assistant("a4", T0 + 5000, 2500, "openai/gpt")}\n`);
+	indexer.scan(request, T0 + 10_000);
+	assert.deepEqual(indexer.files.get(file)?.context, { tokens: 2500, at: T0 + 5000, model: "openai/gpt", peak: 3000, requests: 4 });
+
+	// A rewrite invalidates the offset and the old latest context with it.
+	writeFileSync(file, `${lines.slice(0, 1).join("\n")}\n${assistant("a5", T0 + 6000, 500, "anthropic/opus")}\n`);
+	indexer.scan(request, T0 + 10_000);
+	assert.deepEqual(indexer.files.get(file)?.context, { tokens: 500, at: T0 + 6000, model: "anthropic/opus", peak: 500, requests: 1 });
+});
+
+test("a version 1 usage cache is discarded rather than read without context", (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-cache-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const cache = join(root, "cache.json");
+	writeFileSync(cache, JSON.stringify({ version: 1, files: [{ path: "/old.jsonl", kind: "session", size: 1, mtimeMs: 1, offset: 1, hours: {} }] }));
+	const indexer = new UsageIndexer(cache);
+	assert.deepEqual(indexer.load(), []);
+});
+
+test("context windows stay unknown without a catalog and for unknown models", async () => {
+	const windows = new ContextWindows();
+	assert.equal(windows.window("anthropic/claude-opus-5-5"), null, "unloaded catalog is not a guess");
+	assert.equal(windows.window("no-slash"), null);
+	await windows.load();
+	assert.equal(windows.window("nope/does-not-exist"), null);
 });
 
 test("UsageIndex folds subagent usage into the parent session", () => {

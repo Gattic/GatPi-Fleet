@@ -1,5 +1,6 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { GpuMonitor } from "../../../manager/collectors/gpu.ts";
+import type { ContextWindows } from "../../../manager/context/windows.ts";
 import { providerLabel, type QuotaMonitor } from "../../../manager/collectors/quota.ts";
 import type { RemoteHost } from "../../../manager/remote/host.ts";
 import { PROTOCOL_VERSION } from "../../../protocol/index.ts";
@@ -16,6 +17,8 @@ export interface ViewContext {
 	/** Remote hosts by hosts.json name. */
 	remotes: ReadonlyMap<string, RemoteHost>;
 	usage: UsageIndex;
+	/** Context windows of sessions without a bridge; null until the read-only catalog loads. */
+	windows: ContextWindows;
 	quota: QuotaMonitor;
 	gpu: GpuMonitor;
 	now: number;
@@ -30,13 +33,14 @@ export const MIN_MEM_SCALE = 4 * 1024 ** 3;
 /** CPU charts never scale below one core. */
 export const MIN_CPU_SCALE = 1;
 
-export type ViewName = "overview" | "detail" | "jobs" | "usage";
+export type ViewName = "overview" | "detail" | "jobs" | "usage" | "context";
 
 const TABS: [ViewName, string][] = [
 	["overview", "sessions"],
 	["detail", "detail"],
 	["jobs", "jobs"],
 	["usage", "usage"],
+	["context", "context"],
 ];
 
 /** Pad a styled line to `width` and paint a background across it. */

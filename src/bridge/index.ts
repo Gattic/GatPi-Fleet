@@ -36,6 +36,7 @@ import {
 	usageTokens,
 } from "../protocol/index.ts";
 import { answerOf, buildAskContext, cacheBeforeQuestion, textOf } from "./ask.ts";
+import { computeContextBreakdown, contextHistory, type SystemMessage } from "./context.ts";
 import { RecoveryJournal } from "../manager/recovery.ts";
 
 const FLUSH_INTERVAL_MS = 250;
@@ -139,8 +140,22 @@ function pushTimeline(timeline: readonly TimelineEntry[], at: number, state: Tim
 	return kept;
 }
 
-function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<SessionState, "plan" | "suggestion">): SessionState {
+function activeTools(pi: ExtensionAPI): Tool[] {
+	const all = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));
+	return pi.getActiveTools().flatMap((name) => {
+		const tool = all.get(name);
+		return tool ? [{ name, description: tool.description, parameters: tool.parameters }] : [];
+	});
+}
+
+/** The request's leading system message, reconstructed until the first request captures the real one. */
+function systemMessageOf(ctx: ExtensionContext, pi: ExtensionAPI): SystemMessage {
+	return { role: "system", content: [{ type: "text", text: ctx.getSystemPrompt() }], toolsAdded: activeTools(pi), timestamp: Date.now() };
+}
+
+function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<SessionState, "plan" | "suggestion">, capturedSystem: SystemMessage | undefined): SessionState {
 	const now = Date.now();
+	const entries = ctx.sessionManager.getEntries();
 	const idle = ctx.isIdle();
 	const direct = emptyUsage();
 	const indirect = emptyUsage();
@@ -154,7 +169,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 	let lastMessageAt: number | undefined;
 	// Same accounting as pi's /session: assistant + summaries are direct,
 	// toolResult usage is nested LLM work performed by tools.
-	for (const entry of ctx.sessionManager.getEntries()) {
+	for (const entry of entries) {
 		const timestamp = Date.parse(entry.timestamp);
 		if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
 			addUsage(direct, entry.usage);
@@ -199,6 +214,16 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 	const recentTools = [...tools.values()].slice(-MAX_TOOL_RUNS).map((run) => (run.endedAt === undefined ? { ...run, endedAt: run.startedAt, isError: true } : run));
 	const models = ctx.scopedModels.length ? ctx.scopedModels.map((scoped) => scoped.model) : ctx.modelRegistry.getAvailable();
 	const context = ctx.getContextUsage();
+	const breakdown = context
+		? computeContextBreakdown({
+			system: capturedSystem ?? systemMessageOf(ctx, pi),
+			messages: buildSessionContext(entries, ctx.sessionManager.getLeafId()).messages,
+			usage: { tokens: context.tokens, window: context.contextWindow, percent: context.percent },
+			compaction: pi.getSettings().compaction,
+			history: contextHistory(entries),
+			now,
+		})
+		: undefined;
 	return {
 		pid: process.pid,
 		instanceId: randomUUID(),
@@ -217,7 +242,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 		lastPrompt,
 		prompts,
 		lastSaid,
-		context: context ? { tokens: context.tokens, window: context.contextWindow, percent: context.percent } : undefined,
+		context: context ? { tokens: context.tokens, window: context.contextWindow, percent: context.percent, breakdown } : undefined,
 		usage: { direct, indirect },
 		usageMinutes,
 		plan: published.plan,
@@ -235,6 +260,8 @@ let askSeq = 0;
 export default function piDashBridge(pi: ExtensionAPI): void {
 	let ctx: ExtensionContext | undefined;
 	let state: SessionState | undefined;
+	/** The last request's leading system message: exact prompt and tool declarations. */
+	let capturedSystem: SystemMessage | undefined;
 	// Reload is command-context-only. Dispatch through a command, never through an agent prompt.
 	pi.registerCommand("pi-dash-reload", {
 		description: "Reload pi resources from pi-dash",
@@ -321,7 +348,26 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 	function refreshContext(): void {
 		if (!ctx || !state) return;
 		const usage = ctx.getContextUsage();
-		set({ context: usage ? { tokens: usage.tokens, window: usage.contextWindow, percent: usage.percent } : undefined });
+		if (!usage) {
+			set({ context: undefined });
+			return;
+		}
+		const entries = ctx.sessionManager.getEntries();
+		set({
+			context: {
+				tokens: usage.tokens,
+				window: usage.contextWindow,
+				percent: usage.percent,
+				breakdown: computeContextBreakdown({
+					system: capturedSystem ?? systemMessageOf(ctx, pi),
+					messages: buildSessionContext(entries, ctx.sessionManager.getLeafId()).messages,
+					usage: { tokens: usage.tokens, window: usage.contextWindow, percent: usage.percent },
+					compaction: pi.getSettings().compaction,
+					history: contextHistory(entries),
+					now: Date.now(),
+				}),
+			},
+		});
 	}
 
 	function recordUsage(usage: PiUsage, kind: "direct" | "indirect", timestamp: number): void {
@@ -364,14 +410,6 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 	}
 
 	/** The session's tools as its requests declare them: the active ones, in their order. */
-	function activeTools(): Tool[] {
-		const all = new Map(pi.getAllTools().map((tool) => [tool.name, tool]));
-		return pi.getActiveTools().flatMap((name) => {
-			const tool = all.get(name);
-			return tool ? [{ name, description: tool.description, parameters: tool.parameters }] : [];
-		});
-	}
-
 	/**
 	 * Asks the session's model about the session: its own system prompt, tools, context, model,
 	 * thinking level and session id, so the request reuses the provider's cache of the session's
@@ -397,7 +435,7 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 			const running = [...runningTools.values()].map((run) => ({ id: run.id, name: run.name, startedAt: run.startedAt, output: toolOutput.get(run.id) ?? "" }));
 			const context = buildAskContext({
 				systemPrompt: ctx.getSystemPrompt(),
-				tools: activeTools(),
+				tools: activeTools(pi),
 				messages: buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId()).messages,
 				live: { phase: state.phase, phaseSince: state.phaseSince, partial, running },
 				question: text,
@@ -594,7 +632,8 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, context) => {
 		if (context.mode !== "tui") return;
 		ctx = context;
-		state = initialState(pi, context, { plan, suggestion });
+		capturedSystem = undefined;
+		state = initialState(pi, context, { plan, suggestion }, capturedSystem);
 		recoveryStartedAt = Date.now();
 		recoveryMetadata = undefined;
 		startServer();
@@ -613,7 +652,19 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		set({ name: event.name });
 		trackRecovery();
 	});
-	pi.on("model_select", (event) => set({ model: modelName(event.model) }));
+	// The request's leading system message carries the exact prompt and tool declarations;
+	// capture it rather than rebuilding them, and keep the handler O(1) (it runs before each call).
+	pi.on("context_with_system", (event) => {
+		const leading = event.messages[0];
+		capturedSystem = leading?.role === "system" ? leading : undefined;
+	});
+
+	pi.on("model_select", (event) => {
+		// The next request replaces it; until then, rebuild from the new model's prompt and tools.
+		capturedSystem = undefined;
+		set({ model: modelName(event.model) });
+		refreshContext();
+	});
 	pi.on("thinking_level_select", (event) => set({ thinking: event.level }));
 
 	pi.on("input", (event) => {

@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { type FileMeta, scanBuffer, type UsageRecord } from "./extract.ts";
 import type { FileUsage, ScanRequest } from "./types.ts";
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const CHUNK_BYTES = 8 * 1024 * 1024;
 const HOUR_MS = 3_600_000;
 
@@ -175,6 +175,16 @@ export class UsageIndexer {
 					bucket.cost += usage.cost;
 					bucket.cacheRead += usage.cacheRead;
 					bucket.prompt += usage.prompt;
+					// Tool and summary usage are nested LLM work, not requests that size the session's context.
+					if (usage.model.startsWith("(")) continue;
+					const previous = entry.context;
+					entry.context = {
+						tokens: usage.tokens,
+						at: usage.ts,
+						model: usage.model,
+						peak: Math.max(previous?.peak ?? 0, usage.tokens),
+						requests: (previous?.requests ?? 0) + 1,
+					};
 				}
 				records.length = 0;
 			}

@@ -138,6 +138,17 @@ test("a prompt from the dashboard runs a turn: working → tool → idle with us
 	assert.equal(state.tools.at(-1)?.name, "bash");
 	assert.ok(state.tools.at(-1)?.endedAt);
 	assert.ok((state.context?.percent ?? 0) > 0);
+	const breakdown = state.context?.breakdown;
+	assert.ok(breakdown, "the context carries a breakdown");
+	assert.ok(breakdown.parts.system > 0, "the prompt is measured");
+	assert.ok(breakdown.parts.tools > 0, "the tool declarations are measured");
+	assert.ok(breakdown.parts.user > 0);
+	assert.ok(breakdown.parts.assistant > 0);
+	assert.equal(breakdown.totalBasis, "measured");
+	assert.equal(breakdown.compactAt, 200_000 - 16_384);
+	assert.ok(breakdown.history.length >= 2, "one entry per scripted request");
+	assert.ok(breakdown.unattributed !== null, "a measured total has a residual");
+	assert.ok(breakdown.counts.user >= 1);
 	assert.deepEqual(state.timeline.map((entry) => entry.state), ["idle", "working", "waiting"]);
 });
 

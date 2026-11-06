@@ -139,6 +139,28 @@ export function hbar(value: number, max: number, width: number, paint: Paint = t
 	return paint(bar) + " ".repeat(width - full - (part ? 1 : 0));
 }
 
+/** One-row stacked bar: segments in the given order over `scale`, with a faint track for the rest. */
+export interface BarSegment {
+	value: number;
+	paint: Paint;
+}
+
+export function stackedBar(segments: readonly BarSegment[], scale: number, width: number, track: Paint = theme.faint): string {
+	if (width <= 0) return "";
+	const total = scale > 0 ? scale : segments.reduce((sum, segment) => sum + Math.max(0, segment.value), 0);
+	let cumulative = 0;
+	let filled = 0;
+	let out = "";
+	for (const segment of segments) {
+		cumulative += Math.max(0, segment.value);
+		const end = total > 0 ? Math.min(width, Math.round((cumulative / total) * width)) : 0;
+		const cells = Math.max(0, end - filled);
+		filled = end;
+		if (cells) out += segment.paint("█".repeat(cells));
+	}
+	return out + track("░".repeat(Math.max(0, width - filled)));
+}
+
 /** Spread `values` over `width` columns, each value covering an equal run (for series that span the whole chart). */
 export function stretch(values: readonly number[], width: number): number[] {
 	if (!values.length || values.length >= width) return [...values];

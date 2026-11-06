@@ -36,6 +36,8 @@ sufficient to dispatch a command.
 References are not credentials. Overview fields include revision, label/project,
 status/since, attention transition key, bridge connected flag, model/thinking,
 contextPercent, plan, resource/usage aggregates, and per-command disabled reasons.
+Session state may also carry an optional `context.breakdown` with estimated parts, a residual and
+a bounded history; it is additive, and clients that do not understand it can ignore it.
 Unknown values are null, not invented zero measurements. `resources.background` lists live
 `bg_run` jobs and subagents with `kind`, `label`, nullable `detail` (the recorded command or
 task, control-stripped and capped at 300 characters), `startedAt`, `cpu` and `memory`; an

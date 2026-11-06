@@ -7,6 +7,7 @@ import type { Component, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { sessionDirName } from "../src/manager/actions/sessions.ts";
 import type { GitOperationResult, GitService, GitSummary } from "../src/manager/actions/git.ts";
 import { GpuMonitor } from "../src/manager/collectors/gpu.ts";
+import { ContextWindows } from "../src/manager/context/windows.ts";
 import { HermesAdvisor, type HermesAdvisorClient, type HermesFeedbackEvent, type HermesSnapshot } from "../src/dashboard/hermes/advisor.ts";
 import { QuotaMonitor } from "../src/manager/collectors/quota.ts";
 import { type SessionRow, Store } from "../src/manager/model/store.ts";
@@ -115,6 +116,7 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 		store,
 		network,
 		usage: new UsageIndex({ sessionRoot, cachePath: "", retentionMs: 0, onUpdate: () => {} }),
+		windows: new ContextWindows(),
 		quota: new QuotaMonitor("/nonexistent", "/nonexistent"),
 		gpu: new GpuMonitor(),
 		advisor: advisorService,
@@ -309,6 +311,37 @@ test("the jobs page ignores session selection keys", () => {
 	assert.ok(alpha && bravo);
 	assert.match(alpha, /^▌/, "the first session remains the fallback selection");
 	assert.doesNotMatch(bravo, /^▌/);
+});
+
+test("the context view opens with K, cycles scope, opens detail and returns", () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({ phase: "idle", context: { tokens: 166_000, window: 200_000, percent: 83, breakdown: {
+		parts: { system: 12_000, tools: 14_000, injected: 30_000, user: 6_000, assistant: 16_000, toolResults: 68_000, summary: 2_000 },
+		unattributed: 18_000,
+		totalBasis: "measured",
+		imageTokens: 0,
+		counts: { user: 1, assistant: 2, toolResults: 3, injected: 0, imageBlocks: 0 },
+		compactAt: 183_616,
+		history: [166_000],
+		at: Date.now(),
+	} } }));
+	ui.press("K");
+	assert.match(strip(ui.app.render(120).join("\n")), /CONTEXT +open 1/);
+	assert.match(strip(ui.app.render(120).join("\n")), /CUMULATIVE/);
+	ui.press("a");
+	assert.match(strip(ui.app.render(120).join("\n")), /open 1 \+ ended today 0/);
+	ui.press("a");
+	assert.match(strip(ui.app.render(120).join("\n")), /retained 30 days/);
+	ui.press("a");
+	assert.match(strip(ui.app.render(120).join("\n")), /CONTEXT +open 1/);
+	ui.press("\r");
+	assert.match(strip(ui.app.render(120).join("\n")), /SAID/);
+	ui.press("\x1b");
+	assert.match(strip(ui.app.render(120)[0]), /sessions/);
+	ui.press("K");
+	assert.match(strip(ui.app.render(120).join("\n")), /CONTEXT/);
+	ui.press("\x1b");
+	assert.match(strip(ui.app.render(120)[0]), /sessions/);
 });
 
 test("quit without pending work does not ask", () => {

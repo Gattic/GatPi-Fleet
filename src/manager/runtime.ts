@@ -5,6 +5,7 @@ import { cacheDir, socketDir } from "../protocol/index.ts";
 import { launchSession } from "./actions/launch.ts";
 import { restartSession } from "./actions/restart.ts";
 import { agentDir, RecoveryJournal, type InterruptedSession } from "./recovery.ts";
+import { ContextWindows } from "./context/windows.ts";
 import { BridgeHub, pidAlive } from "./collectors/bridges.ts";
 import { GpuMonitor } from "./collectors/gpu.ts";
 import { ProcSampler } from "./collectors/procs.ts";
@@ -26,6 +27,7 @@ export class ManagerRuntime {
 	readonly gpu = new GpuMonitor();
 	readonly quota: QuotaMonitor;
 	readonly usage: UsageIndex;
+	readonly windows = new ContextWindows();
 	readonly recovery: RecoveryJournal;
 	private interrupted: InterruptedSession[] = [];
 	private readonly dismissals: Dismissals;
@@ -162,6 +164,7 @@ export class ManagerRuntime {
 		slow();
 		this.usage.start();
 		usage();
+		void this.windows.load();
 		this.timers = [
 			setInterval(() => { this.hub.scan(); this.releaseDismissed(); this.store.tick(Date.now()); this.changed(); }, 1000),
 			setInterval(sample, SAMPLE_MS), setInterval(slow, 5000), setInterval(usage, 15_000),

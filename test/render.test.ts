@@ -2,14 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import { GpuMonitor } from "../src/manager/collectors/gpu.ts";
+import { ContextWindows } from "../src/manager/context/windows.ts";
 import { QuotaMonitor } from "../src/manager/collectors/quota.ts";
 import { Store } from "../src/manager/model/store.ts";
-import { activityLane, gauge, planBar, sparkline, splitBar, stackedArea, stretch } from "../src/dashboard/ui/charts.ts";
+import { activityLane, gauge, planBar, sparkline, splitBar, stackedArea, stackedBar, stretch } from "../src/dashboard/ui/charts.ts";
 import { LANE } from "../src/manager/model/status.ts";
 import { AskView } from "../src/dashboard/ui/overlays.ts";
 import { TextPane } from "../src/dashboard/ui/text-pane.ts";
 import { theme } from "../src/dashboard/ui/theme.ts";
 import { renderDetail } from "../src/dashboard/ui/views/detail.ts";
+import { contextLines, contextRowCount, contextRows, renderContext } from "../src/dashboard/ui/views/context.ts";
 import { renderJobs } from "../src/dashboard/ui/views/jobs.ts";
 import { renderOverview } from "../src/dashboard/ui/views/overview.ts";
 import type { ViewContext } from "../src/dashboard/ui/views/shared.ts";
@@ -28,6 +30,7 @@ test("charts render exactly the requested width", () => {
 		assert.equal(visibleWidth(planBar(3, 7, width)), width);
 		assert.equal(visibleWidth(activityLane([LANE.working, LANE.waiting, LANE.idle], width)), width);
 		for (const row of stackedArea([1, 2, 3], [1, 1, 1], width, 3, 4)) assert.equal(visibleWidth(row), width);
+		assert.equal(visibleWidth(stackedBar([{ value: 2, paint: theme.accent }, { value: 1, paint: theme.direct }], 4, width)), width);
 	}
 	assert.equal(strip(planBar(3, 6, 6)), "▰▰▰▱▱▱");
 	assert.equal(strip(splitBar(0.01, 0, 100, 5)), "▓░░░░", "small non-zero shares stay visible");
@@ -59,7 +62,16 @@ function state(pid: number, overrides: Partial<SessionState>): SessionState {
 
 function context(): ViewContext {
 	const store = new Store(() => {});
-	store.setState(101, state(101, { phase: "working", context: { tokens: 166_000, window: 200_000, percent: 83 }, activity: { kind: "tool", tool: "bash", detail: "npm test", since: Date.now() - 4000 }, plan: { title: "Ship it", lifecycle: "active", complete: 4, total: 6, blocked: 0, milestones: [{ title: "Build", status: "done" }, { title: "Verify", status: "active" }], activePath: [{ title: "Verify", status: "active", path: "2" }, { title: "Run tests", status: "active", path: "2.1.1" }] } }));
+	store.setState(101, state(101, { phase: "working", context: { tokens: 166_000, window: 200_000, percent: 83, breakdown: {
+		parts: { system: 12_000, tools: 14_000, injected: 30_000, user: 6_000, assistant: 16_000, toolResults: 68_000, summary: 2_000 },
+		unattributed: 18_000,
+		totalBasis: "measured",
+		imageTokens: 2400,
+		counts: { user: 12, assistant: 31, toolResults: 28, injected: 4, imageBlocks: 2 },
+		compactAt: 183_616,
+		history: [1000, 2000],
+		at: Date.now(),
+	} }, activity: { kind: "tool", tool: "bash", detail: "npm test", since: Date.now() - 4000 }, plan: { title: "Ship it", lifecycle: "active", complete: 4, total: 6, blocked: 0, milestones: [{ title: "Build", status: "done" }, { title: "Verify", status: "active" }], activePath: [{ title: "Verify", status: "active", path: "2" }, { title: "Run tests", status: "active", path: "2.1.1" }] } }));
 	store.setState(102, state(102, { lastSettledAt: Date.now() - 60_000, lastSaid: "All done — tests pass." }));
 	store.setState(103, state(103, { lastSettledAt: Date.now(), lastError: { message: "529 overloaded", at: Date.now() } }));
 	store.setState(104, state(104, { name: "a very long session name that needs truncation" }));
@@ -67,7 +79,7 @@ function context(): ViewContext {
 	const quota = new QuotaMonitor("/nonexistent", "/nonexistent");
 	quota.providers = ["anthropic"];
 	quota.cooldowns = [];
-	return { store, remotes: new Map(), usage, quota, gpu: new GpuMonitor(), now: Date.now(), spinner: "⠹", selected: store.ordered()[0] };
+	return { store, remotes: new Map(), usage, windows: new ContextWindows(), quota, gpu: new GpuMonitor(), now: Date.now(), spinner: "⠹", selected: store.ordered()[0] };
 }
 
 test("views fit the terminal at 80, 100 and 140 columns and show each state", () => {
@@ -93,6 +105,135 @@ test("views fit the terminal at 80, 100 and 140 columns and show each state", ()
 	assert.match(overview, /QUOTA +anthropic unknown/);
 	assert.match(overview, /CTX/);
 	assert.match(overview, /Run tests +83% /, "context fill sits beside the plan");
+});
+
+test("the detail context block labels measured, unknown and missing breakdowns", () => {
+	const ctx = context();
+	const measured = ctx.store.rows.get("101")!;
+	for (const width of [80, 100, 140]) {
+		const lines = contextLines(measured, width);
+		assert.ok(lines.length <= 4, "the block is bounded");
+		for (const line of lines) assert.ok(visibleWidth(line) <= width, `${width}: ${strip(line)}`);
+	}
+	const text = strip(contextLines(measured, 120).join("\n"));
+	assert.match(text, /CTX +█/);
+	assert.match(text, /166k \/ 200k/);
+	assert.match(text, /83%/);
+	assert.match(text, /compacts at 184k \(17\.6k headroom\)/);
+	assert.match(text, /est\. .*system 8%.*tool results 46%/);
+	assert.match(text, /unattributed \+18\.0k \(11%\)/);
+	assert.match(text, /12 user.*31 assistant.*28 tool results.*4 injected.*2 images/);
+
+	const unknown = strip(contextLines(unknownRow(), 120).join("\n"));
+	assert.match(unknown, /unknown until the next response/);
+	assert.match(unknown, /estimate/);
+	assert.match(unknown, /unattributed unknown/);
+	assert.doesNotMatch(unknown, /0%/);
+
+	const missing = contextLines(missingRow(), 120);
+	assert.equal(missing.length, 1);
+	assert.match(strip(missing[0]), /breakdown needs \/reload/);
+	assert.doesNotMatch(strip(missing[0]), /0%/);
+});
+
+function unknownRow() {
+	const store = new Store(() => {});
+	store.setState(1, state(1, { context: { tokens: null, window: 200_000, percent: null, breakdown: {
+		parts: { system: 8000, tools: 9000, injected: 0, user: 4000, assistant: 11_000, toolResults: 0, summary: 0 },
+		unattributed: null,
+		totalBasis: "estimate",
+		imageTokens: 0,
+		counts: { user: 0, assistant: 0, toolResults: 0, injected: 0, imageBlocks: 0 },
+		compactAt: 183_616,
+		history: [],
+		at: Date.now(),
+	} } }));
+	return store.ordered()[0];
+}
+
+function missingRow() {
+	const store = new Store(() => {});
+	store.setState(2, state(2, { context: { tokens: 90_000, window: 200_000, percent: 45 } }));
+	return store.ordered()[0];
+}
+
+test("the context view keeps live, ended, unknown and unbridged sessions visible and honest", () => {
+	const ctx = context();
+	// A running pi without a bridge.
+	ctx.store.applySample({ resources: new Map(), piProcesses: [{ pid: 300, startedAt: Date.now(), cwd: "/home/user/dev/unbridged" }], host: { cpu: 0, cores: 1, memUsed: 0, memTotal: 1, load1: 0 } } as unknown as Parameters<typeof ctx.store.applySample>[0], undefined, Date.now());
+	// A live remote session with its own breakdown.
+	const idle = { onState() {}, onBye() {}, onDisconnect() {}, onIncompatible() {}, onUsage() {}, onLost() {} };
+	const lab = new RemoteHost("lab", idle, ["true"]);
+	lab.status = { kind: "online", since: 1, hostname: "lab" };
+	ctx.remotes = new Map([["lab", lab]]);
+	ctx.store.setState(201, state(201, { model: "dash-test/scripted", name: "remote work", context: { tokens: 40_000, window: 200_000, percent: 20, breakdown: {
+		parts: { system: 8000, tools: 9000, injected: 0, user: 3000, assistant: 4000, toolResults: 16_000, summary: 0 },
+		unattributed: 0,
+		totalBasis: "measured",
+		imageTokens: 0,
+		counts: { user: 2, assistant: 3, toolResults: 4, injected: 0, imageBlocks: 0 },
+		compactAt: 183_616,
+		history: [40_000],
+		at: Date.now(),
+	} } }), "lab");
+	// Ended sessions: one with a last-known context, one unknown.
+	const now = Date.now();
+	ctx.usage.apply({ type: "update", scanned: true, durationMs: 0, removed: [], changed: [
+		{ path: "/ended.jsonl", kind: "session", sessionId: "ended", cwd: "/home/user/dev/old", name: "old work", size: 1, mtimeMs: now, offset: 1, hours: {}, context: { tokens: 30_000, at: now, model: "anthropic/claude-opus-5-5", peak: 50_000, requests: 4 } },
+		{ path: "/unknown-ended.jsonl", kind: "session", sessionId: "unknown-ended", cwd: "/home/user/dev/other", firstPrompt: "lost session", size: 1, mtimeMs: now, offset: 1, hours: {} },
+	] });
+
+	for (const width of [80, 100, 140]) {
+		for (const height of [24, 30, 40]) {
+			for (const scope of ["open", "today", "30d"] as const) {
+				const lines = renderContext(ctx, width, height, scope, 0);
+				assert.ok(lines.length <= height - 1, `${width}x${height} ${scope} fits the height`);
+				for (const line of lines) assert.ok(visibleWidth(line) <= width, `${width}x${height}: ${strip(line)}`);
+			}
+		}
+	}
+
+	const open = strip(renderContext(ctx, 140, 30, "open", 0).join("\n"));
+	assert.match(open, /CONTEXT +open 5/);
+	assert.match(open, /BY SESSION/);
+	assert.match(open, /project-101/);
+	assert.match(open, /166k/);
+	assert.match(open, /unknown/);
+	assert.match(open, /no bridge/);
+	assert.match(open, /remote work/);
+	assert.match(open, /CUMULATIVE/);
+	assert.match(open, /Σ 206k measured/);
+	assert.match(open, /weighted mean fill 52%/);
+	assert.match(open, /BY HOST +this machine 166k · lab … 40\.0k/);
+	assert.doesNotMatch(open, /ended \(fill only\)/);
+
+	const today = strip(renderContext(ctx, 140, 30, "today", 0).join("\n"));
+	assert.match(today, /open 5 \+ ended today 2/);
+	assert.match(today, /old › old work/);
+	assert.match(today, /ended \(fill only\) 30\.0k over 1/);
+	assert.match(today, /other › lost/);
+
+	const narrow = strip(renderContext(ctx, 80, 24, "open", 0).join("\n"));
+	assert.match(narrow, /Σ 206k measured · fill 52%/);
+	assert.match(narrow, /est\./);
+	assert.match(narrow, /unattributed/);
+
+	assert.ok(contextRowCount(ctx, "today") > contextRowCount(ctx, "open"));
+	assert.equal(contextRows(ctx, "open").length, 6);
+	const scrolled = strip(renderContext(ctx, 140, 24, "open", 99).join("\n"));
+	assert.match(scrolled, /BY SESSION/);
+});
+
+test("the context view renders an empty scope without invented numbers", () => {
+	const ctx = context();
+	ctx.store.rows.clear();
+	ctx.usage.files.clear();
+	const text = strip(renderContext(ctx, 140, 24, "open", 0).join("\n"));
+	assert.match(text, /CONTEXT +open 0/);
+	assert.match(text, /no sessions/);
+	assert.match(text, /no live breakdowns/);
+	assert.match(text, /Σ 0 measured/);
+	assert.doesNotMatch(text, /0%\)/, "no fake residual");
 });
 
 test("quota unknown and account cooldowns are separate at narrow and wide sizes", () => {

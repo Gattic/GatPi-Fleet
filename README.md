@@ -26,6 +26,14 @@ and on the other machines of your network (over ssh).
   [remote hosts](#remote-hosts) with a per-host share. Anthropic and Codex subscription
   quotas show account bars, remaining percentages and provider reset countdowns; unavailable or stale
   readings are labelled explicitly. Sessions on models without a price show tokens (`173Mt`) instead of an empty $.
+- **Context breakdown**: each session's model context as pi measures it (tokens, window, fill,
+  compact threshold) plus an estimated composition (system prompt, tool declarations, injected,
+  user, assistant, tool results, summaries) and an explicit `unattributed` residual. The detail
+  view draws it as a stacked bar; the **context view** (`K`) adds per-session rows, a cumulative
+  composition, weighted mean fill and `open` / `today` / `30d` scopes. Totals are measured; parts
+  are pi's chars/4 estimates and are labelled `est.`. An unknown total (for example right after
+  compaction) stays unknown, never zero. Ended sessions show their last-known context and window;
+  composition is live-only.
 - **Conversation**: the last prompt, the recent tool calls with their arguments, the latest reply
   (previewed under the session list; whole, as Markdown, scrollable, or full screen), and the
   suggested next prompt from the GatPi-Harness prompt suggestions.
@@ -98,6 +106,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `R` | rename the session |
 | `d` | dismiss an exited row (here, in the gateway and on the phone; dismissing it on the phone removes it here too) |
 | `u` | usage view (`t` / `w` / `m`: today, 7 days, 30 days; `$`: cost or tokens) |
+| `K` | context view: per-session measured context, window, fill and composition; `a` cycles `open` / `today` / `30d`, `j` `k` / `PgUp` `PgDn` scroll, `⏎` opens detail, `Esc` back |
 | `J` | jobs page: every running `bg_run` job and subagent, with its session, age, CPU/memory (wide terminals) and the command or task it runs (`j` `k` / `PgUp` `PgDn` scroll, `Esc` back) |
 | `?` | help and legend |
 | `q` | quit (sessions keep running) |
@@ -261,6 +270,17 @@ connecting or still on its first scan is marked `…`; one that is offline (`✖
 before. Each host keeps a derived cache at `~/.cache/pi-dash/usage-index-relay.json` (30 days, a few hundred
 KB), so a reconnect does not re-read its session files; run `pi-dash-host add HOST` once to update a host's
 relay for this.
+
+The context breakdown is published by the bridge, so a remote session shows it only after that host's
+pi-dash bridge is updated. Until then its row keeps the measured tokens/window and is marked
+`no breakdown`; no composition is invented.
+
+Composition is an estimate, not a provider measurement: pi estimates chars/4 (images at 1,200 tokens),
+so parts can drift from the real tokenizer and their sum can exceed or undershoot the measured total.
+The residual shows that difference instead of forcing the parts to add up. The view does not attribute
+tokens to individual tools, files or messages beyond these categories, and it cannot see what a
+provider caches or bills. `BY MODEL` groups by the short model id as the session selected it; a routed
+or virtual model is not resolved to a physical model.
 
 What stays local: account quotas and cooldowns. They come from this machine's logins; a login that
 exists only on a remote host is not polled, because its credentials stay there. A provider reports

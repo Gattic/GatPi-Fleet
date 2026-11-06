@@ -1,6 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { rowCwd, rowLabel, rowSty, type SessionRow } from "../../../manager/model/store.ts";
 import { activityLane, gauge, hbar, planBar, sparkline, stackedArea } from "../charts.ts";
+import { contextLines } from "./context.ts";
 import { fit, fitRight, fmtBytes, fmtCores, fmtCost, fmtDuration, fmtTokens, oneLine, shortPath } from "../format.ts";
 import type { TextPane } from "../text-pane.ts";
 import { theme } from "../theme.ts";
@@ -58,6 +59,7 @@ export function renderDetail(ctx: ViewContext, width: number, height: number, sa
 	const bridge = row.bridge;
 	const half = Math.floor((width - 3) / 2);
 	const head = [...headerLines(row, ctx, width), rule(width)];
+	const context = contextLines(row, width);
 	const usage = [rule(width), ...side(usageLines(row, ctx, half), consumerLines(row, width - 3 - half), width), rule(width)];
 	const info = infoLines(row, ctx, width);
 	const tail = [
@@ -67,7 +69,7 @@ export function renderDetail(ctx: ViewContext, width: number, height: number, sa
 
 	// Rows left after the fixed sections go to the charts first, then the tool list; SAID takes the rest.
 	const tools = bridge?.tools.length ?? 0;
-	const fixed = lines.length + head.length + 1 + usage.length + info.length + tail.length;
+	const fixed = lines.length + head.length + context.length + 1 + usage.length + info.length + tail.length;
 	let spare = height - 1 - fixed - CHART_ROWS.min - TOOL_ROWS.min - 1;
 	const grow = (limit: number) => {
 		const rows = Math.max(0, Math.min(limit, spare));
@@ -78,7 +80,7 @@ export function renderDetail(ctx: ViewContext, width: number, height: number, sa
 	const toolRows = TOOL_ROWS.min + grow(Math.min(TOOL_ROWS.max, Math.max(TOOL_ROWS.min, tools)) - TOOL_ROWS.min);
 	const saidRows = 1 + Math.max(0, spare);
 
-	lines.push(...head);
+	lines.push(...head, ...context);
 	lines.push(
 		...side(
 			chart("CPU cores · 30m", row.cpuDirect.last(CHART_SAMPLES), row.cpuIndirect.last(CHART_SAMPLES), half, chartRows, MIN_CPU_SCALE, fmtCores),
