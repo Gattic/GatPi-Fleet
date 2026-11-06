@@ -173,6 +173,38 @@ class WireTest {
         val resumed = reduceFrame(state.copy(connected = false), empty, 2)
         assertTrue(resumed.sessions.isEmpty())
     }
+    @Test fun aReconnectKeepsTheSelectedSessionsDetailAndUpdatesItsMetadata() {
+        val state = reduceFrame(Dashboard(), fixture(), 1)
+        val session = state.sessions.single()
+        val detail = Detail(session, "prompt", emptyList(), "reply", null, null, emptyList(), emptyList(), emptyList())
+        val selected = state.copy(selected = session.id, detail = detail)
+        val renamed = fixture().let { json ->
+            json.getJSONArray("sessions").getJSONObject(0).put("label", "renamed")
+            json
+        }
+        val resumed = reduceFrame(selected.copy(connected = false), renamed, 2)
+        assertEquals(session.id, resumed.selected)
+        assertEquals("renamed", resumed.detail!!.session.label)
+        assertEquals("reply", resumed.detail!!.reply)
+        assertTrue(resumed.detailStale)
+    }
+    @Test fun aRefreshThatLosesTheSelectedSessionClearsItAndItsDetail() {
+        val state = reduceFrame(Dashboard(), fixture(), 1)
+        val session = state.sessions.single()
+        val selected = state.copy(selected = session.id,
+            detail = Detail(session, "prompt", emptyList(), "reply", null, null, emptyList(), emptyList(), emptyList()))
+        val resumed = reduceFrame(selected.copy(connected = false), fixture().put("sessions", org.json.JSONArray()), 2)
+        assertNull(resumed.selected)
+        assertNull(resumed.detail)
+        assertFalse(resumed.detailStale)
+        assertTrue(sessionPageLostSelection(Screen.Session, resumed))
+    }
+    @Test fun onlyTheSessionPageReturnsHomeWhenItsSessionIsGone() {
+        assertTrue(sessionPageLostSelection(Screen.Session, Dashboard(connected = true)))
+        assertFalse(sessionPageLostSelection(Screen.Session, Dashboard(connected = true, selected = "s")))
+        assertFalse(sessionPageLostSelection(Screen.Session, Dashboard(connected = false)))
+        assertFalse(sessionPageLostSelection(Screen.Sessions, Dashboard(connected = true)))
+    }
     @Test fun attentionAlertsAreTransitionsNotSnapshotOrReconnectReplay() {
         val state = reduceFrame(Dashboard(), fixture(), 1)
         val policy = AttentionPolicy()

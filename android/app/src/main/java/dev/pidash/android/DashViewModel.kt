@@ -3,21 +3,30 @@ package dev.pidash.android
 import android.app.Application
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 enum class Screen { Sessions, Session, Jobs, Projects, Usage, Context, Glasses, Pairing }
+
+/** The session page has no session to show any more, so the overview is the only honest place to be. */
+internal fun sessionPageLostSelection(screen: Screen, state: Dashboard): Boolean =
+    screen == Screen.Session && state.connected && state.selected == null
 
 data class Confirmation(val title: String, val description: String, val target: Session? = null, val command: JSONObject? = null, val project: Project? = null, val history: History? = null, val dismissReceipt: Boolean = false, val git: GitConfirmation? = null)
 
 /** [drafts] are kept in the app's encrypted vault for the selected session; tests pass their own. */
 class DashViewModel @JvmOverloads constructor(
     application: Application,
+    private val savedState: SavedStateHandle = SavedStateHandle(),
     val drafts: Drafts = (application as DashApp).let { app -> Drafts(VaultDraftStorage(app.vault)) { app.repository.state.value.selected } },
 ) : AndroidViewModel(application) {
+    constructor(application: Application, drafts: Drafts) : this(application, SavedStateHandle(), drafts)
+
     val app = application as DashApp
     val repository = app.repository
     val screen = MutableStateFlow(Screen.Sessions)
@@ -43,6 +52,29 @@ class DashViewModel @JvmOverloads constructor(
     val busy = MutableStateFlow(false)
     init {
         try { drafts.restore() } catch (_: Exception) { repository.message("Saved drafts unavailable; credentials may need re-pairing") }
+        // Come back to the page and session that were open before the process was reclaimed, rather
+        // than rebuilding the app on the overview. A session that is gone falls back to Sessions.
+        val restored = savedState.get<String>(KEY_SCREEN)?.let { name -> Screen.entries.firstOrNull { it.name == name } } ?: Screen.Sessions
+        val selectedId = savedState.get<String>(KEY_SELECTED)
+        val paired = repository.host() != null
+        when {
+            restored == Screen.Session && paired && selectedId != null -> {
+                screen.value = Screen.Session
+                repository.select(selectedId)
+            }
+            restored == Screen.Projects && paired -> openProjects()
+            restored == Screen.Usage && paired -> openUsage()
+            restored == Screen.Context && paired -> openContext()
+            restored in listOf(Screen.Sessions, Screen.Jobs, Screen.Glasses, Screen.Pairing) -> screen.value = restored
+            else -> screen.value = Screen.Sessions
+        }
+        viewModelScope.launch { screen.collect { savedState[KEY_SCREEN] = it.name } }
+        viewModelScope.launch {
+            repository.state.collect { state ->
+                if (savedState.get<String>(KEY_SELECTED) != state.selected) savedState[KEY_SELECTED] = state.selected
+                if (sessionPageLostSelection(screen.value, state)) back()
+            }
+        }
     }
     fun select(session: Session) { closeGit(); repository.select(session.id); drafts.open(); ask.value = ""; screen.value = Screen.Session }
     /** Leaves session detail (or any other screen) for the overview, ending the detail subscription. */
@@ -165,5 +197,10 @@ class DashViewModel @JvmOverloads constructor(
         project.value = p
         history.value = emptyList()
         run { history.value = repository.history(p) }
+    }
+
+    private companion object {
+        const val KEY_SCREEN = "screen"
+        const val KEY_SELECTED = "selected"
     }
 }

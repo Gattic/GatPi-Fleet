@@ -55,17 +55,19 @@ internal fun JobsScreen(vm: DashViewModel, state: Dashboard) {
                 )
             }
         }
-        if (jobs.isEmpty()) {
-            item {
+        when {
+            state.updatedAt == 0L -> item { Loading("Loading background work…") }
+            jobs.isEmpty() -> item {
                 SectionCard(null) {
                     Text("No background jobs", style = MaterialTheme.typography.titleMedium)
                     Hint("bg_run jobs and subagents appear here while they run.", icon = null)
                 }
             }
-        } else {
-            item { Hint("Ages and usage are from the host's last update. Tap a job to open its session.") }
-            itemsIndexed(jobs, key = { index, job -> "${job.session.id}:${job.work.kind}:${job.work.label}:${job.work.startedAt}:$index" }) { _, job ->
-                JobCard(job, state.updatedAt) { vm.select(job.session) }
+            else -> {
+                item { Hint("Ages and usage are from the host's last update. Tap a job to open its session.") }
+                itemsIndexed(jobs, key = { index, job -> "${job.session.id}:${job.work.kind}:${job.work.label}:${job.work.startedAt}:$index" }) { _, job ->
+                    JobCard(job, state.updatedAt) { vm.select(job.session) }
+                }
             }
         }
     }

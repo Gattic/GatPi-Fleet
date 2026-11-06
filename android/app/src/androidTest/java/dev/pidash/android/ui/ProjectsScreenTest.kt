@@ -36,6 +36,7 @@ class ProjectsScreenTest {
         // The host's order may have changed since: the earlier list must not stand in for this visit's.
         vm.busy.value = true
         compose.runOnUiThread { vm.openProjects() }
+        compose.onNodeWithText("Loading projects…").assertIsDisplayed()
         compose.onNodeWithText(first.path).assertDoesNotExist()
         compose.onNodeWithText(second.path).assertDoesNotExist()
         compose.onNodeWithText("No projects", substring = true).assertDoesNotExist()

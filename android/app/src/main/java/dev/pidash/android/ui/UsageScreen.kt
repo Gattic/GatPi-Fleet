@@ -80,7 +80,7 @@ internal fun UsageScreen(vm: DashViewModel, fresh: Boolean) {
             }
         }
         if (report == null) {
-            if (!busy) item { Hint("Usage was not loaded. Refresh to try again.") }
+            item { if (busy) Loading("Loading usage…") else Hint("Usage was not loaded. Refresh to try again.") }
             return@LazyColumn
         }
         if (report.indexing) item { Hint("Indexing session files; totals are still growing.") }

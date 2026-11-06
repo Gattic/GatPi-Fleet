@@ -243,6 +243,8 @@ data class Dashboard(
     val sessions: List<Session> = emptyList(), val selected: String? = null, val detail: Detail? = null,
     val epoch: String? = null, val seq: Long = 0, val connected: Boolean = false, val fresh: Boolean = false,
     val receivedAt: Long = 0, val updatedAt: Long = 0, val message: String = "Pair with your host to begin",
+    /** The retained [detail] predates this connection and must not be presented as live until re-sent. */
+    val detailStale: Boolean = false,
 )
 
 /** No side effects; sequence gaps or schema mismatches require a new complete snapshot. */
@@ -258,13 +260,16 @@ fun reduceFrame(old: Dashboard, frame: JSONObject, now: Long): Dashboard {
         "snapshot" -> {
             val sessions = frame.getJSONArray("sessions").objects().map(Session::parse)
             val selectedSession = sessions.firstOrNull { it.id == old.selected }
-            // An overview cannot refresh private detail from a previous connection.
-            // On this connection, retain the content but use the newest connection/status metadata.
-            val detail = old.detail?.takeIf { old.connected && it.session.id == selectedSession?.id && old.epoch == epoch }
+            // Keep the selected session's detail on screen while a reconnect is in flight: the gateway
+            // re-sends it, and replacing the page with a loading placeholder meanwhile is jarring.
+            // A different gateway epoch or a session that no longer exists drops it (and the selection).
+            val detail = old.detail?.takeIf { old.epoch == epoch && it.session.id == selectedSession?.id }
             state = state.copy(sessions = sessions, selected = selectedSession?.id,
-                detail = if (selectedSession == null) null else detail?.copy(session = selectedSession))
+                detail = if (selectedSession == null) null else detail?.copy(session = selectedSession),
+                detailStale = detail != null && (old.detailStale || !old.connected))
         }
-        "detail" -> if (frame.getString("id") == old.selected) state = state.copy(detail = frame.optJSONObject("detail")?.let(Detail::parse))
+        "detail" -> if (frame.getString("id") == old.selected) state = state.copy(
+            detail = frame.optJSONObject("detail")?.let(Detail::parse), detailStale = false)
         "heartbeat", "receipt" -> Unit
         else -> error("Unknown event type")
     }

@@ -77,7 +77,7 @@ internal fun ContextScreen(vm: DashViewModel, fresh: Boolean) {
             }
         }
         if (report == null) {
-            if (!busy) item { Hint("Context was not loaded. Refresh to try again.") }
+            item { if (busy) Loading("Loading context…") else Hint("Context was not loaded. Refresh to try again.") }
             return@LazyColumn
         }
         val loaded = report!!

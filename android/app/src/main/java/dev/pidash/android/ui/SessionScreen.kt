@@ -68,7 +68,7 @@ private val thinkingLevels = listOf("off", "minimal", "low", "medium", "high", "
 internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean) {
     val detail = state.detail
     if (detail == null) {
-        EmptyState("Loading session", "Loading detail, or this session ended/reloaded. Return to Sessions to select its current instance.") {
+        EmptyState("Loading session detail…", "Waiting for this session's detail. If the session is no longer available, the app returns to Sessions.") {
             CircularProgressIndicator(Modifier.size(32.dp))
         }
         return
@@ -80,7 +80,7 @@ internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean
         OverviewCard(session, can("dismiss")) { vm.dismiss(session) }
         ContextBreakdownCard(detail.context)
         RoadmapCard(session.id, detail.roadmap, session.plan != null, session.plan?.active,
-            state.fresh && session.connected && session.status != "exited")
+            state.fresh && !state.detailStale && session.connected && session.status != "exited")
         GitCard(vm, session, state.fresh, enabled, can("prompt"))
         detail.error?.let { Notice(it, Pi.Error) }
         ExchangeCard(detail)

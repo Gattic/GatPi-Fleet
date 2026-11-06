@@ -73,7 +73,7 @@ internal fun ProjectsScreen(vm: DashViewModel, enabled: Boolean) {
             )
         }
         when {
-            choices == null -> if (!busy) item { Hint("Projects were not loaded. Tap Projects to try again.") }
+            choices == null -> item { if (busy) Loading("Loading projects…") else Hint("Projects were not loaded. Tap Projects to try again.") }
             choices.projects.isEmpty() -> item { Hint("No projects yet. Projects appear once pi has run in them on a host.") }
             matching.isEmpty() -> item { Hint("No projects match your search.") }
         }

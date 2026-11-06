@@ -70,10 +70,12 @@ internal fun SessionsScreen(vm: DashViewModel, state: Dashboard) {
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (sessions.isEmpty()) {
-            EmptyState("No matching sessions", "Start pi on the host, or check pairing and the bridge.")
-        } else {
-            LazyColumn(contentPadding = PaddingValues(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        when {
+            // Before the first snapshot there is no overview to filter; say so instead of
+            // claiming there are no sessions.
+            state.updatedAt == 0L -> Loading("Loading sessions…", Modifier.padding(horizontal = 16.dp))
+            sessions.isEmpty() -> EmptyState("No matching sessions", "Start pi on the host, or check pairing and the bridge.")
+            else -> LazyColumn(contentPadding = PaddingValues(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(sessions, key = { it.id }) { session -> SessionCard(session, state.updatedAt) { vm.select(session) } }
             }
         }

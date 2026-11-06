@@ -66,7 +66,7 @@ fun DashScreen(vm: DashViewModel = viewModel()) {
     Scaffold(
         topBar = {
             when (screen) {
-                Screen.Session -> SessionTopBar(state.detail?.session, state.fresh, vm::back)
+                Screen.Session -> SessionTopBar(state.detail?.session ?: state.sessions.firstOrNull { it.id == state.selected }, state.fresh, vm::back)
                 Screen.Jobs -> SimpleTopBar("Jobs", "Background work from running sessions", vm::back)
                 else -> DashTopBar(host, state.fresh)
             }

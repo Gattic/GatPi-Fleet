@@ -351,8 +351,12 @@ refreshes state. It never retries a POST or replays a mutation from a queue.
 If an acknowledgement was lost, or the gateway restarted/forgot the receipt,
 the outcome is **unknown**. Inspect the actual session locally or on the phone,
 then explicitly dismiss the uncertain receipt. Do not blindly repeat the action.
-A fresh snapshot replaces the entire overview after reconnect; stale controls
-are disabled. Phone-only background connectivity/alerts are not promised.
+A fresh snapshot replaces the overview after reconnect; the selected session's
+detail stays on screen while the gateway re-sends it, and stale controls are
+disabled. If the selected session is gone after a refresh, the app returns to
+Sessions. A reopened app comes back to the page and session it was showing and
+populates them again instead of rebuilding on the overview. Phone-only
+background connectivity/alerts are not promised.
 
 Both TUI and gateway use exclusive resume reservations in
 `$XDG_RUNTIME_DIR/pi-dash/launches/`. A known open session, an unbridged process

@@ -123,7 +123,7 @@ class GatewayRepository(private val scope: CoroutineScope, private val vault: Se
         pair = null; client = null; origin = null; vault.clear(); mutablePending.value = null; mutable.value = Dashboard()
     }
     fun select(id: String?) {
-        mutable.update { it.copy(selected = id, detail = null) }
+        mutable.update { it.copy(selected = id, detail = null, detailStale = false) }
         socket?.send(JSONObject().put("type", "subscribe").put("sessionId", id ?: JSONObject.NULL).toString())
     }
     fun message(text: String) { mutable.update { it.copy(message = text) } }

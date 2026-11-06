@@ -58,7 +58,7 @@ class RoadmapTest {
         assertEquals(path, Roadmap.parse(json).entries.first().path)
     }
 
-    @Test fun sameEpochReconnectDoesNotPromoteOldRoadmapDetailToLive() {
+    @Test fun sameEpochReconnectKeepsLastKnownDetailWithoutPromotingItToLive() {
         val detail = Detail.parse(fixture())
         val disconnected = Dashboard(sessions = listOf(detail.session), selected = detail.session.id, detail = detail,
             epoch = "same-gateway", seq = 8, connected = false, fresh = false)
@@ -67,10 +67,14 @@ class RoadmapTest {
         val reconnected = reduceFrame(disconnected, frame, 10)
         assertTrue(reconnected.fresh)
         assertEquals(detail.session.id, reconnected.selected)
-        assertNull("An overview is not fresh selected detail", reconnected.detail)
+        assertNotNull("The page keeps its content instead of blanking", reconnected.detail)
+        assertTrue("An overview is not fresh selected detail", reconnected.detailStale)
+        // What SessionScreen uses to decide whether the roadmap is live.
+        assertFalse(reconnected.fresh && !reconnected.detailStale && reconnected.detail!!.session.connected)
         val refreshed = reduceFrame(reconnected, JSONObject().put("version", 1).put("epoch", "same-gateway")
             .put("seq", 2).put("at", 11).put("type", "detail").put("id", detail.session.id).put("detail", fixture()), 11)
         assertNotNull(refreshed.detail!!.roadmap)
+        assertFalse(refreshed.detailStale)
     }
 
     @Test fun disconnectOverviewUpdatesRetainedDetailMetadataWithoutDroppingTheRoadmap() {
@@ -82,6 +86,7 @@ class RoadmapTest {
         val frame = JSONObject().put("version", 1).put("epoch", "gateway").put("seq", 2).put("at", 10)
             .put("type", "snapshot").put("sessions", org.json.JSONArray().put(summary))
         val updated = reduceFrame(state, frame, 10)
+        assertFalse(updated.detailStale)
         assertFalse(updated.detail!!.session.connected)
         assertEquals("exited", updated.detail!!.session.status)
         assertSame(detail.roadmap, updated.detail!!.roadmap)
