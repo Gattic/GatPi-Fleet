@@ -56,6 +56,10 @@ certificate; verify its fingerprint on the phone. No host/provider secrets enter
 		console.log(`Created ${configPath}\nCertificate SHA-256: ${new X509Certificate(readFileSync(config.cert)).fingerprint256}\nRun pair --name PHONE, then serve. Restrict the listener with your firewall.`);
 		return;
 	}
+	if (action === "list" && !existsSync(configPath)) {
+		console.log(`No gateway configuration at ${configPath}. Create one with pi-dash-server init --url https://HOST:PORT --listen LAN_IP.`);
+		return;
+	}
 	const config = loadConfig(configPath);
 	const devices = new DeviceStore(config.devices);
 	if (action === "pair") {

@@ -27,6 +27,7 @@ import { contextFixture } from "../scripts/context-fixture.ts";
 import { roadmapFixture } from "../scripts/roadmap-fixture.ts";
 
 const RELAY = fileURLToPath(new URL("../src/relay/main.ts", import.meta.url));
+const SERVER_MAIN = fileURLToPath(new URL("../src/server/main.ts", import.meta.url));
 const LATE_ADDRESS = fileURLToPath(new URL("fixtures/late-address.ts", import.meta.url));
 const DELAY_LISTEN = new URL("fixtures/delay-listen.ts", import.meta.url).href;
 
@@ -600,4 +601,18 @@ test("the context tab gets measured totals, estimated parts and cumulative scope
 	assert.equal(all.cumulative.unknown, 2);
 	assert.deepEqual(open.cumulative.hosts, [{ host: null, tokens: 206_000 }]);
 	assert.deepEqual(today.cumulative.models, [{ model: "claude-opus-5-5", tokens: 90_000, sessions: 1 }], "only the ended fixture row carries a model");
+});
+
+test("pi-dash-server list reports a missing configuration directory without failing", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-dash-server-missing-"));
+	const missing = join(dir, "not-there");
+	const list = spawnSync(process.execPath, [SERVER_MAIN, "list", "--dir", missing], { encoding: "utf8", timeout: 30_000 });
+	assert.equal(list.status, 0, list.stderr);
+	assert.equal(list.stderr, "");
+	assert.match(list.stdout, /^No gateway configuration at .*not-there\/config\.json\. Create one with pi-dash-server init/m);
+	assert.equal(existsSync(missing), false, "listing creates nothing");
+	// Only list degrades; commands that need the configuration still fail on it.
+	const pair = spawnSync(process.execPath, [SERVER_MAIN, "pair", "--dir", missing], { encoding: "utf8", timeout: 30_000 });
+	assert.equal(pair.status, 1);
+	assert.match(pair.stderr, /ENOENT/);
 });
