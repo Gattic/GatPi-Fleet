@@ -3,8 +3,8 @@
 Status: first-release implementation delivered, 2026-10-07; **physical acceptance still blocked**.
 Implementation/runbook: [docs/ANDROID.md](docs/ANDROID.md). Current evidence and open device gates:
 [docs/ANDROID-ACCEPTANCE.md](docs/ANDROID-ACCEPTANCE.md). Follow-on parity remains separately scoped.
-The original plan below was based on pi-dash at `4eac0dd` and the local
-G1 PoC sources and device-test documentation; source links track the new layout.
+The original plan below was based on pi-dash at `5906007e` and the
+upstream G1 PoC sources and device-test documentation; source links track the new layout.
 This extends the existing manager; it does not move pi execution onto the phone.
 
 ## 1. Recommendation

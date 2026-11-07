@@ -65,11 +65,16 @@ and on the other machines of your network (over ssh).
 ## Install
 
 ```sh
-cd ~/dev/GatPi-Fleet && npm install          # dashboard dependencies
-pi install /home/user/dev/GatPi-Fleet      # bridge extension, loaded by new pi sessions
-ln -s /home/user/dev/GatPi-Fleet/bin/pi-dash ~/.local/bin/pi-dash
-ln -s /home/user/dev/GatPi-Fleet/bin/pi-dash-host ~/.local/bin/pi-dash-host   # remote hosts
+cd ~/GatPi-Fleet && npm install          # dashboard dependencies
+pi install ~/GatPi-Fleet                 # bridge extension, loaded by new pi sessions
+ln -s ~/GatPi-Fleet/bin/pi-dash ~/.local/bin/pi-dash
+ln -s ~/GatPi-Fleet/bin/pi-dash-host ~/.local/bin/pi-dash-host   # remote hosts
 ```
+
+GatPi-Fleet builds on the public [GatPi](https://github.com/Gattic/GatPi) runtime (the
+`@earendil-works/pi-*` packages) and the public
+[GatPi-Harness](https://github.com/Gattic/GatPi-Harness) extensions; no local `pi` or
+`pi-harness` checkout is required.
 
 `pi install <path>` adds the local package to `~/.pi/agent/settings.json` without copying it. The
 bridge loads only in interactive pi sessions, not in `pi -p` or RPC subagents. Sessions started

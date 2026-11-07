@@ -93,7 +93,7 @@ So `/ask` answers from 0.1–4% of what the session's model actually sees.
 - **D6 Model call API.** Use `streamSimple` from `@earendil-works/pi-ai/compat` with
   `ctx.modelRegistry.getApiKeyAndHeaders(model)`, as pi 0.84.1's own compaction does. pi's
   extension loader maps that import to its bundled copy. `modelRegistry.streamSimple` exists only
-  in pi 1.x; the runtime here is pi 0.84.1 (`/home/user/pi`), while the repo type-checks against
+  in pi 1.x; the runtime here is pi 0.84.1 (the local `~/GatPi` checkout), while the repo type-checks against
   1.0.0. Both versions have every API this plan uses, and the e2e run against the real `pi` is the
   gate. `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` move to `peerDependencies`
   (`"*"`), as pi's packages.md requires for host-provided packages imported at runtime.

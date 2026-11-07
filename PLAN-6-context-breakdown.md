@@ -1,8 +1,8 @@
 # pi-dash — Plan 6: per-session context breakdown and cumulative view
 
-Status: **implemented**. The terminal dashboard shipped in `9585d32`; the gateway context
+Status: **implemented**. The terminal dashboard shipped in `7d6893e`; the gateway context
 endpoint and Android context view are implemented on `feat/android-context-breakdown`. Written
-against pi-dash at `42e1f6e` and the local pi checkout (`getContextUsage` / `estimateTokens`
+against pi-dash at `aef6e55` and the local pi checkout (`getContextUsage` / `estimateTokens`
 semantics cited below).
 
 ## 1. Goal and definitions

@@ -1,8 +1,21 @@
 node_modules/
 
-# pi harness runtime state for this project (roadmap, traces, caches)
+# pi harness runtime state for this project (roadmap, traces, memories, caches)
 .pi/
 .codegraph/
+
+# Nested Git worktrees created for task branches
+.worktrees/
+
+# Local environment and credential material
+.env
+.env.*
+*.pem
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.log
 
 # Android generated output and local/private settings
 android/.gradle/
