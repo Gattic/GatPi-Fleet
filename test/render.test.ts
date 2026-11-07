@@ -256,6 +256,19 @@ test("quota unknown and account cooldowns are separate at narrow and wide sizes"
 	assert.match(strip(renderOverview(ctx, 100, 30).join("\n")), /COOLDOWN +unknown \(state unavailable\)/);
 });
 
+test("xAI period without a percentage shows its reset time and explicit label", () => {
+	const ctx = context();
+	ctx.quota.providers = ["xai"];
+	ctx.quota.readings.set("xai", { fetchedAt: null, windows: [], error: "weekly reset 2026-10-19 10:00 UTC · usage % not reported" });
+	for (const width of [80, 100, 140]) {
+		for (const render of [() => renderOverview(ctx, width, 30), () => renderUsage(ctx, width, 30, "today", "cost")]) {
+			const lines = render();
+			assert.match(strip(lines.join("\n")), /xai unknown · weekly reset 2026-10-19 10:00 UTC · usage % not reported/);
+			for (const line of lines) assert.ok(visibleWidth(line) <= width);
+		}
+	}
+});
+
 test("live quota bars, remaining percentages, both window timers and stale labels fit every width", () => {
 	const ctx = context();
 	ctx.quota.readings.set("anthropic", { fetchedAt: ctx.now, windows: [{ label: "5h", usedPercent: 25, resetAt: ctx.now + 60_000 }, { label: "7d", usedPercent: 90, resetAt: ctx.now + 86400_000 }] });

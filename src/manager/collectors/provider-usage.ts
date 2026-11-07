@@ -94,20 +94,40 @@ function xaiPeriod(value: unknown, fetchedAt: number): { resetAt: number; second
 	return seconds > 0 ? { resetAt: end, seconds } : undefined;
 }
 
+/** The reported period and whether it uses the current-period or legacy monthly fields. */
+function xaiReportedPeriod(body: unknown, fetchedAt: number): { resetAt: number; seconds: number; modern: boolean } | undefined {
+	const config = record(record(body).config);
+	const modern = config.currentPeriod !== undefined;
+	const period = modern
+		? xaiPeriod(config.currentPeriod, fetchedAt)
+		: xaiPeriod({ start: config.billingPeriodStart, end: config.billingPeriodEnd }, fetchedAt);
+	return period === undefined ? undefined : { ...period, modern };
+}
+
 /** A period alone is not evidence of unused quota; missing percentages stay unknown. */
 function xaiWindow(body: unknown, fetchedAt: number): QuotaWindow | undefined {
 	const config = record(record(body).config);
-	if (config.currentPeriod !== undefined) {
-		const period = xaiPeriod(config.currentPeriod, fetchedAt);
-		const usedPercent = number(config.creditUsagePercent) ?? xaiBuildPercent(config.productUsage);
-		if (period === undefined || usedPercent === undefined || usedPercent < 0) return undefined;
-		return { label: durationLabel(period.seconds), usedPercent: Math.min(100, usedPercent), resetAt: period.resetAt };
+	const period = xaiReportedPeriod(body, fetchedAt);
+	if (period === undefined) return undefined;
+	let usedPercent: number | undefined;
+	if (period.modern) {
+		usedPercent = number(config.creditUsagePercent) ?? xaiBuildPercent(config.productUsage);
+	} else {
+		const limit = number(record(config.monthlyLimit).val);
+		const used = number(record(config.used).val);
+		if (limit !== undefined && limit > 0 && used !== undefined && used >= 0) usedPercent = (used / limit) * 100;
 	}
-	const period = xaiPeriod({ start: config.billingPeriodStart, end: config.billingPeriodEnd }, fetchedAt);
-	const limit = number(record(config.monthlyLimit).val);
-	const used = number(record(config.used).val);
-	if (period === undefined || limit === undefined || limit <= 0 || used === undefined || used < 0) return undefined;
-	return { label: durationLabel(period.seconds), usedPercent: Math.min(100, (used / limit) * 100), resetAt: period.resetAt };
+	if (usedPercent === undefined || usedPercent < 0) return undefined;
+	return { label: durationLabel(period.seconds), usedPercent: Math.min(100, usedPercent), resetAt: period.resetAt };
+}
+
+/** A reported period without a percentage still has a useful reset time; do not invent usage. */
+function xaiPeriodDiagnostic(body: unknown, fetchedAt: number): string | undefined {
+	const period = xaiReportedPeriod(body, fetchedAt);
+	if (period === undefined) return undefined;
+	const kind = period.seconds >= 28 * 86400 ? "monthly" : period.seconds >= 6 * 86400 ? "weekly" : durationLabel(period.seconds);
+	const reset = new Date(period.resetAt).toISOString().slice(0, 16).replace("T", " ");
+	return `${kind} reset ${reset} UTC · usage % not reported`;
 }
 
 /** Missing/malformed windows stay unknown; an HTTP success alone is not quota data. */
@@ -198,8 +218,16 @@ export async function fetchProviderUsage(provider: string, credential: UsageCred
 				chunks.push(value);
 			}
 		} finally { reader.releaseLock(); }
-		const windows = parseUsage(family, JSON.parse(Buffer.concat(chunks).toString("utf8")), now());
-		if (!windows.length) throw new UsageFetchError("Provider returned no quota windows");
+		const fetchedAt = now();
+		const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+		const windows = parseUsage(family, body, fetchedAt);
+		if (!windows.length) {
+			if (family === "xai") {
+				const diagnostic = xaiPeriodDiagnostic(body, fetchedAt);
+				if (diagnostic) throw new UsageFetchError(diagnostic);
+			}
+			throw new UsageFetchError("Provider returned no quota windows");
+		}
 		return windows;
 	} catch (error) {
 		if (error instanceof UsageFetchError) throw error;

@@ -148,6 +148,17 @@ test("xAI polls independently each minute and a reset-bound reading is not renew
 	assert.equal(existsSync(join(f.dir, "pi-dash", "quota")), false, "xAI keeps a local interval, not shared Anthropic state");
 });
 
+test("xAI reports a period without a percentage as unknown with its reset time", async (t) => {
+	const period = { start: new Date(NOW - 60_000).toISOString(), end: new Date(NOW + 7 * 86400_000).toISOString() };
+	const f = monitor(t, async () => Response.json({ config: { currentPeriod: period } }));
+	f.save({ xai: xaiCredential });
+	await f.quota.refresh();
+	const [account] = f.snapshot();
+	assert.equal(account.status, "unknown");
+	assert.deepEqual(account.windows, []);
+	assert.equal(account.message, "weekly reset 2026-10-19 10:00 UTC · usage % not reported");
+});
+
 test("quota failures are bounded and never expose raw bodies or errors", async () => {
 	const request = (impl: typeof fetch) => fetchProviderUsage("anthropic", credential, new AbortController().signal, impl);
 	await assert.rejects(request(async () => new Response("secret-access", { status: 401 })), { message: "HTTP 401: refresh login in Pi" });
