@@ -23,7 +23,7 @@ and on the other machines of your network (over ssh).
 - **API usage**: tokens and API-equivalent $ per session (direct, nested tool LLM calls,
   subagents), per-minute trends, separate multi-login account cooldowns,
   and a usage view for today / 7 days / 30 days in $ or tokens, across this machine and your
-  [remote hosts](#remote-hosts) with a per-host share. Anthropic and Codex subscription
+  [remote hosts](#remote-hosts) with a per-host share. Anthropic, Codex and xAI subscription
   quotas show account bars, remaining percentages and provider reset countdowns; unavailable or stale
   readings are labelled explicitly. Sessions on models without a price show tokens (`173Mt`) instead of an empty $.
 - **Context breakdown**: each session's model context as pi measures it (tokens, window, fill,
@@ -354,7 +354,7 @@ The first start indexes recent session files in a background thread; on this mac
 about 17 s for 3.6 GB, and later scans take milliseconds.
 
 $ figures are pi's API-equivalent cost, not subscription balances. [Account quotas](docs/QUOTAS.md)
-come from read-only Anthropic/Codex usage endpoints using local Pi OAuth logins, including account aliases.
+come from read-only Anthropic/Codex/xAI usage endpoints using local Pi OAuth logins, including account aliases.
 Bars show the allowance **left**, with provider reset timers. Failed/old readings are explicitly stale;
 missing or unsupported data never becomes 100% available. The old `provider-failover-state.json` stays ignored.
 Account cooldowns come separately from `multi-login-state.json`: local failover timers, not provider resets.

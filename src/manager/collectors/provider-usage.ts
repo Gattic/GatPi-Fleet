@@ -1,13 +1,15 @@
-// Anthropic/Codex usage readers adapted from Sarrius/pi-multi-account (MIT).
+// Anthropic/Codex/xAI usage readers adapted from Sarrius/pi-multi-account (MIT).
 // Pinned source and license: docs/THIRD-PARTY-NOTICES.md. No routing; this adapter never mutates auth.
+import { readFileSync } from "node:fs";
 /** null resetAt preserves a reported balance when the provider has no reset timestamp. */
 export interface QuotaWindow { label: string; usedPercent: number; resetAt: number | null }
 export interface UsageCredential { type?: unknown; access?: unknown; accountId?: unknown; expires?: unknown }
-export type UsageFamily = "anthropic" | "codex";
+export type UsageFamily = "anthropic" | "codex" | "xai";
 
 export function usageFamily(provider: string): UsageFamily | undefined {
 	if (/^anthropic(?:-account-\d+)?$/.test(provider)) return "anthropic";
 	if (/^openai-codex(?:-account-\d+)?$/.test(provider)) return "codex";
+	if (/^xai(?:-account-\d+)?$/.test(provider)) return "xai";
 	return undefined;
 }
 
@@ -25,6 +27,9 @@ function epoch(value: unknown): number | undefined {
 	const parsed = typeof value === "string" ? Date.parse(value) : NaN;
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
+function durationLabel(seconds: number): string {
+	return seconds >= 86400 ? `${Math.round(seconds / 86400)}d` : seconds >= 3600 ? `${Math.round(seconds / 3600)}h` : `${Math.ceil(seconds / 60)}m`;
+}
 function window(value: unknown, seconds: number): QuotaWindow | undefined {
 	const source = record(value);
 	const percent = number(source.used_percent ?? source.utilization);
@@ -33,13 +38,85 @@ function window(value: unknown, seconds: number): QuotaWindow | undefined {
 	if (percent === undefined || percent < 0 || resetAt === undefined) return undefined;
 	const duration = number(source.limit_window_seconds) ?? seconds;
 	if (duration <= 0) return undefined;
-	const label = duration >= 86400 ? `${Math.round(duration / 86400)}d` : duration >= 3600 ? `${Math.round(duration / 3600)}h` : `${Math.ceil(duration / 60)}m`;
-	return { label, usedPercent: Math.min(100, percent), resetAt };
+	return { label: durationLabel(duration), usedPercent: Math.min(100, percent), resetAt };
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | undefined {
+	const parts = token.split(".");
+	if (parts.length !== 3) return undefined;
+	try {
+		const parsed: unknown = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+		return record(parsed);
+	} catch { return undefined; }
+}
+
+/** xAI billing requires the authenticated user id in `x-userid`; it comes from the access-token JWT. */
+export function xaiUserIdFromAccessToken(token: string): string | undefined {
+	const payload = decodeJwtPayload(token);
+	const sub = payload?.sub;
+	if (typeof sub === "string" && sub.trim()) return sub.trim();
+	const principal = payload?.principal_id;
+	return typeof principal === "string" && principal.trim() ? principal.trim() : undefined;
+}
+
+let xaiVersion: string | undefined;
+/** A truthful host id, never an impersonated Grok CLI version. */
+function xaiClientVersion(): string {
+	if (xaiVersion) return xaiVersion;
+	try {
+		const pkg = record(JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")));
+		const name = typeof pkg.name === "string" && pkg.name.trim() ? pkg.name.trim() : "pi-dash";
+		const version = typeof pkg.version === "string" && pkg.version.trim() ? pkg.version.trim() : undefined;
+		xaiVersion = version ? `${name}/${version}` : name;
+	} catch { xaiVersion = "pi-dash"; }
+	return xaiVersion;
+}
+
+function xaiBuildPercent(value: unknown): number | undefined {
+	if (!Array.isArray(value)) return undefined;
+	for (const item of value) {
+		const product = record(item);
+		if (typeof product.product !== "string") continue;
+		const name = product.product.trim().toLowerCase().replace(/[_-]/g, "");
+		if (name !== "productgrokbuild" && name !== "grokbuild") continue;
+		const percent = number(product.usagePercent);
+		if (percent !== undefined && percent >= 0) return Math.min(100, percent);
+	}
+	return undefined;
+}
+
+function xaiPeriod(value: unknown, fetchedAt: number): { resetAt: number; seconds: number } | undefined {
+	const source = record(value);
+	const start = epoch(source.start);
+	const end = epoch(source.end);
+	if (start === undefined || end === undefined || end <= start || fetchedAt < start || fetchedAt >= end) return undefined;
+	const seconds = Math.round((end - start) / 1000);
+	return seconds > 0 ? { resetAt: end, seconds } : undefined;
+}
+
+/** A period alone is not evidence of unused quota; missing percentages stay unknown. */
+function xaiWindow(body: unknown, fetchedAt: number): QuotaWindow | undefined {
+	const config = record(record(body).config);
+	if (config.currentPeriod !== undefined) {
+		const period = xaiPeriod(config.currentPeriod, fetchedAt);
+		const usedPercent = number(config.creditUsagePercent) ?? xaiBuildPercent(config.productUsage);
+		if (period === undefined || usedPercent === undefined || usedPercent < 0) return undefined;
+		return { label: durationLabel(period.seconds), usedPercent: Math.min(100, usedPercent), resetAt: period.resetAt };
+	}
+	const period = xaiPeriod({ start: config.billingPeriodStart, end: config.billingPeriodEnd }, fetchedAt);
+	const limit = number(record(config.monthlyLimit).val);
+	const used = number(record(config.used).val);
+	if (period === undefined || limit === undefined || limit <= 0 || used === undefined || used < 0) return undefined;
+	return { label: durationLabel(period.seconds), usedPercent: Math.min(100, (used / limit) * 100), resetAt: period.resetAt };
 }
 
 /** Missing/malformed windows stay unknown; an HTTP success alone is not quota data. */
-export function parseUsage(family: UsageFamily, body: unknown): QuotaWindow[] {
+export function parseUsage(family: UsageFamily, body: unknown, now = Date.now()): QuotaWindow[] {
 	const source = record(body);
+	if (family === "xai") {
+		const reading = xaiWindow(source, now);
+		return reading ? [reading] : [];
+	}
 	const limits = record(source.rate_limit);
 	return [
 		window(family === "anthropic" ? source.five_hour : limits.primary_window, 5 * 3600),
@@ -82,9 +159,22 @@ export async function fetchProviderUsage(provider: string, credential: UsageCred
 	if (!family) throw new UsageFetchError("Quota endpoint not supported");
 	assertUsageCredential(credential, now());
 	const headers: Record<string, string> = { Authorization: `Bearer ${credential.access}`, Accept: "application/json" };
-	const url = family === "codex" ? "https://chatgpt.com/backend-api/wham/usage" : "https://api.anthropic.com/api/oauth/usage";
-	if (family === "anthropic") headers["anthropic-beta"] = "oauth-2025-04-20";
-	else if (typeof credential.accountId === "string" && credential.accountId) headers["ChatGPT-Account-Id"] = credential.accountId;
+	let url: string;
+	if (family === "anthropic") {
+		url = "https://api.anthropic.com/api/oauth/usage";
+		headers["anthropic-beta"] = "oauth-2025-04-20";
+	} else if (family === "codex") {
+		url = "https://chatgpt.com/backend-api/wham/usage";
+		if (typeof credential.accountId === "string" && credential.accountId) headers["ChatGPT-Account-Id"] = credential.accountId;
+	} else {
+		const userId = xaiUserIdFromAccessToken(credential.access);
+		if (!userId) throw new UsageFetchError("xAI access token has no user id");
+		url = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+		headers["X-XAI-Token-Auth"] = "xai-grok-cli";
+		headers["x-userid"] = userId;
+		headers["x-grok-client-version"] = xaiClientVersion();
+		headers["x-grok-client-mode"] = "headless";
+	}
 	try {
 		const response = await fetchImpl(url, { method: "GET", headers, redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
 		if (!response.ok) {
@@ -108,7 +198,7 @@ export async function fetchProviderUsage(provider: string, credential: UsageCred
 				chunks.push(value);
 			}
 		} finally { reader.releaseLock(); }
-		const windows = parseUsage(family, JSON.parse(Buffer.concat(chunks).toString("utf8")));
+		const windows = parseUsage(family, JSON.parse(Buffer.concat(chunks).toString("utf8")), now());
 		if (!windows.length) throw new UsageFetchError("Provider returned no quota windows");
 		return windows;
 	} catch (error) {

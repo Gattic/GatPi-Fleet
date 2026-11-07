@@ -274,7 +274,7 @@ the displayed/total entries; this is a current-roadmap viewer, not an archive or
 Missing resource/context fields display as unknown rather than zero. Cost is
 pi's API-equivalent usage, not a provider subscription invoice.
 
-**Usage** is pi-dash's usage view: Anthropic/Codex account quota bars, remaining percentages,
+**Usage** is pi-dash's usage view: Anthropic/Codex/xAI account quota bars, remaining percentages,
 provider reset countdowns and explicit stale/unknown states, plus separate local account cooldowns, then cost or tokens for today,
 7 days or 30 days, per hour/6 hours/day,
 by host, by session and by model. Like that view, it adds up the session files of the gateway machine

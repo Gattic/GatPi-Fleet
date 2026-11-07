@@ -2,7 +2,7 @@
 
 ## pi-multi-account
 
-The Anthropic/Codex usage endpoint and normalization logic in
+The Anthropic/Codex/xAI usage endpoint and normalization logic in
 `src/manager/collectors/provider-usage.ts` is adapted from `usage.ts` in
 <https://github.com/Sarrius/pi-multi-account>, revision
 `f5819b36565d74fad2e0af24f952a84f9a053283` (v1.25.0).

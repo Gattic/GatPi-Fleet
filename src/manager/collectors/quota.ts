@@ -74,7 +74,7 @@ export class QuotaMonitor {
 		}) ?? null;
 	}
 
-	/** Anthropic reservations/readings survive controllers; Codex retains its local interval. */
+	/** Anthropic reservations/readings survive controllers; Codex and xAI retain their local intervals. */
 	async refresh(): Promise<void> {
 		if (this.controller.signal.aborted) return;
 		this.poll();

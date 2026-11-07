@@ -1,9 +1,12 @@
 # Account quotas
 
-The overview and Usage views show each signed-in Anthropic/Codex account's provider-reported
+The overview and Usage views show each signed-in Anthropic/Codex/xAI account's provider-reported
 allowance: a bar, percentage **left**, and reset countdown for each returned window. Aliases
-such as `anthropic-account-2` and `openai-codex-account-2` have their own readings. Window labels
-use the provider's duration, so a Codex monthly window is not mislabelled as five hours.
+such as `anthropic-account-2`, `openai-codex-account-2` and `xai-account-2` have their own readings.
+xAI's SuperGrok/X Premium billing probe reports its current credit-usage period and percentage as
+a weekly or monthly window. A returned period without a reported percentage stays unknown rather
+than inventing an unused balance. Window labels use the provider's duration, so a Codex monthly
+window is not mislabelled as five hours.
 Anthropic's five-hour and weekly balances are both shown when reported. Its unused five-hour
 window can have 0% used with a null reset timestamp: the balance remains visible with
 “Reset time not reported,” not a made-up countdown. This does not override an exhausted weekly
@@ -30,6 +33,10 @@ proxies and persistent quota cache are not copied.
 
 - Anthropic OAuth: `GET https://api.anthropic.com/api/oauth/usage`, with the provider's OAuth beta header.
 - Codex OAuth: `GET https://chatgpt.com/backend-api/wham/usage`, with the stored account ID when present.
+- xAI OAuth: `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`, with the CLI auth
+  headers and the user id from the access-token JWT. Only the reported current-period percentage
+  and reset time are normalized; a period without a percentage is not treated as unused quota.
+  API-key logins have no usage endpoint and are not probed.
 - Fixed HTTPS destinations, normal certificate verification, no redirects, a ten-second request
   bound and a 64 KiB response bound. No inference or billable generation request is made.
 - Credentials are read locally from Pi's `auth.json`, never sent to Android or exported in reports.
@@ -75,8 +82,8 @@ owner's lease or erase a server deadline. Unavailable/malformed state blocks tha
 with an explicit diagnostic rather than bypassing coordination. OS locks release on process exit;
 a crashed request's lease expires normally.
 
-Codex still polls independently per process, at most once a minute; Anthropic at most once every
-ten minutes across controllers. A known window reset permits a fresh probe at that boundary.
+Codex and xAI still poll independently per process, at most once a minute; Anthropic at most once
+every ten minutes across controllers. A known window reset permits a fresh probe at that boundary.
 Failed probes retain the ordinary interval. A valid `Retry-After` (delay seconds or an HTTP date)
 can extend it, never shorten it. Discarding an error response body cannot erase its HTTP status or
 retry deadline, even if body cleanup fails. Anthropic deadlines survive controller restarts, token
@@ -93,6 +100,7 @@ requests. The Android Refresh button fetches the gateway's latest report; it doe
 - `stale`: an older reading, a reached reset, or a failed subsequent fetch. Last values remain
   visibly stale, with their original timestamp. They never acquire freshness from a failed probe.
 - `unknown`: no usable reading yet, including invalid OAuth credentials or missing/malformed data.
+  A provider period without a reported percentage is unknown, not 0% used.
 - `unsupported`: no implemented quota endpoint for that provider.
 
 Logout, credential replacement and unreadable auth immediately discard displayed readings. Shared

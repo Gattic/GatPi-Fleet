@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { renewLoginWithPi, type RenewLogin } from "../src/manager/collectors/oauth-renewal.ts";
-import { fetchProviderUsage, parseUsage, UsageFetchError } from "../src/manager/collectors/provider-usage.ts";
+import { fetchProviderUsage, parseUsage, UsageFetchError, xaiUserIdFromAccessToken } from "../src/manager/collectors/provider-usage.ts";
 import { QuotaMonitor } from "../src/manager/collectors/quota.ts";
 import { SharedUsageState } from "../src/manager/collectors/quota-state.ts";
 
@@ -15,6 +15,8 @@ const HOUR = 3_600_000;
 const anthropic = { five_hour: { utilization: 25, resets_at: new Date(NOW + HOUR).toISOString() }, seven_day: { utilization: 57, resets_at: new Date(NOW + 3 * 86400_000).toISOString() } };
 const codex = { rate_limit: { primary_window: { used_percent: 7, reset_at: (NOW + 86400_000) / 1000, limit_window_seconds: 30 * 86400 } } };
 const credential = { type: "oauth", access: "secret-access", accountId: "private-account" };
+const xaiAccess = `e30.${Buffer.from(JSON.stringify({ sub: "xai-user-private" })).toString("base64url")}.sig`;
+const xaiCredential = { type: "oauth", access: xaiAccess };
 
 test("provider windows preserve zero, percentages, actual duration, seconds and ISO reset times", () => {
 	assert.deepEqual(parseUsage("anthropic", anthropic), [{ label: "5h", usedPercent: 25, resetAt: NOW + HOUR }, { label: "7d", usedPercent: 57, resetAt: NOW + 3 * 86400_000 }]);
@@ -73,6 +75,77 @@ test("only exact provider families send stored OAuth credentials to fixed origin
 	await assert.rejects(fetchProviderUsage("openai", credential, new AbortController().signal, unexpected), /not supported/);
 	await assert.rejects(fetchProviderUsage("anthropic-evil", credential, new AbortController().signal, unexpected), /not supported/);
 	await assert.rejects(fetchProviderUsage("anthropic", { type: "api_key" }, new AbortController().signal, unexpected), /OAuth login required/);
+});
+
+test("xAI billing windows preserve the reported period and percentage, and a period alone stays unknown", () => {
+	const weekly = { currentPeriod: { start: new Date(NOW).toISOString(), end: new Date(NOW + 7 * 86400_000).toISOString() } };
+	const weeklyWindow = [{ label: "7d", usedPercent: 42, resetAt: NOW + 7 * 86400_000 }];
+	assert.deepEqual(parseUsage("xai", { config: { ...weekly, creditUsagePercent: 42 } }, NOW), weeklyWindow);
+	assert.deepEqual(parseUsage("xai", { config: { ...weekly, productUsage: [{ product: "product_grok_build", usagePercent: 55 }] } }, NOW), [
+		{ label: "7d", usedPercent: 55, resetAt: NOW + 7 * 86400_000 },
+	]);
+	assert.deepEqual(parseUsage("xai", { config: weekly }, NOW), [], "a period alone is not evidence of unused quota");
+	assert.deepEqual(parseUsage("xai", { config: { ...weekly, creditUsagePercent: "bad" } }, NOW), []);
+	assert.deepEqual(parseUsage("xai", { config: { currentPeriod: { start: new Date(NOW + HOUR).toISOString(), end: new Date(NOW + 2 * HOUR).toISOString() }, creditUsagePercent: 10 } }, NOW), [], "a period that has not started is not current");
+	const monthly = { billingPeriodStart: new Date(NOW).toISOString(), billingPeriodEnd: new Date(NOW + 30 * 86400_000).toISOString(), monthlyLimit: { val: 100 }, used: { val: 25 } };
+	assert.deepEqual(parseUsage("xai", { config: monthly }, NOW), [{ label: "30d", usedPercent: 25, resetAt: NOW + 30 * 86400_000 }]);
+	assert.deepEqual(parseUsage("xai", { config: { ...monthly, monthlyLimit: { val: 0 } } }, NOW), []);
+	assert.deepEqual(parseUsage("xai", { config: { ...monthly, used: { val: "bad" } } }, NOW), []);
+	assert.deepEqual(parseUsage("xai", null, NOW), []);
+	assert.equal(parseUsage("xai", { config: { ...weekly, creditUsagePercent: 150 } }, NOW)[0].usedPercent, 100);
+});
+
+test("xAI probes the CLI billing endpoint with the JWT user id and sanitized failures", async () => {
+	let calls = 0;
+	const windows = await fetchProviderUsage("xai-account-2", xaiCredential, new AbortController().signal, async (url, init) => {
+		calls++;
+		assert.equal(url, "https://cli-chat-proxy.grok.com/v1/billing?format=credits");
+		assert.equal(init?.method, "GET");
+		assert.equal(init?.redirect, "error");
+		const headers = new Headers(init?.headers);
+		assert.equal(headers.get("Authorization"), `Bearer ${xaiAccess}`);
+		assert.equal(headers.get("X-XAI-Token-Auth"), "xai-grok-cli");
+		assert.equal(headers.get("x-userid"), "xai-user-private");
+		assert.equal(headers.get("x-grok-client-mode"), "headless");
+		assert.match(headers.get("x-grok-client-version") ?? "", /^pi-dash(?:\/|$)/);
+		assert.equal(headers.get("ChatGPT-Account-Id"), null);
+		return Response.json({ config: { currentPeriod: { start: new Date(NOW).toISOString(), end: new Date(NOW + 7 * 86400_000).toISOString() }, creditUsagePercent: 12 } });
+	}, () => NOW);
+	assert.equal(calls, 1);
+	assert.deepEqual(windows, [{ label: "7d", usedPercent: 12, resetAt: NOW + 7 * 86400_000 }]);
+	assert.doesNotMatch(JSON.stringify(windows), /xai-user-private|secret/);
+	assert.equal(xaiUserIdFromAccessToken(`e30.${Buffer.from(JSON.stringify({ principal_id: "xai-principal" })).toString("base64url")}.sig`), "xai-principal");
+	assert.equal(xaiUserIdFromAccessToken("opaque-token"), undefined);
+	const unexpected: typeof fetch = async () => { throw new Error("must not fetch"); };
+	const noUser = `e30.${Buffer.from("{}").toString("base64url")}.sig`;
+	await assert.rejects(fetchProviderUsage("xai", { type: "oauth", access: noUser }, new AbortController().signal, unexpected, () => NOW), { message: "xAI access token has no user id" });
+	await assert.rejects(fetchProviderUsage("xai", { type: "api_key" }, new AbortController().signal, unexpected, () => NOW), /OAuth login required/);
+	await assert.rejects(fetchProviderUsage("xai", xaiCredential, new AbortController().signal, async () => new Response("secret-access", { status: 401 }), () => NOW), { message: "HTTP 401: refresh login in Pi" });
+	await assert.rejects(fetchProviderUsage("xai", xaiCredential, new AbortController().signal, async () => { throw new Error("secret-access"); }, () => NOW), { message: "Usage request failed or timed out" });
+});
+
+test("xAI polls independently each minute and a reset-bound reading is not renewed by age", async (t) => {
+	let calls = 0;
+	const period = { start: new Date(NOW - 60_000).toISOString(), end: new Date(NOW + 7 * 86400_000).toISOString() };
+	const f = monitor(t, async (url) => {
+		calls++;
+		assert.equal(url, "https://cli-chat-proxy.grok.com/v1/billing?format=credits");
+		return Response.json({ config: { currentPeriod: period, creditUsagePercent: 12 } });
+	});
+	f.save({ xai: xaiCredential });
+	await f.quota.refresh();
+	assert.deepEqual(f.snapshot().map(({ provider, status }) => ({ provider, status })), [{ provider: "xai", status: "fresh" }]);
+	assert.deepEqual(f.snapshot()[0].windows, [{ label: "7d", usedPercent: 12, resetAt: NOW + 7 * 86400_000 }]);
+	assert.equal(calls, 1);
+	await f.quota.refresh();
+	assert.equal(calls, 1, "xAI respects its one-minute local interval");
+	f.tick(60_000);
+	await f.quota.refresh();
+	assert.equal(calls, 2);
+	assert.equal(f.snapshot()[0].status, "fresh");
+	f.tick(120_000);
+	assert.equal(f.snapshot()[0].status, "stale", "freshness ends before the provider reset");
+	assert.equal(existsSync(join(f.dir, "pi-dash", "quota")), false, "xAI keeps a local interval, not shared Anthropic state");
 });
 
 test("quota failures are bounded and never expose raw bodies or errors", async () => {

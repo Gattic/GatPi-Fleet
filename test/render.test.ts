@@ -259,14 +259,16 @@ test("quota unknown and account cooldowns are separate at narrow and wide sizes"
 test("live quota bars, remaining percentages, both window timers and stale labels fit every width", () => {
 	const ctx = context();
 	ctx.quota.readings.set("anthropic", { fetchedAt: ctx.now, windows: [{ label: "5h", usedPercent: 25, resetAt: ctx.now + 60_000 }, { label: "7d", usedPercent: 90, resetAt: ctx.now + 86400_000 }] });
-	ctx.quota.providers!.push("openai-codex-account-2");
+	ctx.quota.providers!.push("openai-codex-account-2", "xai");
 	ctx.quota.readings.set("openai-codex-account-2", { fetchedAt: ctx.now, windows: [{ label: "30d", usedPercent: 7, resetAt: ctx.now + 86400_000 }] });
+	ctx.quota.readings.set("xai", { fetchedAt: ctx.now, windows: [{ label: "7d", usedPercent: 12, resetAt: ctx.now + 7 * 86400_000 }] });
 	for (const width of [80, 100, 140]) {
 		for (const lines of [renderOverview(ctx, width, 30), renderUsage(ctx, width, 30, "today", "cost")]) {
 			const text = strip(lines.join("\n"));
 			assert.match(text, /anthropic 5h .+75% left.*↻ 1m00s/);
 			assert.match(text, /anthropic 7d .+10% left/);
 			assert.match(text, /codex#2 30d .+93% left/);
+			assert.match(text, /xai 7d .+88% left/);
 			assert.match(text, /━/);
 			assert.doesNotMatch(text, /stale|unknown/);
 			for (const line of lines) assert.ok(visibleWidth(line) <= width);
