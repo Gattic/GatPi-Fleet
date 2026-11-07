@@ -5,7 +5,8 @@ allowance: a bar, percentage **left**, and reset countdown for each returned win
 such as `anthropic-account-2`, `openai-codex-account-2` and `xai-account-2` have their own readings.
 xAI's SuperGrok/X Premium billing probe reports its current credit-usage period and percentage as
 a weekly or monthly window. A returned period without a reported percentage stays unknown rather
-than inventing an unused balance. Window labels use the provider's duration, so a Codex monthly
+than inventing an unused balance; its line shows the reported reset time with an explicit
+“usage % not reported” label. Window labels use the provider's duration, so a Codex monthly
 window is not mislabelled as five hours.
 Anthropic's five-hour and weekly balances are both shown when reported. Its unused five-hour
 window can have 0% used with a null reset timestamp: the balance remains visible with
@@ -100,7 +101,8 @@ requests. The Android Refresh button fetches the gateway's latest report; it doe
 - `stale`: an older reading, a reached reset, or a failed subsequent fetch. Last values remain
   visibly stale, with their original timestamp. They never acquire freshness from a failed probe.
 - `unknown`: no usable reading yet, including invalid OAuth credentials or missing/malformed data.
-  A provider period without a reported percentage is unknown, not 0% used.
+  A provider period without a reported percentage is unknown, not 0% used; when its reset time is
+  reported, the line shows it.
 - `unsupported`: no implemented quota endpoint for that provider.
 
 Logout, credential replacement and unreadable auth immediately discard displayed readings. Shared
