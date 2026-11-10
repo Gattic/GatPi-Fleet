@@ -84,12 +84,13 @@ class GitCardTest {
             assertEquals("Publish main to origin/main?", vm.confirmation.value!!.description)
             assertEquals("push", vm.confirmation.value!!.git!!.kind)
             assertEquals("", drafts.text.value)
-            vm.gitCommitPrompt(session)
+            assertTrue(vm.gitCommitPrompt(session))
             assertEquals(menu.commitPrompt, drafts.text.value)
             assertEquals("followUp", vm.delivery.value)
             assertNull(vm.confirmation.value)
             assertNull(vm.git.value)
             assertFalse(vm.busy.value)
+            assertFalse("no menu is open, so nothing is prepared or revealed", vm.gitCommitPrompt(session))
         }
     }
 }

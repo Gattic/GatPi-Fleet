@@ -45,9 +45,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
@@ -60,6 +64,9 @@ import dev.pidash.android.DashViewModel
 import dev.pidash.android.Detail
 import dev.pidash.android.Session
 import dev.pidash.android.Tool
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 private val thinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
@@ -76,15 +83,28 @@ internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean
     val session = detail.session
     // A command is available when the host lists it with no reason it is blocked.
     val can = { kind: String -> enabled && session.commands.containsKey(kind) && session.commands[kind] == null }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val scroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    // Where the Prompt card sits in the scrollable content; a git review draft lands there.
+    var promptTop by remember { mutableStateOf(0) }
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OverviewCard(session, can("dismiss")) { vm.dismiss(session) }
         ContextBreakdownCard(detail.context)
         RoadmapCard(session.id, detail.roadmap, session.plan != null, session.plan?.active,
             state.fresh && !state.detailStale && session.connected && session.status != "exited")
-        GitCard(vm, session, state.fresh, enabled, can("prompt"))
+        GitCard(vm, session, state, enabled, can("prompt")) {
+            // Closing the git menu collapses the Git card, so read the position it had before the
+            // collapse and scroll once the layout above Prompt has moved.
+            val before = promptTop
+            if (vm.gitCommitPrompt(session)) scope.launch {
+                val top = withTimeoutOrNull(1_000) { snapshotFlow { promptTop }.first { it != before } } ?: promptTop
+                scroll.animateScrollTo(top)
+            }
+        }
         detail.error?.let { Notice(it, Pi.Error) }
         ExchangeCard(detail)
-        PromptCard(vm, session, detail.suggestion, detail.prompts, can("prompt"), can("suggest"))
+        PromptCard(vm, session, detail.suggestion, detail.prompts, can("prompt"), can("suggest"),
+            Modifier.onGloballyPositioned { promptTop = it.positionInParent().y.toInt() })
         SessionGlassesCard(vm, detail)
         SideQuestionCard(vm, session, detail.asks, can("ask"))
         ToolsCard(detail.tools)
@@ -152,7 +172,7 @@ private fun ExchangeCard(detail: Detail) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?, prompts: List<String>, enabled: Boolean, canSuggest: Boolean) {
+private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?, prompts: List<String>, enabled: Boolean, canSuggest: Boolean, modifier: Modifier = Modifier) {
     val drafts = vm.drafts
     val draft by drafts.text.collectAsStateWithLifecycle()
     val recall by drafts.recall.collectAsStateWithLifecycle()
@@ -161,7 +181,7 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
     // the suggestion, the session's saved draft) replaces that value with the cursor at its end.
     var field by remember { mutableStateOf(TextFieldValue(drafts.text.value, TextRange(drafts.text.value.length))) }
     LaunchedEffect(drafts) { drafts.text.collect { text -> if (text != field.text) field = TextFieldValue(text, TextRange(text.length)) } }
-    SectionCard("Prompt") {
+    SectionCard("Prompt", modifier) {
         FilledTonalButton(onClick = { vm.suggest(session) }, enabled = canSuggest) { Text("New prompt suggestion") }
         Hint("Requests a fresh suggestion from pi; it may use the configured advisory model. Review it before sending.")
         suggestion?.let {

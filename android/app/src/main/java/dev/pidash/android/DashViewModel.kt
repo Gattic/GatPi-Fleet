@@ -158,12 +158,14 @@ class DashViewModel @JvmOverloads constructor(
         val text = if (kind == "switch") "Switch ${session.label} in ${menu.location} from ${menu.head} to $branch?${menu.warning}" else action.description!!
         confirmation.value = Confirmation("Git · ${action.label}", text, git = GitConfirmation(session, menu, kind, branch))
     }
-    fun gitCommitPrompt(session: Session) {
-        val menu = git.value?.takeIf { it.sessionId == session.id }?.menu ?: return
+    /** Puts the review/commit prompt in the draft; returns false when no git menu is open. */
+    fun gitCommitPrompt(session: Session): Boolean {
+        val menu = git.value?.takeIf { it.sessionId == session.id }?.menu ?: return false
         drafts.edit(menu.commitPrompt)
         delivery.value = if (session.running) "followUp" else "steer"
         closeGit()
         repository.message("Review the draft in Prompt below, then Send prompt. Nothing has been sent.")
+        return true
     }
     fun openProjects() {
         screen.value = Screen.Projects

@@ -205,8 +205,9 @@ app and gateway together to use these new endpoints.
 Pull, push and branch switches require confirmation. Detached HEAD, missing upstream
 and dirty-tree guards match the TUI; a sole remote can be offered as a new upstream.
 Working-session warnings remind you to let active tools finish. Review/commit prepares
-an editable draft in **Prompt** below; nothing is sent automatically and the prompt
-explicitly forbids pushing. While working it defaults to follow-up delivery.
+an editable draft in **Prompt** below and scrolls the page to it; nothing is sent
+automatically and the prompt explicitly forbids pushing. While working it defaults to
+follow-up delivery.
 
 Git actions are disabled offline or while a prior action is pending. Read-only Git
 inspection remains available online with a pending receipt. Refresh after an operation;

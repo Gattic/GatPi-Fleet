@@ -21,19 +21,19 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.pidash.android.DashViewModel
+import dev.pidash.android.Dashboard
 import dev.pidash.android.GitView
 import dev.pidash.android.Session
 
 @Composable
-internal fun GitCard(vm: DashViewModel, session: Session, fresh: Boolean, enabled: Boolean, canPrompt: Boolean) {
+internal fun GitCard(vm: DashViewModel, session: Session, state: Dashboard, enabled: Boolean, canPrompt: Boolean, onReviewCommit: () -> Unit) {
     val view by vm.git.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
-    val state by vm.repository.state.collectAsStateWithLifecycle()
     val current = view?.takeIf { it.sessionId == session.id }
-    GitControls(current, canRead = fresh && !busy, canAct = enabled && current?.menu?.epoch == state.epoch, canPrompt = canPrompt,
+    GitControls(current, canRead = state.fresh && !busy, canAct = enabled && current?.menu?.epoch == state.epoch, canPrompt = canPrompt,
         onRefresh = { vm.openGit(session) }, onClose = vm::closeGit,
         onAction = { kind -> if (kind == "switch") vm.gitBranches(session) else vm.confirmGit(session, kind) },
-        onBranch = { vm.confirmGit(session, "switch", it) }, onStatus = { vm.gitStatus(session) }, onCommit = { vm.gitCommitPrompt(session) })
+        onBranch = { vm.confirmGit(session, "switch", it) }, onStatus = { vm.gitStatus(session) }, onCommit = onReviewCommit)
 }
 
 /** Read-only inspection stays available while a mutation's receipt is pending. */
