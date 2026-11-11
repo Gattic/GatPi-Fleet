@@ -45,6 +45,9 @@ const MAX_TOOL_RUNS = 20;
 const USAGE_MINUTES = 120;
 const TEXT_LIMIT = 200;
 const DETAIL_LIMIT = 80;
+/** Bounded tool input/output kept for the selected session's tool details, never in overview broadcasts. */
+const TOOL_ARGS_LIMIT = 4000;
+const TOOL_RESULT_LIMIT = 4000;
 const SAID_LIMIT = 32_000;
 const SUGGESTION_LIMIT = 2000;
 /** Characters of prompt history: a few pasted logs must not make every session update large. */
@@ -92,6 +95,20 @@ function toolDetail(args: unknown): string {
 	}
 	const firstString = Object.values(record).find((value) => typeof value === "string" && value);
 	return typeof firstString === "string" ? clip(firstString, DETAIL_LIMIT) : "";
+}
+
+/** Truncates without rewriting the text, so displayed tool input and output stay as written. */
+function truncate(text: string, limit: number): string {
+	return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+
+/** The call's arguments as JSON, so the phone can show what the tool was asked to do. */
+function toolArguments(args: unknown): string {
+	return args === undefined ? "" : truncate(JSON.stringify(args), TOOL_ARGS_LIMIT);
+}
+
+function toolResult(content: unknown): string {
+	return truncate(textOf(content).trim(), TOOL_RESULT_LIMIT);
 }
 
 /**
@@ -183,7 +200,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 			const said = replyOf(message.content);
 			if (said) lastSaid = said;
 			for (const block of message.content) {
-				if (block.type === "toolCall") tools.set(block.id, { id: block.id, name: block.name, detail: toolDetail(block.arguments), startedAt: timestamp });
+				if (block.type === "toolCall") tools.set(block.id, { id: block.id, name: block.name, detail: toolDetail(block.arguments), arguments: toolArguments(block.arguments), startedAt: timestamp });
 			}
 		} else if (message.role === "toolResult") {
 			if (message.usage) {
@@ -191,7 +208,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 				addMinute(usageMinutes, timestamp, message.usage, now);
 			}
 			const run = tools.get(message.toolCallId);
-			if (run) Object.assign(run, { endedAt: timestamp, isError: message.isError });
+			if (run) Object.assign(run, { endedAt: timestamp, isError: message.isError, result: toolResult(message.content) });
 		} else if (message.role === "user") {
 			const prompt = textOf(message.content);
 			if (prompt.trim()) {
@@ -690,7 +707,7 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 	pi.on("tool_execution_start", (event) => {
 		touch();
 		if (!state) return;
-		const run: ToolRun = { id: event.toolCallId, name: event.toolName, detail: toolDetail(event.args), startedAt: Date.now() };
+		const run: ToolRun = { id: event.toolCallId, name: event.toolName, detail: toolDetail(event.args), arguments: toolArguments(event.args), startedAt: Date.now() };
 		runningTools.set(run.id, run);
 		set({ tools: [...state.tools, run].slice(-MAX_TOOL_RUNS) });
 		setActivity(currentToolActivity());
@@ -711,7 +728,8 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		if (!state) return;
 		runningTools.delete(event.toolCallId);
 		const endedAt = Date.now();
-		set({ tools: state.tools.map((run) => (run.id === event.toolCallId ? { ...run, endedAt, isError: event.isError } : run)) });
+		const output = toolResult((event.result as { content?: unknown } | undefined)?.content);
+		set({ tools: state.tools.map((run) => (run.id === event.toolCallId ? { ...run, endedAt, isError: event.isError, result: output } : run)) });
 		setActivity(currentToolActivity());
 	});
 

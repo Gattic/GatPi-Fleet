@@ -47,7 +47,16 @@ data class Session(
     }
 }
 data class Ask(val id: Int, val question: String, val answer: String, val status: String, val error: String?, val cost: Double?)
-data class Tool(val name: String, val detail: String, val running: Boolean, val failed: Boolean)
+/** One tool run from the selected session's recent tools; [arguments] and [result] are bounded by the host. */
+data class Tool(
+    val name: String, val detail: String, val arguments: String?, val result: String?,
+    val startedAt: Long, val endedAt: Long?, val isError: Boolean,
+) {
+    val running: Boolean get() = endedAt == null
+    val failed: Boolean get() = isError
+    /** Wall-clock run time in milliseconds; unknown while the tool runs. */
+    val duration: Long? get() = endedAt?.let { (it - startedAt).coerceAtLeast(0) }
+}
 /** [prompts] are the session's earlier prompts to recall, oldest first. */
 data class Detail(val session: Session, val prompt: String?, val prompts: List<String>, val reply: String?, val suggestion: String?, val error: String?, val models: List<String>, val asks: List<Ask>, val tools: List<Tool>, val roadmap: Roadmap? = null, val context: SessionContext? = null) {
     companion object {
@@ -55,7 +64,10 @@ data class Detail(val session: Session, val prompt: String?, val prompts: List<S
             j.text("lastSaid"), j.text("suggestion"), j.text("error"),
             j.getJSONArray("models").let { a -> (0 until a.length()).map(a::getString) },
             j.getJSONArray("asks").objects().map { Ask(it.getInt("id"), it.getString("question"), it.getString("answer"), it.getString("status"), it.text("error"), it.number("cost")) },
-            j.getJSONArray("tools").objects().map { Tool(it.getString("name"), it.getString("detail"), it.isNull("endedAt"), it.getBoolean("isError")) },
+            j.getJSONArray("tools").objects().map {
+                Tool(it.getString("name"), it.getString("detail"), it.text("arguments"), it.text("result"),
+                    it.getLong("startedAt"), it.long("endedAt"), it.getBoolean("isError"))
+            },
             j.optJSONObject("roadmap")?.let(Roadmap::parse),
             j.optJSONObject("context")?.let(SessionContext::parse))
     }

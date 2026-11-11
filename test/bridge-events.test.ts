@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import piDashBridge from "../src/bridge/index.ts";
-import { LineDecoder, MAX_PROMPTS, socketPath, type BridgeMessage, type SessionState } from "../src/protocol/index.ts";
+import { emptyUsage, LineDecoder, MAX_PROMPTS, socketPath, type BridgeMessage, type SessionState } from "../src/protocol/index.ts";
 import { RecoveryJournal } from "../src/manager/recovery.ts";
 import { roadmapFixture } from "../scripts/roadmap-fixture.ts";
 
@@ -198,4 +198,36 @@ test("the prompts to recall are the transcript's, each once where it was last se
 	assert.deepEqual((await snapshot()).prompts, [...short.slice(3), "second\nline", b, "first"], "a prompt that no longer fits is skipped, not cut");
 	handlers.get("message_end")!({ message: { role: "user", content: "second\nline" } });
 	assert.deepEqual((await snapshot()).prompts, [...short.slice(3), b, "first", "second\nline"], "a prompt sent again moves to the end");
+});
+
+test("tool runs carry the call's arguments and bounded output, live and from the transcript", async (t) => {
+	let now = Date.now();
+	t.mock.method(Date, "now", () => now);
+	const { handlers, snapshot } = startBridge(t);
+
+	handlers.get("agent_start")!({});
+	handlers.get("tool_execution_start")!({ toolCallId: "call", toolName: "bash", args: { command: "npm test", cwd: "/project" } });
+	const running = (await snapshot()).tools.at(-1)!;
+	assert.equal(running.arguments, JSON.stringify({ command: "npm test", cwd: "/project" }));
+	assert.equal(running.result, undefined, "a running tool has no result yet");
+	assert.equal(running.endedAt, undefined);
+
+	now += 1500;
+	handlers.get("tool_execution_end")!({ toolCallId: "call", toolName: "bash", result: { content: [{ type: "text", text: "  all green\n" }] }, isError: false });
+	const ended = (await snapshot()).tools.at(-1)!;
+	assert.equal(ended.result, "all green", "the tool's text output is kept for detail, trimmed");
+	assert.equal(ended.isError, false);
+	assert.equal(ended.endedAt, now);
+});
+
+test("tool runs restored from a transcript keep arguments and output", async (t) => {
+	const at = new Date(0).toISOString();
+	const entries = [
+		{ type: "message", timestamp: at, message: { role: "assistant", usage: emptyUsage(), content: [{ type: "toolCall", id: "call", name: "read", arguments: { path: "README.md" } }] } },
+		{ type: "message", timestamp: at, message: { role: "toolResult", toolCallId: "call", isError: false, content: [{ type: "text", text: "hello" }] } },
+	];
+	const { snapshot } = startBridge(t, entries);
+	const run = (await snapshot()).tools.at(-1)!;
+	assert.equal(run.arguments, '{"path":"README.md"}');
+	assert.equal(run.result, "hello");
 });

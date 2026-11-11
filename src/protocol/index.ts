@@ -130,7 +130,12 @@ export const PROMPT_SUGGESTION_REQUEST_EVENT = "prompt-suggestion:request";
 export interface ToolRun {
 	id: string;
 	name: string;
+	/** One-line argument summary for the activity lane. */
 	detail: string;
+	/** The call's arguments as JSON, bounded by the bridge; absent from older bridges. */
+	arguments?: string;
+	/** Text the tool returned, bounded by the bridge; absent while it runs and from older bridges. */
+	result?: string;
 	startedAt: number;
 	endedAt?: number;
 	isError?: boolean;

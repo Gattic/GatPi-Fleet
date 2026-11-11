@@ -256,6 +256,13 @@ sub-page of Sessions, not a tab.
 The overview shows status, project, model, context and roadmap progress, plus a `BG`
 line naming the session's background jobs and subagents. Filter by text or attention. Detail contains bounded latest prompt/reply, recent tools,
 resources, usage and side-question answers; it is not a full transcript browser.
+The latest reply renders as Markdown by default, with a Plain text toggle for the
+raw bounded text. **Maximize** opens a full-screen, scrollable reader of the whole
+bounded reply with the same toggle and a copy action; images are shown as their alt
+text and remote content is never loaded. Each recent tool expands to the call's
+arguments and the text the tool returned, its run time and failure state. Those
+fields come from the host's bounded projection (4,000 characters each); a host that
+predates them says so, and overview broadcasts never carry tool input or output.
 The arrows beside the prompt step through the session's earlier prompts, as ↑ and ↓
 do in pi's editor: each is shown in place of the draft, and stepping down past the
 newest brings the draft back. Editing or sending a recalled prompt makes it the

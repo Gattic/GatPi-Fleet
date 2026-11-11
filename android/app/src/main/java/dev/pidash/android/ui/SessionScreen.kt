@@ -18,8 +18,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -53,7 +51,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,7 +60,6 @@ import dev.pidash.android.Dashboard
 import dev.pidash.android.DashViewModel
 import dev.pidash.android.Detail
 import dev.pidash.android.Session
-import dev.pidash.android.Tool
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -156,20 +152,6 @@ private fun OverviewCard(session: Session, canDismiss: Boolean, onDismiss: () ->
 
 internal fun mib(bytes: Double) = "%.0f MiB".format(bytes / 1048576)
 
-@Composable
-private fun ExchangeCard(detail: Detail) {
-    SectionCard("Latest exchange") {
-        Text("Prompt", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(detail.prompt ?: "No prompt preview", style = MaterialTheme.typography.bodyMedium)
-        Text("Reply (bounded; not a full transcript)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerLowest) {
-            SelectionContainer {
-                Text(detail.reply ?: "No completed reply", Modifier.padding(12.dp), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?, prompts: List<String>, enabled: Boolean, canSuggest: Boolean, modifier: Modifier = Modifier) {
@@ -253,28 +235,6 @@ private fun AskItem(ask: Ask) {
             }
             SelectionContainer { Text(ask.error ?: ask.answer, style = MaterialTheme.typography.bodyMedium, color = if (ask.error != null) Pi.Error else MaterialTheme.colorScheme.onSurface) }
             ask.cost?.let { Text("Side-question cost $%.4f".format(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        }
-    }
-}
-
-@Composable
-private fun ToolsCard(tools: List<Tool>) {
-    SectionCard("Recent tools") {
-        if (tools.isEmpty()) Text("No recent tools", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        tools.asReversed().forEach { tool ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.padding(top = 2.dp).size(16.dp), contentAlignment = Alignment.Center) {
-                    when {
-                        tool.running -> CircularProgressIndicator(Modifier.size(12.dp), color = Pi.Working, strokeWidth = 2.dp)
-                        tool.failed -> Icon(Icons.Filled.Close, "failed", Modifier.size(16.dp), tint = Pi.Error)
-                        else -> Icon(Icons.Filled.Check, "finished", Modifier.size(16.dp), tint = Pi.Dim)
-                    }
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(tool.name, style = MaterialTheme.typography.labelLarge, fontFamily = FontFamily.Monospace)
-                    if (tool.detail.isNotBlank()) Text(tool.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                }
-            }
         }
     }
 }

@@ -217,6 +217,38 @@ class WireTest {
         assertNull(policy.next(changed, true, 40_000))
         assertNotNull(policy.next(changed.copy(sessions = listOf(alert.copy(attentionKey = "second"))), true, 41_000))
     }
+    @Test fun detailToolsCarryArgumentsAndResultAndTolerateOlderHosts() {
+        val tools = JSONArray()
+            .put(JSONObject().put("name", "bash").put("detail", "npm test")
+                .put("arguments", "{\"command\":\"npm test\"}").put("result", "all green")
+                .put("startedAt", 1000L).put("endedAt", 2500L).put("isError", false))
+            .put(JSONObject().put("name", "read").put("detail", "README.md")
+                .put("startedAt", 3000L).put("endedAt", JSONObject.NULL).put("isError", false))
+        val detail = Detail.parse(detailJson(tools))
+        val finished = detail.tools[0]
+        assertEquals("bash", finished.name)
+        assertEquals("{\"command\":\"npm test\"}", finished.arguments)
+        assertEquals("all green", finished.result)
+        assertFalse(finished.running)
+        assertFalse(finished.failed)
+        assertEquals(1500L, finished.duration)
+        val running = detail.tools[1]
+        assertTrue(running.running)
+        assertNull(running.duration)
+        assertNull("a host that predates tool arguments is not an error", running.arguments)
+        assertNull(running.result)
+    }
+
+    private fun detailJson(tools: JSONArray) = JSONObject()
+        .put("id", "s").put("revision", "r").put("label", "project").put("project", "/project")
+        .put("status", JSONObject().put("kind", "idle").put("label", "idle").put("since", JSONObject.NULL))
+        .put("attentionKey", JSONObject.NULL).put("connected", true)
+        .put("model", JSONObject.NULL).put("thinking", JSONObject.NULL).put("contextPercent", JSONObject.NULL)
+        .put("commands", JSONObject())
+        .put("lastPrompt", JSONObject.NULL).put("prompts", JSONArray()).put("lastSaid", "reply")
+        .put("suggestion", JSONObject.NULL).put("error", JSONObject.NULL).put("models", JSONArray())
+        .put("asks", JSONArray()).put("tools", tools)
+
     @Test fun cardsKeepFreshnessWithinFiveLinesAndBoundExcerpts() {
         val cards = GlassesCards(TextPager({ it.length * 12f }))
         val state = reduceFrame(Dashboard(), fixture(), 1)

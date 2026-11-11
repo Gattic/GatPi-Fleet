@@ -115,12 +115,17 @@ the real projection and decoded by Android JVM tests.
 
 Selected detail adds a 200-character last-prompt preview, `prompts` (the session's
 earlier prompts to recall, oldest first), up to 32,000 characters of latest reply,
-suggested prompt, error, model choices, 20 recent tool summaries and 10 bounded
-side-question records. Like pi's editor history, `prompts` has each prompt once, where
+suggested prompt, error, model choices, 20 recent tool runs and 10 bounded
+side-question records. Each tool run carries `name`, a 100-character `detail`
+summary, `startedAt`, nullable `endedAt`, `isError`, and nullable `arguments` and
+`result`: the call's JSON arguments and the text the tool returned, each bounded to
+4,000 characters and absent when the bridge does not send them. Tool input and
+output appear only in selected detail, never in overview broadcasts or on the
+glasses. Like pi's editor history, `prompts` has each prompt once, where
 it was last sent: the session's newest 100 that fit in 100,000 characters, whole, and
 only those short enough for a prompt command (32,000 characters). It is not terminal
 mirroring or arbitrary history access. Terminal control sequences are stripped. Raw
-provider credentials, full process environment and tool output are never projected.
+provider credentials and the full process environment are never projected.
 
 ## Stream
 

@@ -46,7 +46,7 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	mkdirSync(run); mkdirSync(project);
 	const runtime = new ManagerRuntime({ runtimeDir: run, agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
 	t.after(() => runtime.close());
-	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: ["private earlier\nprompt", "x".repeat(32_001), "private prompt"], lastSaid: "private reply", lastPrompt: "private prompt" };
+	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [{ id: "tool", name: "bash", detail: "npm test", arguments: '{"command":"npm test"}', result: "all green", startedAt: 1, endedAt: 2 }], timeline: [], models: [], asks: [], prompts: ["private earlier\nprompt", "x".repeat(32_001), "private prompt"], lastSaid: "private reply", lastPrompt: "private prompt" };
 	state.plan = roadmapFixture();
 	state.context = {
 		tokens: 1000, window: 200_000, percent: 0.5,
@@ -119,9 +119,13 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	const overview = (await get("/api/v1/sessions")).data.sessions;
 	assert.equal(overview.length, 1);
 	assert.ok(!JSON.stringify(overview).includes("private"));
+	assert.ok(!JSON.stringify(overview).includes("all green"), "tool output stays out of overview broadcasts");
 	const id = overview[0].id;
 	const detail = (await get(`/api/v1/sessions/${id}`)).data;
 	assert.equal(detail.lastSaid, "private reply");
+	assert.deepEqual(detail.tools.map((tool: { name: string }) => tool.name), ["bash"]);
+	assert.equal(detail.tools[0].arguments, '{"command":"npm test"}');
+	assert.equal(detail.tools[0].result, "all green");
 	assert.deepEqual(detail.roadmap.entries, state.plan.viewer!.entries);
 	assert.deepEqual(detail.context.breakdown.parts, { system: 100, tools: 200, injected: 0, user: 50, assistant: 100, toolResults: 50, summary: 0 });
 	assert.equal(detail.context.tokens, 1000);
