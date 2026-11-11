@@ -268,6 +268,12 @@ do in pi's editor: each is shown in place of the draft, and stepping down past t
 newest brings the draft back. Editing or sending a recalled prompt makes it the
 draft; until then the saved draft stays the one you typed, also if you leave the
 session.
+**Capitalize sentences** (on by default, beside the field) starts each new sentence in
+the draft with a capital letter as you type and asks the keyboard to do the same. It
+changes only letter case — never words, punctuation or length — and can be switched off
+at any time; the choice is kept between runs. **Maximize prompt** opens a full-screen
+editor of the same draft with the same history arrows, steer/follow-up choice and
+**Send prompt**, for longer prompts on a phone keyboard; closing it keeps the draft.
 **Roadmap → Open roadmap** in session detail opens a read-only, scrollable viewer. It shows
 nested item/subroadmap paths, explicit statuses (including unsubstantiated verification), latest
 notes, lifecycle and update time, and root outcomes separately from recursive workflow counts.
