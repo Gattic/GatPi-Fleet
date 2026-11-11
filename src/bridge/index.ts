@@ -279,12 +279,20 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 	let state: SessionState | undefined;
 	/** The last request's leading system message: exact prompt and tool declarations. */
 	let capturedSystem: SystemMessage | undefined;
-	// Reload is command-context-only. Dispatch through a command, never through an agent prompt.
+	// Reload and new session are command-context-only. Dispatch through commands, never through agent prompts.
 	pi.registerCommand("pi-dash-reload", {
 		description: "Reload pi resources from pi-dash",
 		handler: async (_args, commandCtx) => {
 			if (!commandCtx.isIdle()) throw new Error("Reload only while idle");
 			await commandCtx.reload();
+		},
+	});
+	pi.registerCommand("pi-dash-new", {
+		description: "Start a new session from pi-dash",
+		handler: async (_args, commandCtx) => {
+			if (!commandCtx.isIdle()) throw new Error("New session only while idle");
+			if (state?.asks.some((ask) => ask.status === "answering")) throw new Error("A side question is still answering");
+			await commandCtx.newSession();
 		},
 	});
 	const recovery = new RecoveryJournal();
@@ -522,6 +530,14 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 				// Let the ACK reach the controller before reload tears down this socket/runtime.
 				setImmediate(() => {
 					if (state && sameSession(state, target)) pi.sendUserMessage("/pi-dash-reload", { deliverAs: "followUp", expandPromptTemplates: true });
+				});
+				return;
+			case "new":
+				if (!ctx.isIdle()) throw new Error("New session only while idle");
+				if (state.asks.some((ask) => ask.status === "answering")) throw new Error("A side question is still answering");
+				// Let the ACK reach the controller before the new session tears down this socket/runtime.
+				setImmediate(() => {
+					if (state && sameSession(state, target)) pi.sendUserMessage("/pi-dash-new", { deliverAs: "followUp", expandPromptTemplates: true });
 				});
 				return;
 			case "suggest": {

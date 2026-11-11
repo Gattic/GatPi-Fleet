@@ -35,6 +35,7 @@
     "model": null,
     "thinking": null,
     "reload": null,
+    "new": null,
     "restart": "Restart requires a saved conversation",
     "suggest": null,
     "dismiss": "Only exited sessions can be dismissed"

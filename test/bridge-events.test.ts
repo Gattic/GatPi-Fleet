@@ -131,6 +131,29 @@ test("reload is acknowledged as a typed command and dispatches the command-conte
 	await assert.rejects(commands.get("pi-dash-reload")!.handler("", { ...ctx, isIdle: () => false } as ExtensionCommandContext), /idle/);
 });
 
+test("new session is acknowledged as a typed command and dispatches the command-context newSession, never an agent prompt", async (t) => {
+	const { commands, sent, snapshot, ctx, command } = startBridge(t);
+	const target = await snapshot();
+	const socket = connect(socketPath(process.pid));
+	socket.setEncoding("utf8");
+	const decoder = new LineDecoder();
+	t.after(() => socket.destroy());
+	socket.write(JSON.stringify({ type: "command", id: 1, target, command: { kind: "new" } }) + "\n");
+	for await (const chunk of socket.iterator({ destroyOnReturn: false })) {
+		const ack = (decoder.push(String(chunk)) as BridgeMessage[]).find((m) => m.type === "ack");
+		if (ack?.type === "ack") { assert.equal(ack.ok, true); break; }
+	}
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	assert.deepEqual(sent, [{ text: "/pi-dash-new", options: { deliverAs: "followUp", expandPromptTemplates: true } }]);
+	let created = false;
+	await commands.get("pi-dash-new")!.handler("", { ...ctx, newSession: async () => { created = true; return { cancelled: false }; } } as ExtensionCommandContext);
+	assert.equal(created, true);
+	await assert.rejects(commands.get("pi-dash-new")!.handler("", { ...ctx, isIdle: () => false } as ExtensionCommandContext), /idle/);
+	t.mock.method(ctx, "isIdle", () => false);
+	assert.match((await command({ kind: "new" })).error!, /idle/);
+	assert.deepEqual(sent, [{ text: "/pi-dash-new", options: { deliverAs: "followUp", expandPromptTemplates: true } }], "a refused new session never dispatches");
+});
+
 test("bridge tracks file/name, retains reload recovery until replacement, and clears intentional session exits", async (t) => {
 	const { handlers, snapshot, root, session, ctx } = startBridge(t);
 	const journal = new RecoveryJournal(root, () => undefined); // inspect the records as if the owner died

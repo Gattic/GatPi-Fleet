@@ -317,18 +317,21 @@ ignoring case and surrounding spaces. Clear the field to restore the full list; 
 host notices remain visible while searching.
 
 Phone actions: prompt, new prompt suggestion, explicit steer/follow-up when working, abort, compact,
-rename, model/thinking changes, reload, restart, graceful close, side question, new session and
-resume in any known project on any host, and dismissing an exited session. Dismissing
-removes it from the list on the phone and in pi-dash; `d` in pi-dash removes it from
-the phone too. Abort/compact/reload/restart/close/new/resume require confirmation.
+rename, model/thinking changes, reload, clear/new session, restart, graceful close, side question,
+launching a new session or resuming in any known project on any host, and dismissing an exited
+session. Dismissing removes it from the list on the phone and in pi-dash; `d` in pi-dash
+removes it from the phone too. Abort/compact/reload/new/restart/close/launch/resume require
+confirmation.
 **Manage session → Run control → Reload** refreshes pi's extensions, skills, prompts,
-themes and context files without closing pi or clearing its conversation. **Restart**
-gracefully closes pi and resumes the same saved conversation in a new process on the
-same host. Both require idle state with no answering side question; restart requires a
-saved conversation. The phone returns to Sessions so you can select the new instance.
+themes and context files without closing pi or clearing its conversation. **New session**
+starts a fresh conversation in the same project, like desktop `/new` or `/clear`; the
+previous conversation stays saved in pi's history. **Restart** gracefully closes pi and
+resumes the same saved conversation in a new process on the same host. Reload, new session
+and restart require idle state with no answering side question; restart requires a saved
+conversation. The phone returns to Sessions so you can select the new instance.
 If exit takes over 15 seconds, restart stops without launching; inspect the session and
 resume from Projects if appropriate. Update the gateway, remote relays and bridges
-(protocol 6), then `/reload` existing desktop sessions before using the new controls.
+(protocol 7), then `/reload` existing desktop sessions before using the new controls.
 In session detail, **Prompt → New prompt suggestion** requests the same refresh as desktop
 Ctrl+R in GatPi-Harness's prompt-suggestions extension. It never sends a prompt or overwrites
 your Android draft. Use **Edit suggested prompt** to put the result in your draft, then
@@ -442,7 +445,7 @@ a partial failure is not treated as both arms healthy.
   Receipts live only in memory. Android keeps at most three encrypted drafts.
 - TLS failures: check hostname/IP, certificate expiry, phone clock and fingerprint;
   re-provision when appropriate. Never add `trustAll`/hostname bypasses.
-- Missing sessions: same Linux user/agent directory/runtime directory, bridge v6,
+- Missing sessions: same Linux user/agent directory/runtime directory, bridge v7,
   and `/reload`. Interactive pi only: RPC/print-mode subagents do not have bridges.
 - Lost Wi-Fi/host restart: stale state is expected; inspect uncertain receipts.
 - One-arm recovery: use metadata diagnostics; stop/start monitoring explicitly if

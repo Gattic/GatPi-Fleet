@@ -11,7 +11,7 @@ import { MAX_PROMPTS, type ContextBreakdown, type SessionState } from "../protoc
 import { ApiError, type CommandRequest, type LaunchRequest, MAX_PROMPT } from "./contract.ts";
 
 type CommandKind = CommandRequest["command"]["kind"];
-const COMMANDS = ["prompt", "ask", "abort", "shutdown", "compact", "rename", "model", "thinking", "reload", "restart", "suggest", "dismiss"] as const satisfies readonly CommandKind[];
+const COMMANDS = ["prompt", "ask", "abort", "shutdown", "compact", "rename", "model", "thinking", "reload", "new", "restart", "suggest", "dismiss"] as const satisfies readonly CommandKind[];
 
 /** A directory to start or resume pi in, on this machine (host null) or a remote host. */
 export interface ProjectChoice {
@@ -36,8 +36,8 @@ export function disabled(row: SessionRow, kind: CommandKind): string | null {
 	if (!row.bridge) return "No bridge; reload this session locally";
 	if (!row.connected) return "Session bridge disconnected";
 	if (kind === "suggest" && row.bridge.phase !== "idle") return "Request a prompt suggestion only while idle";
-	if ((kind === "reload" || kind === "restart") && row.bridge.phase !== "idle") return "Reload and restart only while idle";
-	if ((kind === "reload" || kind === "restart") && row.bridge.asks.some((ask) => ask.status === "answering")) return "A side question is still answering";
+	if ((kind === "reload" || kind === "new" || kind === "restart") && row.bridge.phase !== "idle") return "Reload, new session and restart only while idle";
+	if ((kind === "reload" || kind === "new" || kind === "restart") && row.bridge.asks.some((ask) => ask.status === "answering")) return "A side question is still answering";
 	if (kind === "restart" && !row.bridge.sessionFile) return "Restart requires a saved conversation";
 	if (kind === "compact" && row.bridge.phase !== "idle") return "Compact only while idle";
 	if (kind === "ask" && row.bridge.asks.some((ask) => ask.status === "answering")) return "A side question is still answering";

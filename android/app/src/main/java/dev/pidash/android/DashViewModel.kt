@@ -106,6 +106,7 @@ class DashViewModel @JvmOverloads constructor(
             "shutdown" -> "Close session?" to "Close gracefully after the current run and queued messages finish? Abort is a separate action."
             "compact" -> "Compact context?" to "Summarise this session's context now using its model? Only available while idle."
             "reload" -> "Reload session?" to "Reload pi's extensions, skills, prompts, themes and context files without closing pi or clearing the conversation. Only available while idle. Select the reloaded session from Sessions afterward."
+            "new" -> "New session?" to "Start a fresh conversation in the same project, like pi's /new or /clear. This clears the current session's context; its saved conversation stays in pi's history. Only available while idle. Select the new session from Sessions afterward."
             "restart" -> "Restart session?" to "Close pi gracefully, then resume this same saved conversation in a new pi process on the same host. Only available while idle. Select the restarted session from Sessions afterward."
             else -> error("Unsupported confirmation")
         }
@@ -121,7 +122,7 @@ class DashViewModel @JvmOverloads constructor(
                 c.git != null -> { closeGit(); repository.gitAction(c.git) }
                 c.target != null && c.command != null -> {
                     repository.command(c.target, c.command)
-                    if (c.command.getString("kind") in listOf("reload", "restart")) back()
+                    if (c.command.getString("kind") in listOf("reload", "new", "restart")) back()
                 }
                 c.project != null -> repository.launch(c.project, c.history)
             }

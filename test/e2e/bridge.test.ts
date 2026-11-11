@@ -344,6 +344,21 @@ test("/new replaces the session: bye, then a fresh snapshot on the same pid", as
 	assert.ok(records.every((record) => record.sessionId === current().sessionId), "the old session's recovery record was retired");
 });
 
+test("a typed mobile new starts a fresh conversation in the same project, like /new", async () => {
+	const before = current();
+	await hub.send(before, { kind: "new" });
+	await waitFor("new session snapshot", () => states.get(pid)?.sessionId !== before.sessionId && hub.isConnected(pid));
+	const state = current();
+	assert.equal(state.pid, before.pid);
+	assert.equal(state.cwd, before.cwd);
+	assert.notEqual(state.sessionId, before.sessionId);
+	assert.notEqual(state.instanceId, before.instanceId);
+	assert.equal(state.usage.direct.tokens, 0);
+	assert.deepEqual(state.prompts, []);
+	assert.equal(state.phase, "idle");
+	assert.equal(state.plan?.title, "E2E plan", "plan is republished for the new session");
+});
+
 test("shutdown closes pi, removes the socket and ends its screen", async () => {
 	await hub.send(current(), { kind: "shutdown" });
 	await waitFor("bye quit", () => byes.includes("quit"));

@@ -355,7 +355,7 @@ private fun ManageCard(vm: DashViewModel, session: Session, models: List<String>
         Text("Run control", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val danger = ButtonDefaults.outlinedButtonColors(contentColor = Pi.Error)
-            listOf("abort" to "Abort", "compact" to "Compact", "reload" to "Reload", "restart" to "Restart", "shutdown" to "Close gracefully").forEach { (kind, label) ->
+            listOf("abort" to "Abort", "compact" to "Compact", "reload" to "Reload", "new" to "New session", "restart" to "Restart", "shutdown" to "Close gracefully").forEach { (kind, label) ->
                 val destructive = kind in listOf("abort", "restart", "shutdown")
                 OutlinedButton(
                     onClick = { vm.confirm(session, kind) }, enabled = can(kind),

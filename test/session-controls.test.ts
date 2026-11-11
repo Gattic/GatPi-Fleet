@@ -13,9 +13,9 @@ function fixture() {
 	return { runtime, row: runtime.store.rows.get("11")!, sessions: new Sessions(runtime) };
 }
 
-test("reload and restart are typed, idle-only actions; restart needs a saved conversation", () => {
+test("reload, new session and restart are typed, idle-only actions; restart needs a saved conversation", () => {
 	const { row } = fixture();
-	for (const kind of ["reload", "restart"] as const) {
+	for (const kind of ["reload", "new", "restart"] as const) {
 		assert.equal(commandRequest.Check({ requestId: randomUUID(), epoch: randomUUID(), revision: summary(row).revision, command: { kind } }), true);
 		assert.equal(summary(row).commands[kind], null);
 		row.bridge!.phase = "working";
@@ -28,8 +28,10 @@ test("reload and restart are typed, idle-only actions; restart needs a saved con
 	row.bridge!.sessionFile = undefined;
 	assert.match(summary(row).commands.restart!, /saved/);
 	assert.equal(summary(row).commands.reload, null);
+	assert.equal(summary(row).commands.new, null, "a new session does not need a saved conversation");
 	row.connected = false;
 	assert.match(summary(row).commands.reload!, /disconnected/);
+	assert.match(summary(row).commands.new!, /disconnected/);
 	assert.match(summary(row).commands.restart!, /disconnected/);
 });
 
@@ -72,12 +74,12 @@ test("lifecycle actions preserve revision guards and route restart to the host l
 	const sent: unknown[] = [];
 	t.mock.method(runtime.network, "send", async (_row: SessionRow, command: Command) => { sent.push(command); });
 	const restart = t.mock.method(runtime, "restart", async (target: SessionRow) => { assert.equal(target, row); });
-	for (const kind of ["reload", "restart"] as const) {
+	for (const kind of ["reload", "new", "restart"] as const) {
 		const current = summary(row);
 		const input = { requestId: randomUUID(), epoch: randomUUID(), revision: current.revision, command: { kind } };
 		await assert.rejects(sessions.command(current.id, { ...input, revision: "0".repeat(32) }), /state changed/);
 		await sessions.command(current.id, input);
 	}
-	assert.deepEqual(sent, [{ kind: "reload" }]);
+	assert.deepEqual(sent, [{ kind: "reload" }, { kind: "new" }]);
 	assert.equal(restart.mock.callCount(), 1);
 });

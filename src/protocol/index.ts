@@ -3,7 +3,7 @@
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 /** Directory holding one `<pid>.sock` per bridged pi process (mode 0700). */
 export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -275,6 +275,8 @@ export type Command =
 	| { kind: "abort" }
 	| { kind: "shutdown" }
 	| { kind: "reload" }
+	/** Starts a fresh conversation in the same project, like pi's /new or /clear. Only while idle. */
+	| { kind: "new" }
 	| { kind: "suggest" }
 	| { kind: "rename"; name: string }
 	/** Only while idle. */
