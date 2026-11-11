@@ -1,5 +1,8 @@
 node_modules/
 
+# Local UI captures kept for review, not part of the repository
+screenshots/
+
 # pi harness runtime state for this project (roadmap, traces, memories, caches)
 .pi/
 .codegraph/
