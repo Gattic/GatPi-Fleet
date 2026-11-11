@@ -21,6 +21,8 @@ class DashApp : Application() {
     val monitoring = MutableStateFlow(false)
     val wearSelection = MutableStateFlow(WearSelection())
     val attentionAlerts = MutableStateFlow(false)
+    /** The prompt field's sentence capitalization option, kept between runs of the app. */
+    val sentenceCapitalization = MutableStateFlow(true)
     var glasses: G1Glasses? = null
     override fun onCreate() {
         super.onCreate()
@@ -29,6 +31,7 @@ class DashApp : Application() {
         val prefs = getSharedPreferences("display", Context.MODE_PRIVATE)
         prefs.edit().remove("channel").apply()
         attentionAlerts.value = prefs.getBoolean("attention", false)
+        sentenceCapitalization.value = prefs.getBoolean("capitalize", true)
         wearSelection.value = WearSelection(prefs.getString("pin", null))
     }
     fun display(id: String? = null, excerpt: String? = null) {
@@ -38,5 +41,9 @@ class DashApp : Application() {
     fun alerts(enabled: Boolean) {
         attentionAlerts.value = enabled
         getSharedPreferences("display", Context.MODE_PRIVATE).edit().putBoolean("attention", enabled).apply()
+    }
+    fun setSentenceCapitalization(enabled: Boolean) {
+        sentenceCapitalization.value = enabled
+        getSharedPreferences("display", Context.MODE_PRIVATE).edit().putBoolean("capitalize", enabled).apply()
     }
 }

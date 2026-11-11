@@ -7,9 +7,12 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -67,6 +70,8 @@ class PromptCardTest {
     @Test fun recalledPromptsAreOnlyShownAndTypingAddsToTheirEnd() {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
         val vm = DashViewModel(app, Drafts(storage) { session.id })
+        // This test is about recall, so it types exactly what it asserts.
+        vm.app.setSentenceCapitalization(false)
         compose.setContent { MaterialTheme { SessionScreen(vm, Dashboard(detail = detail(listOf("gamma typed in pi", "delta prompt"))), enabled = true) } }
         val field = compose.onNodeWithText("Prompt / unsent draft").performScrollTo()
         field.performTextInput("draft")
@@ -80,5 +85,39 @@ class PromptCardTest {
         field.assert(hasText("gamma typed in pi edited"))
         compose.onNodeWithText("Earlier prompt", substring = true).assertDoesNotExist()
         compose.runOnIdle { assertEquals(JSONObject(mapOf("s" to "gamma typed in pi edited")).toString(), saves.last()) }
+    }
+
+    @Test fun sentenceCapitalizationAppliesToTypingAndCanBeTurnedOff() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
+        val vm = DashViewModel(app, Drafts(storage) { session.id })
+        vm.app.setSentenceCapitalization(true)
+        compose.setContent { MaterialTheme { SessionScreen(vm, Dashboard(detail = detail(emptyList())), enabled = true) } }
+        compose.onNodeWithText("Capitalize sentences").performScrollTo().assertIsOn()
+        val field = compose.onNodeWithTag("prompt-field").performScrollTo()
+        field.performTextInput("first sentence. second one")
+        field.assert(hasText("First sentence. Second one"))
+        compose.onNodeWithText("Capitalize sentences").performScrollTo().performClick()
+        compose.onNodeWithText("Capitalize sentences").assertIsOff()
+        field.performTextInput("\nthird")
+        field.assert(hasText("First sentence. Second one\nthird"))
+        compose.runOnIdle { assertEquals("First sentence. Second one\nthird", vm.drafts.text.value) }
+    }
+
+    @Test fun maximizeOpensAFullScreenEditorOfTheSameDraft() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
+        val vm = DashViewModel(app, Drafts(storage) { session.id })
+        vm.app.setSentenceCapitalization(true)
+        vm.drafts.edit("Keep this draft")
+        compose.setContent { MaterialTheme { SessionScreen(vm, Dashboard(detail = detail(listOf("earlier prompt"))), enabled = true) } }
+        compose.onNodeWithText("Maximize prompt").performScrollTo().performClick()
+        val editor = compose.onNodeWithTag("prompt-maximized").assertIsDisplayed()
+        editor.assert(hasText("Keep this draft"))
+        editor.performTextInput(" and more")
+        editor.assert(hasText("Keep this draft and more"))
+        compose.runOnIdle { assertEquals("Keep this draft and more", vm.drafts.text.value) }
+        compose.onNodeWithTag("prompt-send-maximized").assertIsEnabled()
+        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithTag("prompt-maximized").assertDoesNotExist()
+        compose.onNodeWithTag("prompt-field").assert(hasText("Keep this draft and more"))
     }
 }
