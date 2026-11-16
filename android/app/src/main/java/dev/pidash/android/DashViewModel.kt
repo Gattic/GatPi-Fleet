@@ -165,7 +165,7 @@ class DashViewModel @JvmOverloads constructor(
         drafts.edit(menu.commitPrompt)
         delivery.value = if (session.running) "followUp" else "steer"
         closeGit()
-        repository.message("Review the draft in Prompt below, then Send prompt. Nothing has been sent.")
+        repository.message("Review the draft in Chat, then Send prompt. Nothing has been sent.")
         return true
     }
     fun openProjects() {

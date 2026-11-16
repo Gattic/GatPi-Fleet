@@ -51,34 +51,26 @@ import dev.pidash.android.Tool
 /** Characters of the latest reply the card renders; the viewer reads the whole bounded reply. */
 private const val REPLY_PREVIEW_CHARS = 2000
 
+/** The latest prompt and bounded reply, not a transcript. The reader's Markdown / Plain text choice applies here too. */
 @Composable
 internal fun ExchangeCard(detail: Detail) {
     var markdown by rememberSaveable(detail.session.id) { mutableStateOf(true) }
     var viewer by rememberSaveable(detail.session.id) { mutableStateOf(false) }
     val reply = detail.reply.orEmpty()
-    SectionCard("Latest exchange") {
+    SectionCard("Latest exchange", action = { TextButton(onClick = { viewer = true }, enabled = reply.isNotBlank()) { Text("Maximize") } }) {
         Text("Prompt", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(detail.prompt ?: "No prompt preview", style = MaterialTheme.typography.bodyMedium)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Reply (bounded; not a full transcript)", Modifier.weight(1f),
-                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = { viewer = true }, enabled = reply.isNotBlank()) { Text("Maximize") }
-        }
+        Text("Reply", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (reply.isBlank()) {
             Text("No completed reply", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                listOf(true to "Markdown", false to "Plain text").forEachIndexed { index, (value, label) ->
-                    SegmentedButton(markdown == value, { markdown = value }, SegmentedButtonDefaults.itemShape(index, 2)) { Text(label) }
-                }
-            }
             ReplyPreview(reply, markdown)
             if (reply.length > REPLY_PREVIEW_CHARS) {
                 Hint("Showing the first $REPLY_PREVIEW_CHARS of ${reply.length} characters. Maximize to read the full reply.")
             }
         }
     }
-    if (viewer) ReplyViewerDialog(detail.session.label, reply, markdown) { viewer = false }
+    if (viewer) ReplyViewerDialog(detail.session.label, reply, markdown, { markdown = it }) { viewer = false }
 }
 
 @Composable
@@ -95,8 +87,7 @@ private fun ReplyPreview(reply: String, markdown: Boolean) {
 /** Full-screen reading of the selected session's latest reply; no command or network mutation. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReplyViewerDialog(label: String, reply: String, initialMarkdown: Boolean, onClose: () -> Unit) {
-    var markdown by rememberSaveable { mutableStateOf(initialMarkdown) }
+private fun ReplyViewerDialog(label: String, reply: String, markdown: Boolean, onMarkdown: (Boolean) -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), dragHandle = null) {
         Surface(Modifier.fillMaxSize()) {
@@ -112,7 +103,7 @@ private fun ReplyViewerDialog(label: String, reply: String, initialMarkdown: Boo
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
                         listOf(true to "Markdown", false to "Plain text").forEachIndexed { index, (value, labelText) ->
-                            SegmentedButton(markdown == value, { markdown = value }, SegmentedButtonDefaults.itemShape(index, 2)) { Text(labelText) }
+                            SegmentedButton(markdown == value, { onMarkdown(value) }, SegmentedButtonDefaults.itemShape(index, 2)) { Text(labelText) }
                         }
                     }
                     OutlinedButton(onClick = { copyReply(context, reply) }, enabled = reply.isNotBlank()) { Text("Copy") }

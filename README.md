@@ -13,7 +13,7 @@ and on the other machines of your network (over ssh).
   projects and connected hosts, then confirm a resume of the exact saved conversation.
 - **Plan progress**: the active roadmap step and a progress bar (from the GatPi-Harness roadmap), and
   how full each session's context window is (CTX). The read-only **Roadmap Viewer** (`o`, or
-  **Open roadmap** in Android session detail) shows nested tasks, statuses, notes and separate
+  **Activity → Open roadmap** in Android session detail) shows nested tasks, statuses, notes and separate
   root-outcome/workflow progress, updating with the selected session.
 - **Resources**: CPU, memory and GPU memory per session, split into the pi process itself (▓) and
   everything it started (▒): tool commands, LSP servers, subagents, background jobs, `build_project`
@@ -34,7 +34,7 @@ and on the other machines of your network (over ssh).
   are pi's chars/4 estimates and are labelled `est.`. An unknown total (for example right after
   compaction) stays unknown, never zero. Ended sessions show their last-known context and window;
   composition is live-only. Android's **Context** tab shows the same `open` / `today` / `30d`
-  scopes and cumulative composition, with a per-session breakdown card in session detail.
+  scopes and cumulative composition, with a per-session breakdown card in session detail's **Activity** tab.
 - **Conversation**: the last prompt, the recent tool calls with their arguments, the latest reply
   (previewed under the session list; whole, as Markdown, scrollable, or full screen), and the
   suggested next prompt from the GatPi-Harness prompt suggestions.

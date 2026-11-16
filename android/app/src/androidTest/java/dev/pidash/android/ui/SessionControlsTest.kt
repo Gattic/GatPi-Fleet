@@ -37,6 +37,7 @@ class SessionControlsTest {
         compose.setContent {
             MaterialTheme { SessionScreen(vm, Dashboard(detail = Detail(current.value, null, emptyList(), null, null, null, emptyList(), emptyList(), emptyList())), enabled.value) }
         }
+        compose.onNodeWithText("Manage").performClick()
         for ((label, kind) in listOf("Reload" to "reload", "New session" to "new", "Restart" to "restart")) {
             compose.onNodeWithText(label).performScrollTo().assertIsEnabled().performClick()
             compose.runOnIdle {

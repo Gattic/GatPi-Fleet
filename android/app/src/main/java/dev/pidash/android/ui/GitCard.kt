@@ -70,7 +70,7 @@ internal fun GitControls(
                     OutlinedButton(onClick = onStatus, enabled = canRead) { Text("View status") }
                     OutlinedButton(onClick = onCommit, enabled = canAct && canPrompt) { Text("Ask AI to review/commit") }
                 }
-                Hint("Review/commit opens an editable prompt; it does not send or push automatically.")
+                Hint("Review/commit puts an editable prompt in Chat; it does not send or push automatically.")
             }
             view.branches?.let { branches ->
                 Text("Local branches", style = MaterialTheme.typography.titleSmall)
