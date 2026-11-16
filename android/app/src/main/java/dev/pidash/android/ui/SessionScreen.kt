@@ -1,9 +1,11 @@
 package dev.pidash.android.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -30,37 +32,35 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
@@ -77,13 +77,14 @@ import dev.pidash.android.Drafts
 import dev.pidash.android.PromptRecall
 import dev.pidash.android.Session
 import dev.pidash.android.capitalizeSentences
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 private val thinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
+/** Session detail is split by what the user is doing: talking to pi, asking aside, watching it work, or changing it. */
+private enum class SessionTab(val label: String) { Chat("Chat"), Ask("Ask"), Activity("Activity"), Manage("Manage") }
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean) {
     val detail = state.detail
@@ -96,43 +97,51 @@ internal fun SessionScreen(vm: DashViewModel, state: Dashboard, enabled: Boolean
     val session = detail.session
     // A command is available when the host lists it with no reason it is blocked.
     val can = { kind: String -> enabled && session.commands.containsKey(kind) && session.commands[kind] == null }
-    val scroll = rememberScrollState()
-    val scope = rememberCoroutineScope()
-    // Where the Prompt card sits in the scrollable content; a git review draft lands there.
-    var promptTop by remember { mutableIntStateOf(0) }
-    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        OverviewCard(session, can("dismiss")) { vm.dismiss(session) }
-        ContextBreakdownCard(detail.context)
-        RoadmapCard(session.id, detail.roadmap, session.plan != null, session.plan?.active,
-            state.fresh && !state.detailStale && session.connected && session.status != "exited")
-        GitCard(vm, session, state, enabled, can("prompt")) {
-            // Closing the git menu collapses the Git card, so read the position it had before the
-            // collapse and scroll once the layout above Prompt has moved.
-            val before = promptTop
-            if (vm.gitCommitPrompt(session)) scope.launch {
-                val top = withTimeoutOrNull(1_000) { snapshotFlow { promptTop }.first { it != before } } ?: promptTop
-                scroll.animateScrollTo(top)
+    var tab by rememberSaveable(session.id) { mutableStateOf(SessionTab.Chat) }
+    // Set when a git review puts its prompt in the draft; Chat scrolls to the composer once, then clears it.
+    var revealComposer by remember { mutableStateOf(false) }
+    // Each tab keeps its scroll position and expanded rows while another tab is shown.
+    val tabs = rememberSaveableStateHolder()
+    Column(Modifier.fillMaxSize()) {
+        SessionHeader(session, can("dismiss")) { vm.dismiss(session) }
+        PrimaryTabRow(selectedTabIndex = tab.ordinal) {
+            SessionTab.entries.forEach { entry ->
+                Tab(selected = tab == entry, onClick = { tab = entry }, text = { Text(entry.label, maxLines = 1) },
+                    selectedContentColor = MaterialTheme.colorScheme.primary, unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        detail.error?.let { Notice(it, Pi.Error) }
-        ExchangeCard(detail)
-        PromptCard(vm, session, detail.suggestion, detail.prompts, can("prompt"), can("suggest"),
-            Modifier.onGloballyPositioned { promptTop = it.positionInParent().y.toInt() })
-        SessionGlassesCard(vm, detail)
-        SideQuestionCard(vm, session, detail.asks, can("ask"))
-        ToolsCard(detail.tools)
-        ManageCard(vm, session, detail.models, can)
+        Box(Modifier.weight(1f)) {
+            tabs.SaveableStateProvider(tab.name) {
+                when (tab) {
+                    SessionTab.Chat -> ChatTab(vm, detail, can, revealComposer) { revealComposer = false }
+                    SessionTab.Ask -> TabPage { SideQuestionCard(vm, session, detail.asks, can("ask")) }
+                    SessionTab.Activity -> TabPage {
+                        RoadmapCard(session.id, detail.roadmap, session.plan != null, session.plan?.active,
+                            state.fresh && !state.detailStale && session.connected && session.status != "exited")
+                        ToolsCard(detail.tools)
+                        ContextBreakdownCard(detail.context)
+                        ResourcesCard(session)
+                    }
+                    SessionTab.Manage -> ManageTab(vm, state, detail, enabled, can) {
+                        if (vm.gitCommitPrompt(session)) { revealComposer = true; tab = SessionTab.Chat }
+                    }
+                }
+            }
+        }
     }
 }
 
+/** What is true of the session whichever tab is open: state, model, context, plan progress and why it cannot be prompted. */
 @Composable
-private fun OverviewCard(session: Session, canDismiss: Boolean, onDismiss: () -> Unit) {
-    SectionCard(null) {
+private fun SessionHeader(session: Session, canDismiss: Boolean, onDismiss: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatusPill(session.status, session.statusLabel)
             Text("${session.model ?: "unknown model"} · thinking ${session.thinking ?: "unknown"}", Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            ContextLabel(session.contextPercent)
         }
+        session.plan?.let { PlanProgress(it) }
         session.commands["prompt"]?.let { Notice(it, Pi.Error) }
         // Offered once the session has exited; dismissing it in pi-dash removes it here too.
         if ("dismiss" in session.commands && session.commands["dismiss"] == null) {
@@ -141,20 +150,38 @@ private fun OverviewCard(session: Session, canDismiss: Boolean, onDismiss: () ->
                 FilledTonalButton(onClick = onDismiss, enabled = canDismiss) { Text("Dismiss") }
             }
         }
-        session.plan?.let { plan ->
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(plan.title, style = MaterialTheme.typography.titleSmall)
-                PlanProgress(plan)
-            }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row {
-                Text("Context", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                ContextLabel(session.contextPercent)
-            }
-            session.contextPercent?.let { Meter(it / 100, levelColor(it / 100)) }
-        }
-        val metrics = session.metrics
+    }
+}
+
+/** One tab's scrollable stack of cards. */
+@Composable
+private fun TabPage(scroll: ScrollState = rememberScrollState(), content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+}
+
+/** The latest exchange, then the composer for the next prompt. */
+@Composable
+private fun ChatTab(vm: DashViewModel, detail: Detail, can: (String) -> Boolean, revealComposer: Boolean, onRevealed: () -> Unit) {
+    val scroll = rememberScrollState()
+    LaunchedEffect(revealComposer) {
+        if (!revealComposer) return@LaunchedEffect
+        // The tab has just been composed; its scroll range is known after the first layout. The composer is last.
+        withFrameNanos { }
+        scroll.animateScrollTo(scroll.maxValue)
+        onRevealed()
+    }
+    TabPage(scroll) {
+        detail.error?.let { Notice(it, Pi.Error) }
+        ExchangeCard(detail)
+        PromptCard(vm, detail.session, detail.suggestion, detail.prompts, can("prompt"), can("suggest"))
+    }
+}
+
+/** Process resources and usage; unknown values are shown as unknown, never zero. */
+@Composable
+private fun ResourcesCard(session: Session) {
+    val metrics = session.metrics
+    SectionCard("Resources") {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Stat("CPU", metrics?.let { "%.0f%%".format(it.cpu * 100) }, Modifier.weight(1f))
             Stat("RAM", metrics?.let { mib(it.memory) }, Modifier.weight(1f))
@@ -171,7 +198,7 @@ internal fun mib(bytes: Double) = "%.0f MiB".format(bytes / 1048576)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?, prompts: List<String>, enabled: Boolean, canSuggest: Boolean, modifier: Modifier = Modifier) {
+private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?, prompts: List<String>, enabled: Boolean, canSuggest: Boolean) {
     val drafts = vm.drafts
     val draft by drafts.text.collectAsStateWithLifecycle()
     val recall by drafts.recall.collectAsStateWithLifecycle()
@@ -187,29 +214,16 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
         field = if (capitalize) next.capitalized() else next
         if (field.text != drafts.text.value) drafts.edit(field.text)
     }
-    SectionCard("Prompt", modifier) {
-        FilledTonalButton(onClick = { vm.suggest(session) }, enabled = canSuggest) { Text("New prompt suggestion") }
-        Hint("Requests a fresh suggestion from pi; it may use the configured advisory model. Review it before sending.")
-        suggestion?.let {
-            OutlinedButton(onClick = { drafts.edit(it) }) {
-                Icon(Icons.Filled.Edit, null, Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.width(ButtonDefaults.IconSpacing)); Text("Edit suggested prompt")
-            }
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.weight(1f).toggleable(capitalize, role = Role.Switch, onValueChange = vm.app::setSentenceCapitalization), verticalAlignment = Alignment.CenterVertically) {
-                Text("Capitalize sentences", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                Switch(capitalize, null)
-            }
-            TextButton(onClick = { maximized = true }) { Text("Maximize prompt") }
-        }
+    SectionCard("Prompt", action = { TextButton(onClick = { maximized = true }) { Text("Maximize prompt") } }) {
+        suggestion?.let { SuggestedPrompt(it) { drafts.edit(it) } }
+        if (session.running) DeliveryChoice(delivery) { vm.delivery.value = it }
         // The arrows step through the session's earlier prompts, as ↑ and ↓ do in pi's editor.
         PromptField(field, edit, prompts, drafts, recall, capitalize, tag = "prompt-field")
-        if (session.running) DeliveryChoice(delivery) { vm.delivery.value = it }
+        CapitalizeToggle(capitalize, vm.app::setSentenceCapitalization, Modifier.fillMaxWidth())
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Hint("Interactive extension dialogs and slash commands still require desktop pi.", Modifier.weight(1f))
-            Button(onClick = { vm.prompt(session) }, enabled = enabled && draft.isNotBlank()) {
-                Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.width(ButtonDefaults.IconSpacing)); Text("Send prompt")
-            }
+            OutlinedButton(onClick = { vm.suggest(session) }, enabled = canSuggest) { Text("Suggest") }
+            Spacer(Modifier.weight(1f))
+            SendButton(enabled && draft.isNotBlank()) { vm.prompt(session) }
         }
     }
     if (maximized) ModalBottomSheet(
@@ -230,13 +244,42 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
                 PromptField(field, edit, prompts, drafts, recall, capitalize, Modifier.weight(1f), maxLines = Int.MAX_VALUE, autofocus = true, tag = "prompt-maximized")
                 if (session.running) DeliveryChoice(delivery) { vm.delivery.value = it }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Hint(if (capitalize) "New sentences start with a capital letter." else "Sentence capitalization is off.", Modifier.weight(1f))
-                    Button(onClick = { vm.prompt(session); maximized = false }, enabled = enabled && draft.isNotBlank(), modifier = Modifier.testTag("prompt-send-maximized")) {
-                        Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.width(ButtonDefaults.IconSpacing)); Text("Send prompt")
-                    }
+                    CapitalizeToggle(capitalize, vm.app::setSentenceCapitalization, Modifier.weight(1f))
+                    SendButton(enabled && draft.isNotBlank(), Modifier.testTag("prompt-send-maximized")) { vm.prompt(session); maximized = false }
                 }
             }
         }
+    }
+}
+
+/** pi's latest suggestion, shown for reading; only the button copies it into the draft, which is never sent by itself. */
+@Composable
+private fun SuggestedPrompt(text: String, onEdit: () -> Unit) {
+    Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.padding(start = 12.dp, top = 12.dp, end = 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Suggested by pi", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(text, Modifier.padding(end = 8.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            TextButton(onClick = onEdit, modifier = Modifier.align(Alignment.End)) {
+                Icon(Icons.Filled.Edit, null, Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.width(ButtonDefaults.IconSpacing)); Text("Edit suggested prompt")
+            }
+        }
+    }
+}
+
+/** The sentence-capitalization option; an app setting, so both editors show the same switch. */
+@Composable
+private fun CapitalizeToggle(capitalize: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier.toggleable(capitalize, role = Role.Switch, onValueChange = onChange), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Capitalize sentences", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+        Switch(capitalize, null)
+    }
+}
+
+@Composable
+private fun SendButton(enabled: Boolean, modifier: Modifier = Modifier, onSend: () -> Unit) {
+    Button(onClick = onSend, enabled = enabled, modifier = modifier) {
+        Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.width(ButtonDefaults.IconSpacing)); Text("Send prompt")
     }
 }
 
@@ -268,7 +311,7 @@ private fun PromptField(
                 IconButton(onClick = { drafts.newer(prompts) }, enabled = recall.canNewer) { Icon(Icons.Filled.KeyboardArrowDown, "Newer prompt") }
             }
         },
-        supportingText = recall.position?.let { { Text("Earlier prompt ${it + 1} of ${prompts.size}") } })
+        supportingText = { Text(recall.position?.let { "Earlier prompt ${it + 1} of ${prompts.size}" } ?: "Slash commands and dialogs need desktop pi.") })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -330,38 +373,45 @@ private fun AskItem(ask: Ask) {
     }
 }
 
+/** Changing the session: run control first, then its model, git, glasses display and name. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ManageCard(vm: DashViewModel, session: Session, models: List<String>, can: (String) -> Boolean) {
+private fun ManageTab(vm: DashViewModel, state: Dashboard, detail: Detail, enabled: Boolean, can: (String) -> Boolean, onReviewCommit: () -> Unit) {
+    val session = detail.session
     var name by remember(session.id) { mutableStateOf(session.label) }
     fun command(kind: String, build: JSONObject.() -> Unit = {}) = vm.run { vm.repository.command(session, JSONObject().put("kind", kind).apply(build)) }
-    SectionCard("Manage session") {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(name, { name = it.take(120) }, Modifier.weight(1f), label = { Text("Session name") }, singleLine = true)
-            FilledTonalButton(onClick = { command("rename") { put("name", name) } }, enabled = can("rename") && name.isNotBlank()) { Text("Rename") }
-        }
-        Text("Model", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        ModelSelector(session.id, session.model, models, can("model")) { model ->
-            val slash = model.indexOf('/')
-            if (slash > 0) command("model") { put("provider", model.take(slash)); put("id", model.substring(slash + 1)) }
-        }
-        Text("Thinking", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            thinkingLevels.forEach { level ->
-                FilterChip(selected = session.thinking == level, onClick = { command("thinking") { put("level", level) } }, enabled = can("thinking"), label = { Text(level) })
+    TabPage {
+        SectionCard("Run control") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val danger = ButtonDefaults.outlinedButtonColors(contentColor = Pi.Error)
+                listOf("abort" to "Abort", "compact" to "Compact", "reload" to "Reload", "new" to "New session", "restart" to "Restart", "shutdown" to "Close gracefully").forEach { (kind, label) ->
+                    val destructive = kind in listOf("abort", "restart", "shutdown")
+                    OutlinedButton(
+                        onClick = { vm.confirm(session, kind) }, enabled = can(kind),
+                        colors = if (destructive) danger else ButtonDefaults.outlinedButtonColors(),
+                        border = if (destructive && can(kind)) BorderStroke(1.dp, Pi.Error.copy(alpha = 0.6f)) else ButtonDefaults.outlinedButtonBorder(can(kind)),
+                    ) { Text(label) }
+                }
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Text("Run control", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val danger = ButtonDefaults.outlinedButtonColors(contentColor = Pi.Error)
-            listOf("abort" to "Abort", "compact" to "Compact", "reload" to "Reload", "new" to "New session", "restart" to "Restart", "shutdown" to "Close gracefully").forEach { (kind, label) ->
-                val destructive = kind in listOf("abort", "restart", "shutdown")
-                OutlinedButton(
-                    onClick = { vm.confirm(session, kind) }, enabled = can(kind),
-                    colors = if (destructive) danger else ButtonDefaults.outlinedButtonColors(),
-                    border = if (destructive && can(kind)) BorderStroke(1.dp, Pi.Error.copy(alpha = 0.6f)) else ButtonDefaults.outlinedButtonBorder(can(kind)),
-                ) { Text(label) }
+        SectionCard("Model") {
+            ModelSelector(session.id, session.model, detail.models, can("model")) { model ->
+                val slash = model.indexOf('/')
+                if (slash > 0) command("model") { put("provider", model.take(slash)); put("id", model.substring(slash + 1)) }
+            }
+            Text("Thinking", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                thinkingLevels.forEach { level ->
+                    FilterChip(selected = session.thinking == level, onClick = { command("thinking") { put("level", level) } }, enabled = can("thinking"), label = { Text(level) })
+                }
+            }
+        }
+        GitCard(vm, session, state, enabled, can("prompt"), onReviewCommit)
+        SessionGlassesCard(vm, detail)
+        SectionCard("Session name") {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it.take(120) }, Modifier.weight(1f), label = { Text("Session name") }, singleLine = true)
+                FilledTonalButton(onClick = { command("rename") { put("name", name) } }, enabled = can("rename") && name.isNotBlank()) { Text("Rename") }
             }
         }
     }

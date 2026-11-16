@@ -52,12 +52,15 @@ fun StatusPill(kind: String, label: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** A titled group of related content; screens are stacks of these. */
+/** A titled group of related content; screens are stacks of these. [action] sits at the end of the title row. */
 @Composable
-fun SectionCard(title: String?, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+fun SectionCard(title: String?, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     Card(modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (title != null) SectionLabel(title)
+            if (title != null) {
+                if (action == null) SectionLabel(title)
+                else Row(verticalAlignment = Alignment.CenterVertically) { SectionLabel(title, Modifier.weight(1f)); action() }
+            }
             content()
         }
     }

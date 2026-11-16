@@ -50,21 +50,22 @@ class PromptCardTest {
         compose.setContent {
             MaterialTheme { SessionScreen(vm, Dashboard(detail = detail(emptyList()).copy(session = current.value, suggestion = suggestion.value)), enabled.value) }
         }
-        compose.onNodeWithText("New prompt suggestion").performScrollTo().assertIsEnabled()
+        compose.onNodeWithText("Suggest").performScrollTo().assertIsEnabled()
         compose.onNodeWithText("Edit suggested prompt").assertDoesNotExist()
         compose.runOnIdle { suggestion.value = "Inspect the next task" }
         compose.onNodeWithText("Edit suggested prompt").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Inspect the next task").assertIsDisplayed()
         compose.runOnIdle { assertEquals("Keep my draft", vm.drafts.text.value) }
         compose.onNodeWithText("Edit suggested prompt").performClick()
         compose.runOnIdle { assertEquals("Inspect the next task", vm.drafts.text.value) }
         compose.runOnIdle { suggestion.value = "Run focused tests" }
         compose.runOnIdle { assertEquals("Inspect the next task", vm.drafts.text.value) }
         compose.runOnIdle { enabled.value = false }
-        compose.onNodeWithText("New prompt suggestion").assertIsNotEnabled()
+        compose.onNodeWithText("Suggest").assertIsNotEnabled()
         compose.runOnIdle { enabled.value = true; current.value = session.copy(commands = mapOf("suggest" to "Only while idle")) }
-        compose.onNodeWithText("New prompt suggestion").assertIsNotEnabled()
+        compose.onNodeWithText("Suggest").assertIsNotEnabled()
         compose.runOnIdle { current.value = session }
-        compose.onNodeWithText("New prompt suggestion").assertIsNotEnabled()
+        compose.onNodeWithText("Suggest").assertIsNotEnabled()
     }
 
     @Test fun recalledPromptsAreOnlyShownAndTypingAddsToTheirEnd() {

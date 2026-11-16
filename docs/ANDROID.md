@@ -196,7 +196,7 @@ do not disable hostname or certificate checking. There is no insecure recovery.
 
 ### Git menu
 
-Open a session, then **Git → Open git menu**. Like the TUI's `g` menu, it shows
+Open a session, then **Manage → Git → Open git menu**. Like the TUI's `g` menu, it shows
 branch/upstream, ahead/behind and working-tree counts, with **Update (pull --ff-only)**,
 **Send (push)**, **Switch branch**, **View status**, **Ask AI to review/commit**, and
 **Refresh git**. Git runs on the session's host, including remote hosts. Update the
@@ -205,7 +205,7 @@ app and gateway together to use these new endpoints.
 Pull, push and branch switches require confirmation. Detached HEAD, missing upstream
 and dirty-tree guards match the TUI; a sole remote can be offered as a new upstream.
 Working-session warnings remind you to let active tools finish. Review/commit prepares
-an editable draft in **Prompt** below and scrolls the page to it; nothing is sent
+an editable draft in the **Chat** composer and switches to it; nothing is sent
 automatically and the prompt explicitly forbids pushing. While working it defaults to
 follow-up delivery.
 
@@ -246,9 +246,19 @@ pairing/drafts; revoke the old device token and re-pair afterward.
 ## 3. Session management
 
 The app has six tabs: **Sessions**, **Projects** (new/resume in any known project),
-**Usage**, **Context**, **Glasses** and **Pairing**. Tapping a session opens its detail, grouped into
-status/context breakdown, latest exchange, prompt, glasses, side question, recent tools and
-session management. The **Jobs** chip on Sessions opens a read-only jobs page: every running
+**Usage**, **Context**, **Glasses** and **Pairing**. Tapping a session opens its detail. A header
+that stays in view shows its status, model and thinking level, context fill (CTX), the active
+roadmap step with progress, why it cannot be prompted (if so) and, once exited, **Dismiss**.
+Below it, four tabs split the detail by what you are doing:
+
+- **Chat**: the latest exchange and the prompt composer.
+- **Ask**: side questions and their answers.
+- **Activity**: roadmap, recent tools, context breakdown and resources (CPU, RAM, GPU, live
+  tokens, cost).
+- **Manage**: run control, model and thinking, git, glasses and the session name.
+
+Each tab keeps its scroll position and expanded rows while you look at another one.
+The **Jobs** chip on Sessions opens a read-only jobs page: every running
 `bg_run` job and subagent across sessions, with its session, age, CPU/memory and the
 recorded command or task it runs. Tapping a job opens its session. The jobs page is a
 sub-page of Sessions, not a tab.
@@ -256,10 +266,10 @@ sub-page of Sessions, not a tab.
 The overview shows status, project, model, context and roadmap progress, plus a `BG`
 line naming the session's background jobs and subagents. Filter by text or attention. Detail contains bounded latest prompt/reply, recent tools,
 resources, usage and side-question answers; it is not a full transcript browser.
-The latest reply renders as Markdown by default, with a Plain text toggle for the
-raw bounded text. **Maximize** opens a full-screen, scrollable reader of the whole
-bounded reply with the same toggle and a copy action; images are shown as their alt
-text and remote content is never loaded. Each recent tool expands to the call's
+The latest reply renders as Markdown by default. **Maximize** opens a full-screen,
+scrollable reader of the whole bounded reply with a Markdown / Plain text toggle (for
+the raw bounded text) and a copy action; the card follows the format chosen there.
+Images are shown as their alt text and remote content is never loaded. Each recent tool expands to the call's
 arguments and the text the tool returned, its run time and failure state. Those
 fields come from the host's bounded projection (4,000 characters each); a host that
 predates them says so, and overview broadcasts never carry tool input or output.
@@ -268,13 +278,13 @@ do in pi's editor: each is shown in place of the draft, and stepping down past t
 newest brings the draft back. Editing or sending a recalled prompt makes it the
 draft; until then the saved draft stays the one you typed, also if you leave the
 session.
-**Capitalize sentences** (on by default, beside the field) starts each new sentence in
+**Capitalize sentences** (on by default, below the field) starts each new sentence in
 the draft with a capital letter as you type and asks the keyboard to do the same. It
 changes only letter case — never words, punctuation or length — and can be switched off
 at any time; the choice is kept between runs. **Maximize prompt** opens a full-screen
 editor of the same draft with the same history arrows, steer/follow-up choice and
 **Send prompt**, for longer prompts on a phone keyboard; closing it keeps the draft.
-**Roadmap → Open roadmap** in session detail opens a read-only, scrollable viewer. It shows
+**Activity → Roadmap → Open roadmap** in session detail opens a read-only, scrollable viewer. It shows
 nested item/subroadmap paths, explicit statuses (including unsubstantiated verification), latest
 notes, lifecycle and update time, and root outcomes separately from recursive workflow counts.
 It follows selected-session updates and clears when the roadmap clears. Connection-stale,
@@ -305,8 +315,8 @@ unbridged counts, and ended (fill-only) totals. `By host` and `By model` show th
 pi's measurements; parts are chars/4 estimates and are labelled as estimates. Unknown stays unknown,
 never zero; a positive residual is measured context the estimate did not place, and a negative one
 means the estimate overshot. Ended sessions fill only; a remote session needs an updated bridge for
-its composition and is marked `no breakdown` until then. Session detail also shows a per-session
-breakdown card. The tab is fetched when opened and with the refresh icon, only while the connection
+its composition and is marked `no breakdown` until then. Session detail's **Activity** tab also
+shows a per-session breakdown card. The tab is fetched when opened and with the refresh icon, only while the connection
 is live; it does not update by itself, and shows when it was made. No prompt or transcript text is
 sent to the phone for this view.
 
@@ -322,7 +332,7 @@ launching a new session or resuming in any known project on any host, and dismis
 session. Dismissing removes it from the list on the phone and in pi-dash; `d` in pi-dash
 removes it from the phone too. Abort/compact/reload/new/restart/close/launch/resume require
 confirmation.
-**Manage session → Run control → Reload** refreshes pi's extensions, skills, prompts,
+**Manage → Run control → Reload** refreshes pi's extensions, skills, prompts,
 themes and context files without closing pi or clearing its conversation. **New session**
 starts a fresh conversation in the same project, like desktop `/new` or `/clear`; the
 previous conversation stays saved in pi's history. **Restart** gracefully closes pi and
@@ -332,15 +342,15 @@ conversation. The phone returns to Sessions so you can select the new instance.
 If exit takes over 15 seconds, restart stops without launching; inspect the session and
 resume from Projects if appropriate. Update the gateway, remote relays and bridges
 (protocol 7), then `/reload` existing desktop sessions before using the new controls.
-In session detail, **Prompt → New prompt suggestion** requests the same refresh as desktop
+In session detail, **Chat → Suggest** requests the same refresh as desktop
 Ctrl+R in GatPi-Harness's prompt-suggestions extension. It never sends a prompt or overwrites
-your Android draft. Use **Edit suggested prompt** to put the result in your draft, then
-review it and explicitly **Send prompt**. The extension must be updated and enabled,
+your Android draft. The result is shown above the field; use **Edit suggested prompt** to put
+it in your draft, then review it and explicitly **Send prompt**. The extension must be updated and enabled,
 pi idle with an existing conversation, and the desktop editor empty. Local suggestions
 can repeat; the configured advisory model may refine them. A request receipt acknowledges
 starting generation, not finishing it. A missing/older publisher is reported explicitly.
 
-In session detail, **Manage session → Search models** filters the session's offered
+In session detail, **Manage → Model → Search models** filters the session's offered
 models as you type and shows autocomplete suggestions. Search by model ID or provider;
 words match in any order, so `sol 6.1` finds `openai-codex/gpt-6.1-sol` when that
 model is offered by the session. Clear the search to browse the full list. The current
@@ -401,9 +411,10 @@ do not participate in the manager's reservation protocol.
 4. Use **Overview**, pin a session from detail, or explicitly send a reply excerpt.
    Excerpts are bounded, ASCII-normalized and labelled; they are not full
    transcripts. Pages have five measured lines. **Previous / Next** and the page
-   count stay in session detail beside the display actions when that session is
-   selected for G1. The same controls are available in **Glasses**; no tab change
-   is needed to page an excerpt. Page from the phone, not G1 taps.
+   count stay in session detail (**Manage → Glasses**) beside the display actions
+   when that session is selected for G1. The same controls are available in the
+   **Glasses** tab; you do not need to leave the session to page an excerpt. Page
+   from the phone, not G1 taps.
 5. Double-tap dismissal and Silent Mode stop automatic redisplay. Triple tap
    toggles Silent Mode; single-tap paging is not implemented. Gestures never
    approve prompts, Git operations or other host actions.

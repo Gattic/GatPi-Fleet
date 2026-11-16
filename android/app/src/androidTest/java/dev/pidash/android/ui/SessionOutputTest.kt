@@ -37,24 +37,26 @@ class SessionOutputTest {
         - two
     """.trimIndent()
 
-    @Test fun replyRendersMarkdownTogglesToPlainTextAndMaximizes() {
+    @Test fun replyRendersMarkdownAndTheReaderChoosesPlainTextForBoth() {
         val detail = Detail(session(), "prompt", emptyList(), reply, null, null, emptyList(), emptyList(), emptyList())
         compose.setContent { PiDashTheme { Box(Modifier.width(320.dp)) { ExchangeCard(detail) } } }
 
         compose.onNodeWithText("Findings").assertIsDisplayed()
         compose.onNodeWithText("bold", substring = true).assertIsDisplayed()
         compose.onNodeWithText("echo hi").assertIsDisplayed()
-
-        compose.onNodeWithText("Plain text").performClick()
-        compose.onNodeWithTag("reply-plain").assertTextContains("# Findings", substring = true)
-        compose.onNodeWithText("Markdown").performClick()
-        compose.onNodeWithText("Findings").assertIsDisplayed()
+        // The format choice lives in the reader, not on the card.
+        compose.onNodeWithText("Plain text").assertDoesNotExist()
 
         compose.onNodeWithText("Maximize").performClick()
         compose.onNodeWithText("Model output").assertIsDisplayed()
         compose.onNodeWithTag("reply-viewer").assertIsDisplayed()
+        compose.onNodeWithText("Plain text").performClick()
+        compose.onNodeWithText("# Findings").assertIsDisplayed()
         compose.onNodeWithText("Close").performClick()
         compose.onNodeWithText("Model output").assertDoesNotExist()
+
+        // Closing the reader keeps its choice on the card.
+        compose.onNodeWithTag("reply-plain").assertTextContains("# Findings", substring = true)
     }
 
     @Test fun aRunningReplyCannotBeMaximized() {

@@ -6,7 +6,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -44,20 +47,22 @@ class SessionReviewScrollTest {
         vm.git.value = GitView(session.id, menu)
         compose.setContent {
             MaterialTheme {
-                // A phone-sized viewport: the expanded Git menu pushes Prompt below the fold, so the
-                // review tap must move the page rather than leave it on whatever came next.
-                Box(Modifier.height(400.dp)) {
+                // A small viewport: the composer starts below Chat's fold, so the review must bring it
+                // into view rather than leave Chat at its top.
+                Box(Modifier.height(300.dp)) {
                     SessionScreen(vm, Dashboard(detail = Detail(session, null, emptyList(), null, null, null,
                         emptyList(), emptyList(), emptyList()), epoch = "epoch", fresh = true), enabled = true)
                 }
             }
         }
 
+        compose.onNodeWithTag("prompt-field").assertIsNotDisplayed()
+        compose.onNodeWithText("Manage").performClick()
         compose.onNodeWithText("Ask AI to review/commit").performScrollTo().performClick()
 
-        // Closing the git menu collapses the Git card; the page must follow the draft into Prompt
-        // rather than staying at the old offset (which lands on a later section).
-        compose.waitUntil(5_000) { compose.onNodeWithText("PROMPT").fetchSemanticsNode().boundsInRoot.top < 150f }
-        compose.onNodeWithText(menu.commitPrompt).assertIsDisplayed()
+        // The draft is prepared in Chat, never sent; Chat opens on it.
+        compose.onNodeWithText("Chat").assertIsSelected()
+        compose.waitUntil(5_000) { runCatching { compose.onNodeWithText(menu.commitPrompt).assertIsDisplayed() }.isSuccess }
+        compose.onNodeWithTag("prompt-field").assertIsDisplayed()
     }
 }
