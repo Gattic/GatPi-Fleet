@@ -2,7 +2,6 @@ package dev.pidash.android
 
 import android.Manifest
 import android.app.Notification
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
@@ -60,7 +59,6 @@ class MonitorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP -> { app.setBackground(false); stopSelf(); return START_NOT_STICKY }
             ACTION_STOP_BACKGROUND -> { app.setBackground(false); if (glasses == null) stopSelf(); return START_NOT_STICKY }
             ACTION_STOP_GLASSES -> { releaseGlasses(); if (!app.background.value) stopSelf(); return START_NOT_STICKY }
         }
@@ -69,22 +67,12 @@ class MonitorService : Service() {
         if (!started) {
             started = true
             app.repository.monitoring(true)
-            startNotificationLoop()
         }
         if (intent?.getBooleanExtra(EXTRA_GLASSES, false) == true && glasses == null) {
             if (nearbyGranted()) attachGlasses() else glassesError("Allow Nearby devices to connect your glasses.")
         }
         if (!app.background.value && glasses == null) { stopSelf(); return START_NOT_STICKY }
         return START_NOT_STICKY
-    }
-
-    /** Keeps the persistent notification's attention count current without polling while the phone sleeps. */
-    private fun startNotificationLoop() = scope.launch {
-        var needing = -1
-        app.repository.state.collect { state ->
-            val count = state.sessions.count { it.attentionKey != null }
-            if (count != needing) { needing = count; notifyForeground() }
-        }
     }
 
     /** Glasses pages follow the dashboard; the wake lock covers Bluetooth only, not plain background monitoring. */
@@ -133,7 +121,6 @@ class MonitorService : Service() {
                 releaseGlasses()
             }
         }
-        notifyForeground()
     }
 
     /** Ends the glasses session only; background monitoring keeps running. Returns the arm-release job. */
@@ -150,7 +137,6 @@ class MonitorService : Service() {
         app.monitoring.value = false
         // Keep a terminal error visible on the Glasses screen after cleanup, as before.
         app.glassesState.value = terminal.stopped()
-        notifyForeground()
         releasing = scope.launch {
             try { connected.stop() }
             catch (e: CancellationException) { throw e }
@@ -159,20 +145,17 @@ class MonitorService : Service() {
         return releasing
     }
 
+    /** Android requires a foreground-service notification; keep it minimal and free of actions. */
     private fun notification(): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        val needing = app.repository.state.value.sessions.count { it.attentionKey != null }
-        val attention = if (needing == 0) "nothing needs attention" else "$needing need attention"
-        val text = (if (glasses != null) "Glasses connected · " else "Background monitoring · ") + attention + " · tap to open"
-        val builder = NotificationCompat.Builder(this, Channels.MONITOR).setSmallIcon(R.drawable.ic_dash)
-            .setContentTitle("pi-dash monitoring").setContentText(text)
-            .setContentIntent(open).setOngoing(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .addAction(0, "Stop monitoring", PendingIntent.getService(this, 1, Intent(this, MonitorService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE))
-        if (glasses != null) builder.addAction(0, "Stop glasses",
-            PendingIntent.getService(this, 2, Intent(this, MonitorService::class.java).setAction(ACTION_STOP_GLASSES), PendingIntent.FLAG_IMMUTABLE))
-        return builder.build()
+        return NotificationCompat.Builder(this, Channels.MONITOR).setSmallIcon(R.drawable.ic_dash)
+            .setContentTitle("pi-dash monitoring").setContentText("Background monitoring is on · stop under Pairing")
+            .setContentIntent(open).setSilent(true).setShowWhen(false).setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            // Not ongoing: Android 13+ lets the user dismiss it while the service keeps running.
+            .setOngoing(false).setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
     }
-    private fun notifyForeground() { getSystemService(NotificationManager::class.java).notify(Channels.FOREGROUND_ID, notification()) }
 
     override fun onDestroy() {
         if (!stopping) {
@@ -190,7 +173,6 @@ class MonitorService : Service() {
     }
 
     companion object {
-        const val ACTION_STOP = "dev.pidash.STOP_MONITORING"
         const val ACTION_STOP_BACKGROUND = "dev.pidash.STOP_BACKGROUND"
         const val ACTION_STOP_GLASSES = "dev.pidash.STOP_GLASSES"
         const val EXTRA_GLASSES = "glasses"

@@ -103,11 +103,12 @@ internal fun PairingScreen(vm: DashViewModel, host: String?) {
         }
         SectionCard("Background monitoring") {
             SwitchRow(
-                "Background monitoring", "Keeps the host connection open after you close pi-dash and notifies you when a session starts needing you. Names and status only. It stops when you turn this off, force-stop the app or reboot; battery policy can still stop it.",
+                "Background monitoring", "Keeps the host connection open after you close pi-dash and notifies you when a session starts needing you. Names and status only. Turn it off here to stop monitoring; force-stop and battery policy can still end it.",
                 background, enabled = host != null,
             ) { on ->
                 if (on) notificationsThen(::startBackground) else stopBackground()
             }
+            Hint("Android requires a small service notification while monitoring runs. On Android 13+ you can dismiss it and monitoring continues.")
             Hint("The glasses alert card is a separate setting under Glasses.")
             if (host == null) Hint("Pair with your host before enabling background monitoring.")
         }

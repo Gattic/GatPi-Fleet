@@ -389,15 +389,18 @@ populates them again instead of rebuilding on the overview.
 **Pairing → Background monitoring** keeps the host connection open after you
 close pi-dash and notifies you when a session starts needing you. It is opt-in,
 needs a paired host, and runs one foreground service (`MonitorService`,
-`foregroundServiceType="connectedDevice"`) with a persistent notification. On
-Android 13+ it needs the runtime `POST_NOTIFICATIONS` permission, declared in
-the manifest and requested when you switch monitoring on; denying it leaves
-monitoring off, while the open dashboard still works. **Stop monitoring** ends it;
-the glasses action releases the glasses only. It is not sticky: force-stop,
-reboot and Android battery policy can still stop it, and it does not request an
-exemption from battery optimization. When the setting is on, a monitor the system
-stopped resumes the next time you open the app. Plain monitoring holds no wake
-lock; the bounded wake lock covers the G1 Bluetooth session only.
+`foregroundServiceType="connectedDevice"`). Android requires a notification for
+that service, so the app posts one minimal, silent notification without actions;
+on Android 13+ you can dismiss it and monitoring continues. On Android 13+ it
+also needs the runtime `POST_NOTIFICATIONS` permission, declared in the manifest
+and requested when you switch monitoring on; denying it leaves monitoring off,
+while the open dashboard still works. Turn the switch off to stop monitoring;
+**Disconnect and release glasses** in Glasses ends only the glasses session. It
+is not sticky: force-stop, reboot and Android battery policy can still stop it,
+and it does not request an exemption from battery optimization. When the setting
+is on, a monitor the system stopped resumes the next time you open the app. Plain
+monitoring holds no wake lock; the bounded wake lock covers the G1 Bluetooth
+session only.
 
 Notifications follow the dashboard while monitoring is on, including while the
 app is open. They are transition-based: the first fresh snapshot and every
@@ -443,9 +446,9 @@ do not participate in the manager's reservation protocol.
 5. Double-tap dismissal and Silent Mode stop automatic redisplay. Triple tap
    toggles Silent Mode; single-tap paging is not implemented. Gestures never
    approve prompts, Git operations or other host actions.
-6. **Disconnect and release glasses** (also available during discovery/selection),
-   or use **Stop glasses** in the persistent notification, to release both arms
-   and the wake lock before returning control to the Even app.
+6. **Disconnect and release glasses** (also available during discovery/selection)
+   to release both arms and the wake lock before returning control to the Even
+   app.
 
 Connection progress and errors are separate from host status and page delivery.
 The page count is the selected page, not a claim that it has arrived. A small,

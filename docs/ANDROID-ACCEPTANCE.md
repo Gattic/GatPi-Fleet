@@ -64,11 +64,12 @@ Mark a box only with a dated observation for this app, firmware and phone.
 - [ ] Revoking while a stream is open disables controls and closes the stream;
       local erase removes credentials without claiming host revocation.
 - [ ] Background monitoring survives closing the app and stops only when turned
-      off, force-stopped or ended from the persistent notification.
+      off in Pairing, force-stopped or ended by the system.
 - [ ] Turning monitoring on asks for `POST_NOTIFICATIONS` on Android 13+; the
-      foreground service runs as `connectedDevice` with its persistent
-      notification, and denying the permission leaves monitoring off while the
-      open dashboard still works.
+      foreground service runs as `connectedDevice` with one minimal, silent
+      notification that carries no actions, can be dismissed on Android 13+
+      while monitoring continues, and denying the permission leaves monitoring
+      off while the open dashboard still works.
 - [ ] One attention transition produces one notification per session; a
       reconnect or unchanged snapshot does not replay it, and it disappears when
       the session stops needing you.
