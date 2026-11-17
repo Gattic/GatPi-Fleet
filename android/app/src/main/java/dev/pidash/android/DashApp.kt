@@ -48,6 +48,7 @@ class DashApp : Application() {
         background.value = prefs.getBoolean("background", false)
         wearSelection.value = WearSelection(prefs.getString("pin", null))
         notifications.createNotificationChannel(NotificationChannel(Channels.MONITOR, "Background monitoring", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Required by Android while pi-dash keeps the host connection open in the background."
             lockscreenVisibility = Notification.VISIBILITY_PRIVATE
             setShowBadge(false)
         })
