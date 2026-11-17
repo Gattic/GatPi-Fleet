@@ -382,8 +382,30 @@ A fresh snapshot replaces the overview after reconnect; the selected session's
 detail stays on screen while the gateway re-sends it, and stale controls are
 disabled. If the selected session is gone after a refresh, the app returns to
 Sessions. A reopened app comes back to the page and session it was showing and
-populates them again instead of rebuilding on the overview. Phone-only
-background connectivity/alerts are not promised.
+populates them again instead of rebuilding on the overview.
+
+### Background monitoring and notifications
+
+**Pairing → Background monitoring** keeps the host connection open after you
+close pi-dash and notifies you when a session starts needing you. It is opt-in,
+needs a paired host and notification permission on Android 13+, and runs one
+foreground service with a persistent notification. **Stop monitoring** ends it;
+the glasses action releases the glasses only. It is not sticky: force-stop,
+reboot and Android battery policy can still stop it, and it does not request an
+exemption from battery optimization. When the setting is on, a monitor the system
+stopped resumes the next time you open the app. Plain monitoring holds no wake
+lock; the bounded wake lock covers the G1 Bluetooth session only.
+
+Notifications follow the dashboard while monitoring is on, including while the
+app is open. They are transition-based: the first fresh snapshot and every
+reconnect seed the baseline, so an old backlog is not replayed, and a session is
+announced when its attention key changes. Each notification shows the session
+name, project and status only — never prompts, replies, addresses or tool
+output — and hides its content while the phone is locked. Tapping it opens the
+app. It disappears when the session stops needing you, and switching monitoring
+off withdraws all of them. The glasses alert card is a separate setting under
+**Glasses**; Android's app notification settings can silence the notification
+channel without stopping monitoring.
 
 Both TUI and gateway use exclusive resume reservations in
 `$XDG_RUNTIME_DIR/pi-dash/launches/`. A known open session, an unbridged process
@@ -419,8 +441,8 @@ do not participate in the manager's reservation protocol.
    toggles Silent Mode; single-tap paging is not implemented. Gestures never
    approve prompts, Git operations or other host actions.
 6. **Disconnect and release glasses** (also available during discovery/selection),
-   or use **Stop** in the persistent notification, to release both arms and the
-   wake lock before returning control to the Even app.
+   or use **Stop glasses** in the persistent notification, to release both arms
+   and the wake lock before returning control to the Even app.
 
 Connection progress and errors are separate from host status and page delivery.
 The page count is the selected page, not a claim that it has arrived. A small,
@@ -433,19 +455,24 @@ on Glasses after service cleanup and host updates, until another Connect attempt
 Updating from manual-channel onboarding removes that obsolete display preference;
 it does not erase the encrypted host pairing or drafts.
 
-Monitoring owns one foreground `connectedDevice` service, a bounded 12-hour
-wake lock and independent arm heartbeats/recovery. It is not sticky across
-force-stop/reboot and does not request exemption from Android battery policy.
-OEM restrictions can still stop it. Screen-off/battery behavior needs real
-measurement on your device. The notification contains generic connection status,
-not replies. Diagnostics keep 100 in-memory metadata events, never BLE payloads,
-addresses or displayed text. There is no analytics or automatic diagnostic upload.
+The same foreground `connectedDevice` service carries background monitoring and
+the G1 display. Glasses add a bounded 12-hour wake lock and independent arm
+heartbeats/recovery; ending the glasses session (Disconnect, the 12-hour cap or
+the notification action) leaves background monitoring running. The service is
+not sticky across force-stop/reboot and does not request exemption from Android
+battery policy. OEM restrictions can still stop it. Screen-off/battery behavior
+needs real measurement on your device. The notification contains generic
+connection status and an attention count, not replies. Diagnostics keep 100
+in-memory metadata events, never BLE payloads, addresses or displayed text.
+There is no analytics or automatic diagnostic upload.
 
-Attention alerts are optional, transition-based and cooled down; reconnect does
-not replay the entire attention history. BLE display updates are latest-only,
-coalesced, and throttled; logs/tokens/tools are never streamed to the glasses.
-The display has a freshness/connection indication and per-arm connection state;
-a partial failure is not treated as both arms healthy.
+Attention alerts are optional and transition-based: the glasses card shares the
+same rule (a reconnect seeds the baseline instead of replaying the backlog) and
+is cooled down, while phone notifications belong to background monitoring. BLE
+display updates are latest-only, coalesced, and throttled; logs/tokens/tools are
+never streamed to the glasses. The display has a freshness/connection indication
+and per-arm connection state; a partial failure is not treated as both arms
+healthy.
 
 ## 5. Operations, storage and verification
 
@@ -470,7 +497,7 @@ Host gates: `npm run check`, `npm test`, `npm run test:e2e`.
 fixtures; Kotlin tests consume those actual fixtures. See [API](API.md) and
 [acceptance procedure](ANDROID-ACCEPTANCE.md) for the remaining gates.
 
-Git/Hermes parity, phone close-and-restart, background-only
-phone notifications, SSH/tunnels, speech and camera/QR pairing are not added as
+Git/Hermes parity, phone close-and-restart,
+SSH/tunnels, speech and camera/QR pairing are not added as
 speculative features. PLAN-5 identifies the first group as follow-on parity;
 this release uses explicit copy/import pairing and TLS over the LAN or the owner's VPN.

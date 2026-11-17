@@ -26,7 +26,7 @@ import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
 // Bluetooth calls need BLUETOOTH_CONNECT, which MainActivity obtains before it
-// starts GlassesService; nothing here runs before that.
+// starts MonitorService; nothing here runs before that.
 @SuppressLint("MissingPermission")
 class G1Arm(
     val side: Side,
