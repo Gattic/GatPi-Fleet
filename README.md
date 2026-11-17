@@ -368,9 +368,12 @@ share and cost, but they are not added to the session's totals.
 
 The optional `pi-dash-server` gateway exposes session management to the Android companion over
 local HTTPS/WSS. G1 glasses are a read-only glance surface; actions remain on the phone. There is
-no cloud, microphone, arbitrary shell endpoint, or automatic command replay. Use the
+no cloud, microphone, arbitrary shell endpoint, or automatic command replay. Optional background
+monitoring keeps the host connection after the app closes and notifies you when a session starts
+needing you; it needs notification permission and Android battery policy can still stop it. Use the
 [Android guide](docs/ANDROID.md) for pairing, deployment, build/install and recovery.
-Physical phone/G1 acceptance is still required before relying on screen-off monitoring.
+Physical phone/G1 acceptance is still required before relying on screen-off monitoring or
+notification delivery.
 
 ## Development
 

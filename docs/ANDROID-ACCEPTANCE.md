@@ -17,7 +17,7 @@ not retained in the repository.
 | TypeScript strict typecheck (`npm run check`) | Host sources and the bridge type-check against the current pi runtime |
 | Host tests (`npm test`) | Gateway authentication, TLS, receipts, revocation, canonical project roots, launch reservations, address handling and configuration checks |
 | Real pi/screen end-to-end (`npm run test:e2e`) | Bridge, hub and session behaviour against a real pi process |
-| Android app + G1 JVM tests | Pairing, certificate/hostname/fingerprint validation, redirect rejection, address ordering and fallback, card bounds, alert dedupe, protocol packets, ACK/event parsing and measured pagination |
+| Android app + G1 JVM tests | Pairing, certificate/hostname/fingerprint validation, redirect rejection, address ordering and fallback, card bounds, alert dedupe, attention-notification transitions and ids, protocol packets, ACK/event parsing and measured pagination |
 | Android lint and `assembleDebug` / `assembleDebugAndroidTest` | Build and lint gates |
 | Connected UI instrumentation | Sessions → Glasses → Pairing → Sessions navigation on a physical device (pairing-safe: the test package is removed afterwards) |
 
@@ -34,6 +34,8 @@ host/session control or Bluetooth monitoring.
   hardware.
 - Remote-host sessions, dismiss propagation and confirmation invalidation across
   `/new`, `/reload`, gateway restart and network loss.
+- Background monitoring and attention notifications while the screen is off, and
+  under OEM battery policy.
 
 ## Physical acceptance procedure
 
@@ -61,6 +63,11 @@ Mark a box only with a dated observation for this app, firmware and phone.
       locally and are never auto-submitted.
 - [ ] Revoking while a stream is open disables controls and closes the stream;
       local erase removes credentials without claiming host revocation.
+- [ ] Background monitoring survives closing the app and stops only when turned
+      off, force-stopped or ended from the persistent notification.
+- [ ] One attention transition produces one notification per session; a
+      reconnect or unchanged snapshot does not replay it, and it disappears when
+      the session stops needing you.
 
 ### C. G1 policy and recovery
 
@@ -80,6 +87,9 @@ Mark a box only with a dated observation for this app, firmware and phone.
 - [ ] Lock the phone for 15 minutes, then at least one hour with monitoring
       explicitly running; observe both-arm heartbeat, Wi-Fi state and whether the
       foreground service survives OEM battery policy.
+- [ ] With background monitoring enabled, lock the phone, let a session start
+      needing you and confirm the notification arrives under the same OEM
+      policy; note any delay and whether Android's battery setting was changed.
 - [ ] Measure start/end phone and temple battery levels, duration, screen usage,
       update frequency and reconnect counts; do not infer drain from a PoC or
       emulator.

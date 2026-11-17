@@ -35,7 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.pidash.android.DashViewModel
-import dev.pidash.android.GlassesService
+import dev.pidash.android.MonitorService
 import dev.pidash.g1.G1Diagnostics
 import dev.pidash.g1.GlassesState
 
@@ -53,7 +53,7 @@ internal fun GlassesScreen(vm: DashViewModel) {
     }.toTypedArray() }
     fun start() {
         app.glassesState.value = GlassesState(session = "Starting glasses monitoring…")
-        try { ContextCompat.startForegroundService(context, Intent(context, GlassesService::class.java)) }
+        try { ContextCompat.startForegroundService(context, Intent(context, MonitorService::class.java).putExtra(MonitorService.EXTRA_GLASSES, true)) }
         catch (_: SecurityException) { app.glassesState.value = GlassesState(error = "Allow Nearby devices and notifications, then tap Connect again.") }
         catch (_: IllegalStateException) { app.glassesState.value = GlassesState(error = "Keep pi-dash open and tap Connect to start glasses monitoring.") }
     }
@@ -69,7 +69,8 @@ internal fun GlassesScreen(vm: DashViewModel) {
                     app.glassesState.value = GlassesState(session = "Requesting Bluetooth and notification permissions…")
                     request.launch(permissions)
                 },
-                onDisconnect = { context.stopService(Intent(context, GlassesService::class.java)) },
+                // Releases the glasses only; background monitoring keeps the host connection.
+                onDisconnect = { context.startService(Intent(context, MonitorService::class.java).setAction(MonitorService.ACTION_STOP_GLASSES)) },
                 onChoosePair = { app.glasses?.selectPair(it) },
             )
         }
@@ -88,17 +89,18 @@ internal fun GlassesScreen(vm: DashViewModel) {
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("Attention alerts", style = MaterialTheme.typography.titleSmall)
-                    Text("Names/status only, when a session starts needing you", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Glasses card only, when a session starts needing you", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(alerts, null)
             }
+            Hint("Phone notifications come with background monitoring under Pairing.")
         }
         SectionCard("How it works") {
             Hint("Paging is on this phone; single taps are not supported. Double-tap dismissal and Silent Mode suppress automatic redisplay. Triple taps toggle Silent Mode. Glasses gestures never approve actions.")
-            Hint("Monitoring uses a foreground service and bounded wake lock while your phone is locked. It stops after 12 hours, force-stop or reboot. Battery usage must be measured on your phone. Stop here before returning to the Even app.")
+            Hint("Glasses add a bounded wake lock while connected and stop after 12 hours, force-stop or reboot. Battery usage must be measured on your phone. Stop here before returning to the Even app.")
         }
         SectionCard("Connection diagnostics") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row {
                 Text("Metadata only; never payloads, addresses or displayed text.", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = { diagnostics = !diagnostics }) { Text(if (diagnostics) "Hide log" else "Show log") }
             }
