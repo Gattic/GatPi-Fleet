@@ -388,8 +388,11 @@ populates them again instead of rebuilding on the overview.
 
 **Pairing → Background monitoring** keeps the host connection open after you
 close pi-dash and notifies you when a session starts needing you. It is opt-in,
-needs a paired host and notification permission on Android 13+, and runs one
-foreground service with a persistent notification. **Stop monitoring** ends it;
+needs a paired host, and runs one foreground service (`MonitorService`,
+`foregroundServiceType="connectedDevice"`) with a persistent notification. On
+Android 13+ it needs the runtime `POST_NOTIFICATIONS` permission, declared in
+the manifest and requested when you switch monitoring on; denying it leaves
+monitoring off, while the open dashboard still works. **Stop monitoring** ends it;
 the glasses action releases the glasses only. It is not sticky: force-stop,
 reboot and Android battery policy can still stop it, and it does not request an
 exemption from battery optimization. When the setting is on, a monitor the system

@@ -65,6 +65,10 @@ Mark a box only with a dated observation for this app, firmware and phone.
       local erase removes credentials without claiming host revocation.
 - [ ] Background monitoring survives closing the app and stops only when turned
       off, force-stopped or ended from the persistent notification.
+- [ ] Turning monitoring on asks for `POST_NOTIFICATIONS` on Android 13+; the
+      foreground service runs as `connectedDevice` with its persistent
+      notification, and denying the permission leaves monitoring off while the
+      open dashboard still works.
 - [ ] One attention transition produces one notification per session; a
       reconnect or unchanged snapshot does not replay it, and it disappears when
       the session stops needing you.
