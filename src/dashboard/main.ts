@@ -38,7 +38,7 @@ function main(): void {
 		void runtime.close().then(() => process.exit(0));
 	};
 	const app = new App({
-		tui, ...runtime, dismiss: (row) => runtime.dismiss(row), advisor, git: new GitCli(), quit,
+		tui, ...runtime, dismiss: (row) => runtime.dismiss(row), restart: (row) => runtime.restart(row), advisor, git: new GitCli(), quit,
 		interruptedSessions: () => runtime.interruptedSessions(),
 		resumeInterrupted: (entry) => runtime.resumeInterrupted(entry),
 		dismissInterrupted: (entry) => runtime.dismissInterrupted(entry),

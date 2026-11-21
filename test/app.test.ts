@@ -110,7 +110,9 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 	const interrupted: InterruptedSession[] = [];
 	const resumed: InterruptedSession[] = [];
 	const dismissed: InterruptedSession[] = [];
+	const restarted: SessionRow[] = [];
 	let recoveryError: Error | undefined;
+	let restartError: Error | undefined;
 	const app = new App({
 		tui,
 		store,
@@ -122,6 +124,10 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 		advisor: advisorService,
 		git,
 		dismiss: async (row) => { store.dismiss(row.key); },
+		restart: async (row) => {
+			if (restartError) throw restartError;
+			restarted.push(row);
+		},
 		interruptedSessions: () => interrupted,
 		resumeInterrupted: async (entry) => {
 			if (recoveryError) throw recoveryError;
@@ -141,6 +147,8 @@ function harness(sessionRoot: string, advisor?: HermesAdvisorClient, git: GitSer
 		store,
 		interrupted, resumed, dismissed,
 		failRecovery: (error: Error) => { recoveryError = error; },
+		restarted,
+		failRestart: (error: Error) => { restartError = error; },
 		sent,
 		quits: () => quits,
 		feedback,
@@ -798,6 +806,43 @@ test("M and T switch the model and thinking level; Z compacts after asking, only
 	assert.equal(ui.dialog(), undefined, "no dialog while working");
 	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj is working; compact it when it is idle/);
 	assert.equal(ui.sent.length, sent);
+});
+
+test("S restarts the same saved conversation after confirmation, only when idle with no answering ask and a saved file", async () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({ sessionFile: "/sessions/proj.jsonl" }));
+
+	ui.press("S");
+	const restartDialog = ui.dialog() ?? "";
+	assert.match(restartDialog, /Restart session/);
+	assert.match(restartDialog, /Restart proj\? Close pi gracefully/);
+	assert.match(restartDialog, /resume this same saved[\s\S]*conversation in a new pi process on the same host/);
+	assert.match(restartDialog, /Only available while[\s\S]*idle/);
+	ui.press("y");
+	await eventually(() => assert.equal(ui.restarted.length, 1));
+	assert.equal(ui.restarted[0]?.pid, 101);
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /restarting proj/);
+
+	ui.store.setState(101, session({ phase: "working", sessionFile: "/sessions/proj.jsonl" }));
+	ui.press("S");
+	assert.equal(ui.dialog(), undefined, "no dialog while working");
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj must be idle to restart/);
+
+	ui.store.setState(101, session({ sessionFile: "/sessions/proj.jsonl", asks: [{ id: 1, question: "Why?", askedAt: Date.now(), status: "answering", answer: "" }] }));
+	ui.press("S");
+	assert.equal(ui.dialog(), undefined, "no dialog while a side question answers");
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /A side question is still answering/);
+
+	ui.store.setState(101, session({}));
+	ui.press("S");
+	assert.equal(ui.dialog(), undefined, "no dialog without a saved conversation");
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj has no saved conversation to restart/);
+
+	ui.store.setState(101, session({ sessionFile: "/sessions/proj.jsonl" }));
+	ui.failRestart(new Error("host unreachable"));
+	ui.press("S", "y");
+	await eventually(() => assert.match(strip(ui.app.render(120).at(-1) ?? ""), /restart failed: host unreachable/));
+	assert.equal(ui.restarted.length, 1, "a failed restart is not recorded as restarted");
 });
 
 test("i asks the selected session a side question; one at a time; an answer that lands unseen is announced", async () => {
