@@ -671,6 +671,7 @@ const HELP: [string, [string, string][]][] = [
 			["r", "resume interrupted session / pick from the selected project"],
 			["e", "find interrupted sessions across projects; resume or dismiss"],
 			["c / C", "close session / close and start a new one"],
+			["S", "restart session: close gracefully and resume the same saved conversation"],
 			["d", "dismiss an exited session"],
 		],
 	],

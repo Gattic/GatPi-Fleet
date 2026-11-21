@@ -48,7 +48,7 @@ and on the other machines of your network (over ssh).
   shown/accepted/dismissed/executed outcomes so future advice can adapt.
 - **Control without switching tabs**: prompt (steer or follow-up while working, or take the
   suggested next prompt), abort, compact, switch model or thinking level, close,
-  close-and-restart, new session, resume, rename, live read-only peek, full attach, and common
+  close-and-restart, restart (same saved conversation), new session, resume, rename, live read-only peek, full attach, and common
   Git project shortcuts.
 
 ## Requirements
@@ -109,6 +109,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `r` | resume the selected interrupted session (asks first), otherwise pick a session of its project |
 | `e` | find interrupted sessions across projects and connected hosts; resume or dismiss a suggestion |
 | `c` / `C` | close / close and start a fresh session in the same project and slot |
+| `S` | restart the session: gracefully close pi, then resume the same saved conversation in a new process on the same host. Idle sessions with a saved conversation only; asks first, and the new instance keeps its slot |
 | `R` | rename the session |
 | `d` | dismiss an exited row (here, in the gateway and on the phone; dismissing it on the phone removes it here too) |
 | `u` | usage view (`t` / `w` / `m`: today, 7 days, 30 days; `$`: cost or tokens) |
@@ -117,7 +118,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `?` | help and legend |
 | `q` | quit (sessions keep running) |
 
-Abort, compact, close and close-and-restart ask before they act. Git pull runs `git pull --ff-only`
+Abort, compact, close, close-and-restart and restart ask before they act. Git pull runs `git pull --ff-only`
 and asks first; push always asks first and can create an upstream only when there is exactly one
 remote; branch switching uses local branches and requires a clean working tree. The commit shortcut
 opens the standard AI prompt to review the changes and commit if everything looks good; pi-dash does

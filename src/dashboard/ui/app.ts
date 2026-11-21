@@ -47,6 +47,8 @@ export interface Services {
 	git: GitService;
 	/** Removes an exited session's row, also from the gateway (and so the phone). */
 	dismiss: (row: SessionRow) => Promise<void>;
+	/** Gracefully closes the session and resumes its same saved conversation on its host. */
+	restart: (row: SessionRow) => Promise<void>;
 	interruptedSessions: () => InterruptedSession[];
 	resumeInterrupted: (entry: InterruptedSession) => Promise<string>;
 	dismissInterrupted: (entry: InterruptedSession) => Promise<void>;
@@ -62,8 +64,8 @@ const GIT_MESSAGE_LIMIT = 500;
 
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["u", "usage"], ["K", "context"], ["J", "jobs"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["Tab", "next ◆"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["K", "context"], ["J", "jobs"], ["?", "help"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["S", "restart"], ["u", "usage"], ["K", "context"], ["J", "jobs"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["Tab", "next ◆"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["S", "restart"], ["K", "context"], ["J", "jobs"], ["?", "help"]],
 	jobs: [["Esc", "back"], ["j/k", "scroll"], ["PgUp/PgDn", "page"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["K", "context"], ["?", "help"]],
 	context: [["Esc", "back"], ["a", "scope"], ["j/k", "scroll"], ["PgUp/PgDn", "page"], ["⏎", "detail"], ["?", "help"]],
@@ -341,6 +343,18 @@ export class App implements Component {
 				return this.confirmClose(row, false);
 			case "C":
 				return this.confirmClose(row, true);
+			case "S": {
+				if (!this.requireBridge(row)) return;
+				if (row.bridge?.phase !== "idle") return this.notify(`${label} must be idle to restart`, true);
+				if (row.bridge.asks.some((ask) => ask.status === "answering")) return this.notify("A side question is still answering", true);
+				if (!row.bridge.sessionFile) return this.notify(`${label} has no saved conversation to restart`, true);
+				return this.confirm("Restart session", `Restart ${label}? Close pi gracefully, then resume this same saved conversation in a new pi process on the same host. Only available while idle. Select the restarted session afterward.`, () => {
+					this.services.restart(row).then(
+						() => this.notify(`restarting ${label}; select its new instance when it appears`),
+						(error: Error) => this.notify(`restart failed: ${error.message}`, true),
+					);
+				});
+			}
 			case "R":
 				if (!this.requireBridge(row)) return;
 				return this.show(
