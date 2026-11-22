@@ -164,6 +164,16 @@ test("a typed suggestion request refreshes the shared suggestion without writing
 	assert.deepEqual(current().usage, before.usage);
 });
 
+test("a direction-based suggestion request shapes the suggestion without writing or running a prompt", async () => {
+	const before = current();
+	const lines = sessionLines();
+	await hub.send(before, { kind: "suggest", direction: "focus on the failing tests" });
+	await waitFor("shaped suggestion", () => current().suggestion === "Run the focused tests next: focus on the failing tests");
+	assert.equal(sessionLines(), lines, "a direction never writes to the conversation");
+	assert.equal(current().lastPrompt, before.lastPrompt);
+	assert.deepEqual(current().usage, before.usage);
+});
+
 test("interactive pi persists its exact identity and custom session directory for crash recovery", () => {
 	const journal = new RecoveryJournal(join(root, "agent"), () => undefined);
 	const record = journal.list()[0];

@@ -167,7 +167,7 @@ and bounded socket/device counts. There is no credential-independent health data
 
 Typed commands: prompt (32k characters; `steer`/`followUp` required while working),
 ask (4k), rename (120), model (`provider`, `id`), thinking (`level`), abort,
-shutdown, compact, reload, new, restart, suggest, dismiss. No unknown properties/commands are accepted. Dismiss is
+shutdown, compact, reload, new, restart, suggest (optionally shaped by a `direction`), dismiss. No unknown properties/commands are accepted. Dismiss is
 the only command for an exited session and does not reach a bridge: it removes the
 session from the overview and from the dashboard (`d` there does the same for the
 gateway; both record dismissals in `$XDG_RUNTIME_DIR/pi-dash/dismissed/`). Prompts beginning
@@ -183,8 +183,10 @@ reservation to exit, then launches `pi --session` with that same file in the sam
 It never launches a replacement after an uncertain shutdown ACK or an exit timeout.
 A restart acceptance means screen accepted the replacement launch, not that pi finished startup.
 Reload, new session and restart create a new session incarnation; reselect it from the overview.
-`{kind: "suggest"}` requires idle state and requests the existing GatPi-Harness publisher's
-manual retry via `prompt-suggestion:request`. The publisher responds synchronously with
+`{kind: "suggest"}` (optionally with `direction`, up to 2000 characters) requires idle state and
+requests the existing GatPi-Harness publisher's manual retry via `prompt-suggestion:request`. The
+direction shapes the next suggestion; it is never sent as a prompt and never written to the
+session. The publisher responds synchronously with
 acceptance or an explicit error; a missing/older publisher fails the command. Acceptance
 starts generation, not an agent turn. The resulting `suggestion` arrives in session detail;
 no prompt, draft, or transcript is modified. Desktop Ctrl+R policy and editor gates apply.

@@ -68,6 +68,20 @@ class PromptCardTest {
         compose.onNodeWithText("Suggest").assertIsNotEnabled()
     }
 
+    @Test fun aDirectionShapesTheSuggestionRequestAndNeverChangesTheDraft() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
+        val vm = DashViewModel(app, Drafts(storage) { session.id })
+        vm.drafts.edit("Keep my draft")
+        compose.setContent { MaterialTheme { SessionScreen(vm, Dashboard(detail = detail(emptyList())), enabled = true) } }
+        compose.onNodeWithText("Direction").performScrollTo().performClick()
+        compose.onNodeWithTag("suggestion-direction").performScrollTo().performTextInput("focus on the failing tests")
+        compose.runOnIdle { assertEquals("Keep my draft", vm.drafts.text.value) }
+        compose.onNodeWithText("Suggest").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals("Keep my draft", vm.drafts.text.value) }
+        compose.onNodeWithText("Hide direction").performScrollTo().performClick()
+        compose.onNodeWithTag("suggestion-direction").assertDoesNotExist()
+    }
+
     @Test fun recalledPromptsAreOnlyShownAndTypingAddsToTheirEnd() {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
         val vm = DashViewModel(app, Drafts(storage) { session.id })

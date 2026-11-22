@@ -124,7 +124,7 @@ export const ROADMAP_CHANGED_EVENT = "roadmap:changed";
 
 /** Published by the GatPi-Harness prompt-suggestions extension: the suggested next prompt, or null. */
 export const PROMPT_SUGGESTION_CHANGED_EVENT = "prompt-suggestion:changed";
-/** Request the publisher's Ctrl+R retry; respond(null) accepts, respond(error) rejects synchronously. */
+/** Request the publisher's retry, shaped by an optional direction; respond(null) accepts, respond(error) rejects synchronously. */
 export const PROMPT_SUGGESTION_REQUEST_EVENT = "prompt-suggestion:request";
 
 export interface ToolRun {
@@ -172,6 +172,9 @@ export const MAX_ASKS = 10;
 
 /** How many earlier prompts a session offers to recall, as many as pi's editor history. */
 export const MAX_PROMPTS = 100;
+
+/** Characters in the direction that shapes a requested next-prompt suggestion. */
+export const MAX_SUGGESTION_DIRECTION = 2000;
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -277,7 +280,7 @@ export type Command =
 	| { kind: "reload" }
 	/** Starts a fresh conversation in the same project, like pi's /new or /clear. Only while idle. */
 	| { kind: "new" }
-	| { kind: "suggest" }
+	| { kind: "suggest"; direction?: string }
 	| { kind: "rename"; name: string }
 	/** Only while idle. */
 	| { kind: "compact" }

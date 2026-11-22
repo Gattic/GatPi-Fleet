@@ -681,6 +681,7 @@ export class App implements Component {
 				target: `${row.slot ?? "·"} ${rowLabel(row)}`,
 				isWorking: () => store.rows.get(row.key)?.bridge?.phase === "working",
 				suggestion: () => store.rows.get(row.key)?.bridge?.suggestion,
+				requestSuggestion: (direction) => this.send(row, { kind: "suggest", direction }, `requested a suggestion in that direction from ${rowLabel(row)}`),
 				initialText,
 				initialMode,
 				onSubmit: (text, deliverAs) => {

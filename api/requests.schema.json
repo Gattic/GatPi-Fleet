@@ -241,6 +241,12 @@
               "kind": {
                 "type": "string",
                 "const": "suggest"
+              },
+              "direction": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "pattern": "\\S"
               }
             },
             "additionalProperties": false

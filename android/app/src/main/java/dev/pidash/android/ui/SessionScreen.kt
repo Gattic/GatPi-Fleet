@@ -209,6 +209,8 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
     LaunchedEffect(drafts) { drafts.text.collect { text -> if (text != field.text) field = TextFieldValue(text, TextRange(text.length)) } }
     val capitalize by vm.app.sentenceCapitalization.collectAsStateWithLifecycle()
     var maximized by rememberSaveable { mutableStateOf(false) }
+    var direction by rememberSaveable(session.id) { mutableStateOf("") }
+    var directionOpen by rememberSaveable(session.id) { mutableStateOf(false) }
     // Typing capitalizes sentence starts when the option is on. Only letter case changes, so the cursor stays put.
     val edit: (TextFieldValue) -> Unit = { next ->
         field = if (capitalize) next.capitalized() else next
@@ -220,8 +222,12 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
         // The arrows step through the session's earlier prompts, as ↑ and ↓ do in pi's editor.
         PromptField(field, edit, prompts, drafts, recall, capitalize, tag = "prompt-field")
         CapitalizeToggle(capitalize, vm.app::setSentenceCapitalization, Modifier.fillMaxWidth())
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = { vm.suggest(session) }, enabled = canSuggest) { Text("Suggest") }
+        if (directionOpen) DirectionField(direction) { direction = it }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { vm.suggest(session, direction) }, enabled = canSuggest) { Text("Suggest") }
+            TextButton(onClick = { directionOpen = !directionOpen }) { Text(if (directionOpen) "Hide direction" else "Direction") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.weight(1f))
             SendButton(enabled && draft.isNotBlank()) { vm.prompt(session) }
         }
@@ -250,6 +256,20 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
             }
         }
     }
+}
+
+/** The direction that shapes the next suggestion; it is never sent as a prompt. */
+@Composable
+private fun DirectionField(value: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        modifier = Modifier.fillMaxWidth().testTag("suggestion-direction"),
+        label = { Text("Direction for the next suggestion") },
+        placeholder = { Text("Your input, opinions or constraints") },
+        supportingText = { Text("Shapes the next suggestion; it is never sent as a prompt.") },
+        maxLines = 4,
+    )
 }
 
 /** pi's latest suggestion, shown for reading; only the button copies it into the draft, which is never sent by itself. */

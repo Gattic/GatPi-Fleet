@@ -70,6 +70,8 @@ export interface ComposerOptions {
 	isWorking: () => boolean;
 	/** The session's suggested next prompt, offered while idle and the editor is empty. */
 	suggestion: () => string | undefined;
+	/** Requests a suggestion shaped by this direction; it never sends or changes the draft. */
+	requestSuggestion: (direction: string) => void;
 	initialText?: string;
 	initialMode?: DeliverAs;
 	onSubmit: (text: string, deliverAs: DeliverAs) => void;
@@ -79,9 +81,12 @@ export interface ComposerOptions {
 /** Prompt composer using pi's own editor component. */
 export class Composer extends Container implements Focusable {
 	private readonly editor: Editor;
+	private readonly directionInput: Input;
 	private readonly options: ComposerOptions;
 	// Matches pi: Enter while the agent works steers; follow-up waits for it to finish.
 	private mode: DeliverAs;
+	private directionMode = false;
+	private direction = "";
 	private error = "";
 	private _focused = false;
 
@@ -92,6 +97,9 @@ export class Composer extends Container implements Focusable {
 		this.editor = new Editor(tui, editorTheme);
 		this.editor.onSubmit = (text) => this.submit(text);
 		if (options.initialText) this.editor.setText(options.initialText);
+		this.directionInput = new Input({ prompt: theme.accent("› "), placeholder: "direction for the next suggestion" });
+		this.directionInput.onSubmit = (value) => this.requestSuggestion(value);
+		this.directionInput.onEscape = () => this.closeDirection();
 	}
 
 	get focused(): boolean {
@@ -100,7 +108,8 @@ export class Composer extends Container implements Focusable {
 
 	set focused(value: boolean) {
 		this._focused = value;
-		this.editor.focused = value;
+		this.editor.focused = value && !this.directionMode;
+		this.directionInput.focused = value && this.directionMode;
 	}
 
 	private submit(text: string): void {
@@ -119,15 +128,59 @@ export class Composer extends Container implements Focusable {
 		return this.options.suggestion();
 	}
 
+	private openDirection(): void {
+		this.directionMode = true;
+		this.error = "";
+		this.directionInput.setValue(this.direction);
+		this.directionInput.focused = this._focused;
+		this.editor.focused = false;
+	}
+
+	private closeDirection(): void {
+		this.directionMode = false;
+		this.directionInput.focused = false;
+		this.editor.focused = this._focused;
+	}
+
+	private requestSuggestion(value: string): void {
+		const direction = value.trim();
+		if (!direction) {
+			this.error = "Type a direction for the next suggestion";
+			return;
+		}
+		if (this.options.isWorking()) {
+			this.error = "Request a suggestion only while idle";
+			return;
+		}
+		this.direction = direction;
+		this.error = "";
+		this.closeDirection();
+		this.options.requestSuggestion(direction);
+	}
+
 	handleInput(data: string): void {
+		if (this.directionMode) {
+			if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("g"))) {
+				this.closeDirection();
+				return;
+			}
+			this.error = "";
+			this.directionInput.handleInput(data);
+			return;
+		}
 		if (matchesKey(data, Key.escape)) {
 			this.options.onCancel();
+			return;
+		}
+		if (matchesKey(data, Key.ctrl("g"))) {
+			this.openDirection();
 			return;
 		}
 		if (matchesKey(data, Key.tab)) {
 			const suggestion = this.visibleSuggestion();
 			if (suggestion) {
 				this.editor.setText(suggestion);
+				this.direction = "";
 				return;
 			}
 			if (this.options.isWorking()) {
@@ -146,14 +199,25 @@ export class Composer extends Container implements Focusable {
 			? `${theme.working("●")} ${theme.text("working")} ${theme.dim("· delivers as")} ${theme.bold(theme.accent(this.mode === "steer" ? "steer" : "follow-up"))} ${theme.dim(this.mode === "steer" ? "(after the current tool)" : "(when the run finishes)")}`
 			: `${theme.dim("○")} ${theme.text("idle")} ${theme.dim("· starts a new turn")}`;
 		const body = [mode, ...this.editor.render(inner)];
+		if (this.directionMode) {
+			body.push(theme.dim("Direction for the next suggestion:"));
+			body.push(...this.directionInput.render(inner));
+		} else if (this.direction) {
+			body.push(`${theme.dim("Direction:")} ${theme.muted(this.direction)}`);
+		}
 		const suggestion = this.visibleSuggestion();
 		if (suggestion) {
 			const wrapped = suggestion.split("\n").flatMap((line) => wrapTextWithAnsi(line, Math.max(1, inner - 2)));
 			body.push(...wrapped.map((line, index) => `${theme.dim(index === 0 ? "↳ " : "  ")}${theme.muted(line)}`));
 		}
 		if (this.error) body.push(theme.error(`✖ ${this.error}`));
-		const hints: [string, string][] = working ? [["⏎", "send"], ["Tab", "steer/follow-up"]] : [["⏎", "send"], ...(suggestion ? [["Tab", "accept suggestion"] as [string, string]] : [])];
-		return frame(`Prompt → ${this.options.target}`, body, width, keyHints([...hints, ["⇧⏎", "newline"], ["Esc", "cancel"]]));
+		const hints: [string, string][] = this.directionMode
+			? [["⏎", "request suggestion"], ["Esc", "back"]]
+			: working
+				? [["⏎", "send"], ["Tab", "steer/follow-up"], ["Ctrl+G", "direction"]]
+				: [["⏎", "send"], ...(suggestion ? [["Tab", "accept suggestion"] as [string, string]] : []), ["Ctrl+G", "direction"]];
+		const footer = this.directionMode ? hints : [...hints, ["⇧⏎", "newline"] as [string, string], ["Esc", "cancel"] as [string, string]];
+		return frame(`Prompt → ${this.options.target}`, body, width, keyHints(footer));
 	}
 }
 
@@ -650,7 +714,7 @@ const HELP: [string, [string, string][]][] = [
 	[
 		"SESSION",
 		[
-			["p", "prompt (steer or follow-up while working; Tab takes the suggestion)"],
+			["p", "prompt (steer or follow-up while working; Tab takes the suggestion; Ctrl+G gives a direction for it)"],
 			["i", "ask the session about its work; nothing is added to the session"],
 			["H", "Hermes advisor: cross-session action cards with feedback"],
 			["s", "read the latest reply full screen (or click SAID)"],
