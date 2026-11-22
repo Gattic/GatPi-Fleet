@@ -6,7 +6,8 @@ export default function suggestionPublisher(pi: ExtensionAPI): void {
 	pi.on("agent_start", () => pi.events.emit("prompt-suggestion:changed", null));
 	pi.on("agent_settled", () => pi.events.emit("prompt-suggestion:changed", "Run the tests next"));
 	pi.events.on("prompt-suggestion:request", (data) => {
-		pi.events.emit("prompt-suggestion:changed", "Run the focused tests next");
-		(data as { respond: (error: string | null) => void }).respond(null);
+		const request = data as { direction?: string; respond: (error: string | null) => void };
+		pi.events.emit("prompt-suggestion:changed", request.direction ? `Run the focused tests next: ${request.direction}` : "Run the focused tests next");
+		request.respond(null);
 	});
 }

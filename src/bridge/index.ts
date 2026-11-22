@@ -17,6 +17,7 @@ import {
 	LineDecoder,
 	MAX_ASKS,
 	MAX_PROMPTS,
+	MAX_SUGGESTION_DIRECTION,
 	type PiUsage,
 	type PlanSnapshot,
 	PROMPT_SUGGESTION_CHANGED_EVENT,
@@ -62,6 +63,16 @@ function clip(text: string, limit: number): string {
 function bound(text: string, limit: number): string {
 	const trimmed = text.trim();
 	return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
+}
+
+/** The direction shaping a requested suggestion; undefined when the request carries none. */
+function suggestionDirection(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "string") throw new Error("Suggestion direction must be text");
+	const direction = value.trim();
+	if (!direction) return undefined;
+	if (direction.length > MAX_SUGGESTION_DIRECTION) throw new Error(`Suggestion direction must be at most ${MAX_SUGGESTION_DIRECTION} characters`);
+	return direction;
 }
 
 /** SAID text of an assistant message: none when it calls tools, since that text only narrates the work. */
@@ -542,9 +553,11 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 				return;
 			case "suggest": {
 				if (!ctx.isIdle() || state.phase !== "idle") throw new Error("Request a prompt suggestion only while idle");
+				const direction = suggestionDirection(command.direction);
 				let handled = false;
 				let failure: string | null = null;
 				pi.events.emit(PROMPT_SUGGESTION_REQUEST_EVENT, {
+					direction,
 					respond: (error: string | null) => { handled = true; failure = error; },
 				});
 				if (!handled) throw new Error("prompt-suggestions request unavailable; update GatPi-Harness and reload this session");

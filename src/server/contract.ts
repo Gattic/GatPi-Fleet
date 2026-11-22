@@ -1,7 +1,7 @@
 // Authoritative API v1 input schemas. Exportable JSON Schema; shared fixtures test Android decoding.
 import Type, { type Static } from "typebox";
 import Schema from "typebox/schema";
-import { THINKING_LEVELS } from "../protocol/index.ts";
+import { MAX_SUGGESTION_DIRECTION, THINKING_LEVELS } from "../protocol/index.ts";
 
 export const API_VERSION = 1;
 export const MAX_BODY = 128 * 1024;
@@ -19,7 +19,8 @@ export const CommandSchema = Type.Union([
 	object({ kind: Type.Literal("model"), provider: text(200), id: text(300) }),
 	object({ kind: Type.Literal("thinking"), level: Type.Union(THINKING_LEVELS.map((level) => Type.Literal(level))) }),
 	object({ kind: Type.Literal("abort") }), object({ kind: Type.Literal("shutdown") }), object({ kind: Type.Literal("compact") }),
-	object({ kind: Type.Literal("reload") }), object({ kind: Type.Literal("new") }), object({ kind: Type.Literal("suggest") }),
+	object({ kind: Type.Literal("reload") }), object({ kind: Type.Literal("new") }),
+	object({ kind: Type.Literal("suggest"), direction: Type.Optional(text(MAX_SUGGESTION_DIRECTION)) }),
 	// The managers act on these, not the bridge.
 	object({ kind: Type.Literal("restart") }), object({ kind: Type.Literal("dismiss") }),
 ]);

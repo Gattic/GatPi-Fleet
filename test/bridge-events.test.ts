@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import piDashBridge from "../src/bridge/index.ts";
-import { emptyUsage, LineDecoder, MAX_PROMPTS, socketPath, type BridgeMessage, type SessionState } from "../src/protocol/index.ts";
+import { emptyUsage, LineDecoder, MAX_PROMPTS, MAX_SUGGESTION_DIRECTION, socketPath, type BridgeMessage, type SessionState } from "../src/protocol/index.ts";
 import { RecoveryJournal } from "../src/manager/recovery.ts";
 import { roadmapFixture } from "../scripts/roadmap-fixture.ts";
 
@@ -95,8 +95,10 @@ test("suggest requests the existing publisher, propagates rejection, and never s
 	assert.equal(missing.ok, false);
 	assert.match(missing.error!, /prompt-suggestions.*update/i);
 	let requests = 0;
+	const directions: unknown[] = [];
 	bus.set("prompt-suggestion:request", (data) => {
 		requests++;
+		directions.push((data as { direction?: unknown }).direction);
 		bus.get("prompt-suggestion:changed")!("Inspect the next task");
 		(data as { respond: (error: string | null) => void }).respond(null);
 	});
@@ -104,6 +106,18 @@ test("suggest requests the existing publisher, propagates rejection, and never s
 	assert.equal((await snapshot()).suggestion, "Inspect the next task");
 	assert.deepEqual(sent, []);
 	assert.equal(requests, 1);
+	assert.deepEqual(directions, [undefined], "a plain request carries no direction");
+	assert.equal((await command({ kind: "suggest", direction: "  focus on the failing tests  " })).ok, true);
+	assert.deepEqual(directions, [undefined, "focus on the failing tests"], "the publisher receives the trimmed direction");
+	assert.equal((await command({ kind: "suggest", direction: "   " })).ok, true);
+	assert.equal(directions.at(-1), undefined, "a blank direction is no direction");
+	const tooLong = await command({ kind: "suggest", direction: "x".repeat(MAX_SUGGESTION_DIRECTION + 1) });
+	assert.equal(tooLong.ok, false);
+	assert.match(tooLong.error!, /at most 2000/);
+	const notText = await command({ kind: "suggest", direction: 42 });
+	assert.equal(notText.ok, false);
+	assert.match(notText.error!, /text/);
+	assert.equal(requests, 3, "invalid directions never reach the publisher");
 	bus.set("prompt-suggestion:request", (data) => (data as { respond: (error: string | null) => void }).respond("Keep the desktop draft"));
 	assert.equal((await command({ kind: "suggest" })).error, "Keep the desktop draft");
 	t.mock.method(ctx, "isIdle", () => false);

@@ -13,6 +13,14 @@ import org.json.JSONObject
 
 enum class Screen { Sessions, Session, Jobs, Projects, Usage, Context, Glasses, Pairing }
 
+/** The suggest command; a direction shapes the next suggestion and is never sent as a prompt. */
+internal fun suggestionCommand(direction: String): JSONObject {
+    val command = JSONObject().put("kind", "suggest")
+    val shaped = direction.trim()
+    if (shaped.isNotEmpty()) command.put("direction", shaped)
+    return command
+}
+
 /** The session page has no session to show any more, so the overview is the only honest place to be. */
 internal fun sessionPageLostSelection(screen: Screen, state: Dashboard): Boolean =
     screen == Screen.Session && state.connected && state.selected == null
@@ -97,7 +105,7 @@ class DashViewModel @JvmOverloads constructor(
         run { repository.command(session, command) }
     }
     fun ask(session: Session) { run { repository.command(session, JSONObject().put("kind", "ask").put("question", ask.value)) } }
-    fun suggest(session: Session) { run { repository.command(session, JSONObject().put("kind", "suggest")) } }
+    fun suggest(session: Session, direction: String = "") { run { repository.command(session, suggestionCommand(direction)) } }
     /** Removes an exited session from the list, here and in pi-dash, then returns to the list. */
     fun dismiss(session: Session) { run { repository.command(session, JSONObject().put("kind", "dismiss")); back() } }
     fun confirm(session: Session, kind: String) {

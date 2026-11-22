@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { ManagerRuntime } from "../src/manager/runtime.ts";
 import type { SessionRow } from "../src/manager/model/store.ts";
-import { emptyUsage, type Command } from "../src/protocol/index.ts";
+import { emptyUsage, MAX_SUGGESTION_DIRECTION, type Command } from "../src/protocol/index.ts";
 import { commandRequest } from "../src/server/contract.ts";
 import { Sessions, summary } from "../src/server/sessions.ts";
 
@@ -40,11 +40,17 @@ test("suggestion requests are typed idle-only actions with the same revision gua
 	const input = { requestId: randomUUID(), epoch: randomUUID(), revision: summary(row).revision, command: { kind: "suggest" as const } };
 	assert.equal(commandRequest.Check(input), true);
 	assert.equal(summary(row).commands.suggest, null);
+	const shaped = { ...input, command: { kind: "suggest" as const, direction: "focus on the failing tests" } };
+	assert.equal(commandRequest.Check(shaped), true, "a bounded direction is part of the typed suggestion command");
+	assert.equal(commandRequest.Check({ ...input, command: { kind: "suggest" as const, direction: "" } }), false, "an empty direction is rejected instead of silently ignored");
+	assert.equal(commandRequest.Check({ ...input, command: { kind: "suggest" as const, direction: "x".repeat(MAX_SUGGESTION_DIRECTION + 1) } }), false, "an overlong direction is rejected");
 	const sent: Command[] = [];
 	t.mock.method(runtime.network, "send", async (_row: SessionRow, command: Command) => { sent.push(command); });
 	await assert.rejects(sessions.command(summary(row).id, { ...input, revision: "0".repeat(32) }), /state changed/);
 	await sessions.command(summary(row).id, input);
 	assert.deepEqual(sent, [{ kind: "suggest" }]);
+	await sessions.command(summary(row).id, shaped);
+	assert.deepEqual(sent.at(-1), { kind: "suggest", direction: "focus on the failing tests" }, "the gateway forwards the direction unchanged");
 	row.bridge!.phase = "working";
 	assert.match(summary(row).commands.suggest!, /idle/);
 	await assert.rejects(sessions.command(summary(row).id, { ...input, revision: summary(row).revision }), /idle/);

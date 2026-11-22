@@ -344,10 +344,13 @@ resume from Projects if appropriate. Update the gateway, remote relays and bridg
 (protocol 7), then `/reload` existing desktop sessions before using the new controls.
 In session detail, **Chat → Suggest** requests the same refresh as desktop
 Ctrl+R in GatPi-Harness's prompt-suggestions extension. It never sends a prompt or overwrites
-your Android draft. The result is shown above the field; use **Edit suggested prompt** to put
+your Android draft. Tap **Direction** to enter your input, opinions or constraints for the next
+prompt: the request is then shaped by that direction, and it is never sent as a prompt.
+The result is shown above the field; use **Edit suggested prompt** to put
 it in your draft, then review it and explicitly **Send prompt**. The extension must be updated and enabled,
 pi idle with an existing conversation, and the desktop editor empty. Local suggestions
-can repeat; the configured advisory model may refine them. A request receipt acknowledges
+can repeat; the configured advisory model may refine them. A direction-based request needs the
+configured advisory model. A request receipt acknowledges
 starting generation, not finishing it. A missing/older publisher is reported explicitly.
 
 In session detail, **Manage → Model → Search models** filters the session's offered
