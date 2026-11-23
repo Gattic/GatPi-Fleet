@@ -51,6 +51,40 @@ and on the other machines of your network (over ssh).
   close-and-restart, restart (same saved conversation), new session, resume, rename, live read-only peek, full attach, and common
   Git project shortcuts.
 
+## Screenshots
+
+**Linux TUI** — sessions across hosts with plan progress, the detail view (context, CPU/memory and
+API trends), the usage and cost views, and the context breakdown. Each shot links to the full-size
+capture.
+
+<p align="center">
+  <a href="screenshots/linux-tui/screenshot6.png"><img src="screenshots/linux-tui/screenshot6.png" width="49%" alt="Sessions list across hosts with plan progress and per-session context"></a>
+  <a href="screenshots/linux-tui/screenshot1.png"><img src="screenshots/linux-tui/screenshot1.png" width="49%" alt="Sessions list with the selected session's detail panel"></a>
+</p>
+<p align="center">
+  <a href="screenshots/linux-tui/screenshot2.png"><img src="screenshots/linux-tui/screenshot2.png" width="49%" alt="Detail view with context composition, CPU and memory trends, API tokens and recent tools"></a>
+  <a href="screenshots/linux-tui/screenshot5.png"><img src="screenshots/linux-tui/screenshot5.png" width="49%" alt="Context view: per-session fill and cumulative composition across open sessions"></a>
+</p>
+<p align="center">
+  <a href="screenshots/linux-tui/screenshot3.png"><img src="screenshots/linux-tui/screenshot3.png" width="49%" alt="Usage view in tokens over 7 days, split by session, host and model"></a>
+  <a href="screenshots/linux-tui/screenshot4.png"><img src="screenshots/linux-tui/screenshot4.png" width="49%" alt="Usage view in API-equivalent cost over 7 days, split by session, host and model"></a>
+</p>
+
+**Android** — the same sessions on your phone: session list, usage and context, and the Chat, Ask
+and Manage tabs of a session.
+
+<p align="center">
+  <img src="screenshots/android-mobile/home-tab.jpeg" width="23%" alt="Android session list with needs-you highlight, jobs and plan progress">
+  <img src="screenshots/android-mobile/usage-tab.jpeg" width="23%" alt="Android usage tab with 7-day tokens, cache hit rate and tokens by host">
+  <img src="screenshots/android-mobile/context-tab1.jpeg" width="23%" alt="Android context tab: cumulative composition, fill and sessions">
+  <img src="screenshots/android-mobile/context-tab2.jpeg" width="23%" alt="Android context tab: breakdown by host and model">
+</p>
+<p align="center">
+  <img src="screenshots/android-mobile/sesh-chat-tab.jpeg" width="23%" alt="Android session Chat tab with the suggested prompt, draft and direction field">
+  <img src="screenshots/android-mobile/sesh-ask-tab.jpeg" width="23%" alt="Android session Ask tab for a side question about the session">
+  <img src="screenshots/android-mobile/sesh-manage-tab.jpeg" width="23%" alt="Android session Manage tab with run control, model and thinking level">
+</p>
+
 ## Requirements
 
 - Linux (`/proc`, cgroup v2), Node ≥ 22.19 (runs the TypeScript sources directly), GNU screen,
