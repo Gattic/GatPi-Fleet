@@ -3,7 +3,6 @@ package dev.pidash.android
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -18,7 +17,6 @@ class MainActivity : ComponentActivity() {
         // The app is always dark, so system bar icons stay light regardless of the system theme.
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContent { PiDashTheme { DashScreen() } }
     }
     override fun onStart() {

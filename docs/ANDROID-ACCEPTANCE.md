@@ -54,7 +54,7 @@ Mark a box only with a dated observation for this app, firmware and phone.
 
 - [ ] Credentials, drafts and pending receipts are encrypted at rest with a
       Keystore-backed key and excluded from backup and device transfer.
-- [ ] Screenshots and recents capture are disabled.
+- [ ] Screenshots and recents capture are allowed (no `FLAG_SECURE`).
 - [ ] Prompt recall steps through earlier prompts newest first; stepping past the
       newest restores the draft.
 - [ ] A submitted action is never replayed after a lost acknowledgement; an
