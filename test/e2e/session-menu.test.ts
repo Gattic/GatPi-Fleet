@@ -158,7 +158,7 @@ test("m lists the real session's commands under its live state, and says why a c
 	assert.equal(session().model, "dash-test/scripted");
 	await select();
 	const menu = await openMenu(/○ ready · dash-test\/scripted/);
-	for (const command of [/x +abort/, /Z +compact/, /M +model/, /T +thinking/, /R +rename/, /a +attach/, /L +reload/, /N +new conversation/, /S +restart/, /c +close/, /C +recycle/, /r +resume/, /d +dismiss/]) assert.match(menu, command);
+	for (const command of [/x +abort/, /s +said/, /Z +compact/, /M +model/, /T +thinking/, /R +rename/, /a +attach/, /L +reload/, /N +new conversation/, /S +restart/, /c +close/, /C +recycle/, /r +resume/, /d +dismiss/]) assert.match(menu, command);
 
 	await hub.send(session(), { kind: "prompt", text: "sleep 4" });
 	await dialogShows("the open menu to follow the run", /⚙ bash \d+s · dash-test\/scripted/);

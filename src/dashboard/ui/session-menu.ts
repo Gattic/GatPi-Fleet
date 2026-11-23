@@ -8,6 +8,7 @@ import { keyHints, theme } from "./theme.ts";
 const COMMANDS: [key: string, name: string, detail: string][][] = [
 	[
 		["x", "abort", "stop the current run"],
+		["s", "said", "read the latest reply full screen"],
 		["Z", "compact", "summarize the conversation so far · when idle"],
 		["M", "model", "switch model"],
 		["T", "thinking", "switch thinking level"],
