@@ -3,6 +3,10 @@
 One terminal tab to watch and drive every running [pi](https://pi.dev) session, on this machine
 and on the other machines of your network (over ssh).
 
+New here? The [GatPi-Fleet guide](https://gattic.com/articles/gatpi-fleet-guide/) is a long-form
+walkthrough of the architecture, installation, daily use, remote hosts, the Android gateway and
+troubleshooting. This README remains the reference for current commands and behavior.
+
 - **State at a glance**: working (with the current tool or thinking/writing), waiting for you,
   error / rate limited, stalled, exited. When a session starts needing you, its row is highlighted,
   and `Tab` jumps to the session that has waited longest. Running background jobs and subagents
