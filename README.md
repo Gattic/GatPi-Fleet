@@ -420,7 +420,7 @@ notification delivery.
 ```sh
 npm run check      # tsc (strict, type stripping compatible)
 npm test           # unit, attribution (real processes / systemd units) and render tests
-npm run test:e2e   # real interactive pi in a detached screen with a local scripted model; real pi-dash TUI quota renewal
+npm run test:e2e   # real interactive pi in a detached screen with a local scripted model; real pi-dash TUI quota renewal and session menu
 ```
 
 The pi e2e test needs `pi` and `screen` on PATH. It uses an isolated agent directory, does not
@@ -439,3 +439,9 @@ the checks they target, so a check that cannot fail is itself a failure; a mutat
 matches the code fails loudly and needs updating. A run takes about 40 s. Interrupting it (Ctrl-C, SIGTERM)
 kills the TUIs it started and removes its directories; a run whose checks fail keeps its temporary
 directory (path in the output) for inspection, and you delete it afterwards.
+
+`test/e2e/session-menu.test.ts` drives the session menu of the real TUI (in tmux) against a real pi in a
+screen: the menu's live state, reload, new conversation, restart into a new process, close, and its refusal
+to act on a session that was replaced while it was open. It needs `pi`, `screen` and `tmux`, is offline
+(`PI_OFFLINE`, a temporary HOME, agent and Screen directory), and takes about 15 s. Other pi sessions on the
+machine show in that TUI as `? no bridge` rows; the test selects only its own and removes everything it started.
