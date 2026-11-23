@@ -135,7 +135,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `i` | ask the session a side question about its work (full screen: earlier questions and answers above, the editor below; `PgUp` `PgDn` scroll). One question at a time; closing the view does not cancel it, and the footer says when the answer arrives |
 | `H` | Hermes advisor: refresh cross-session advice cards, dismiss noisy cards, or confirm a proposed ask / prompt / compact / notification / proposal action |
 | `g` | Git shortcuts for the selected project (`u` update/pull, `s` send/push, `b` branch, `v` view `git status` full screen, `c` AI commit-review prompt, `r` refresh) |
-| `m` | session menu: the selected session's state and its commands with their keys (abort, compact, model, thinking, rename, attach, reload, new conversation, restart, close, recycle, resume, dismiss). A command key runs it; `Esc` closes. The same keys work without the menu |
+| `m` | session menu: the selected session's state and its commands with their keys (abort, said, compact, model, thinking, rename, attach, reload, new conversation, restart, close, recycle, resume, dismiss). A command key runs it; `Esc` closes. The same keys work without the menu; the overview's key bar leaves abort, said, resume and restart to the menu |
 | `x` | abort the current run |
 | `Z` | compact the conversation (idle sessions; asks first) |
 | `M` / `T` | switch the model / thinking level (pi limits the level to what the model supports) |

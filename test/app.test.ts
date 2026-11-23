@@ -887,7 +887,7 @@ test("m opens the session menu: it follows the session's state and its keys run 
 	ui.press("m");
 	const menu = ui.dialog() ?? "";
 	assert.match(menu, /Session · proj[\s\S]*○ ready · anthropic\/opus · high · ctx 80%/);
-	for (const command of [/x +abort/, /Z +compact/, /M +model/, /T +thinking/, /R +rename/, /a +attach/, /L +reload/, /N +new conversation/, /S +restart/, /c +close/, /C +recycle/, /r +resume/, /d +dismiss/]) assert.match(menu, command);
+	for (const command of [/x +abort/, /s +said/, /Z +compact/, /M +model/, /T +thinking/, /R +rename/, /a +attach/, /L +reload/, /N +new conversation/, /S +restart/, /c +close/, /C +recycle/, /r +resume/, /d +dismiss/]) assert.match(menu, command);
 	ui.press("p");
 	assert.match(ui.dialog() ?? "", /Session · proj/, "a key that is not a session command leaves the menu open");
 
@@ -919,6 +919,32 @@ test("m opens the session menu: it follows the session's state and its keys run 
 	assert.equal(ui.dialog(), undefined, "a command that cannot run now closes the menu");
 	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj must be idle to restart/, "and says why");
 	assert.equal(ui.restarted.length, 1);
+});
+
+test("abort, said, resume and restart are offered by the session menu, not by the overview's key bar", () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({ lastSaid: "All tests pass." }));
+
+	const bar = strip(ui.app.render(400).at(-1) ?? "");
+	assert.match(bar, /g git  m menu  v peek  a attach  n new  e interrupted  c close  u usage/);
+	for (const moved of [/x abort/, /s said/, /r resume/, /S restart/]) assert.doesNotMatch(bar, moved);
+
+	ui.press("m", "s");
+	assert.match(ui.dialog() ?? "", /said · proj[\s\S]*All tests pass\./, "s in the menu opens the latest reply");
+	ui.press("\x1b");
+	assert.equal(ui.dialog(), undefined);
+
+	ui.store.setState(101, session({}));
+	ui.press("m", "s");
+	assert.equal(ui.dialog(), undefined);
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj has not replied yet/);
+
+	// Off the key bar, not off the keyboard. The reply, resume and restart tests press s, r and S directly too.
+	ui.store.setState(101, session({ phase: "working" }));
+	ui.press("x");
+	assert.match(ui.dialog() ?? "", /Abort the current run of proj\?/, "x still aborts from the overview");
+	ui.press("y");
+	assert.deepEqual(ui.sent, [{ kind: "abort" }]);
 });
 
 test("the session menu never acts on a session that replaced the one it was opened for", () => {
