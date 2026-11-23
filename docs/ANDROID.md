@@ -178,7 +178,8 @@ directory once the phone works; its tokens and key are no longer used.
 Each device has a separate 256-bit token. The host stores only token hashes in
 an owner-private file; Android encrypts credentials, drafts and pending-receipt
 metadata with an Android Keystore key. App data is excluded from cloud backup
-and device transfer. Android screenshots/recents capture are disabled. Other
+and device transfer. Android screenshots/recents capture are allowed, so keep
+secrets off the screen while capturing. Other
 apps or keyboards with access to your clipboard can still see pasted secrets.
 
 ```sh
