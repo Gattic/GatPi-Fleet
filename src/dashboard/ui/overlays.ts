@@ -726,6 +726,7 @@ const HELP: [string, [string, string][]][] = [
 			["M / T", "switch model / thinking level"],
 			["Z", "compact the conversation (when idle)"],
 			["R", "rename session"],
+			["m", "session menu: the session's commands and their keys"],
 		],
 	],
 	[
@@ -736,6 +737,7 @@ const HELP: [string, [string, string][]][] = [
 			["e", "find interrupted sessions across projects; resume or dismiss"],
 			["c / C", "close session / close and start a new one"],
 			["S", "restart session: close gracefully and resume the same saved conversation"],
+			["L / N", "reload pi's resources / new conversation, like /new (when idle)"],
 			["d", "dismiss an exited session"],
 		],
 	],

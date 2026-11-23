@@ -26,12 +26,13 @@ import { AskView, Composer, Confirm, Help, HermesAdviceView, Peek, Picker, Reade
 import { TextPane } from "./text-pane.ts";
 import { keyHints, theme } from "./theme.ts";
 import { GitView } from "./git-view.ts";
+import { SessionMenu } from "./session-menu.ts";
 import { type DetailView, renderDetail } from "./views/detail.ts";
 import { CONTEXT_SCOPES, contextRowCount, contextVisibleRows, renderContext, type ContextScope } from "./views/context.ts";
 import { jobPageSize, jobRows, renderJobs } from "./views/jobs.ts";
 import { renderOverview } from "./views/overview.ts";
 import { roadmapText } from "./views/roadmap.ts";
-import { background, hostStatusText, SPINNER, type ViewContext, type ViewName } from "./views/shared.ts";
+import { background, hostStatusText, SPINNER, statusCell, type ViewContext, type ViewName } from "./views/shared.ts";
 import { renderUsage } from "./views/usage.ts";
 
 export interface Services {
@@ -64,8 +65,8 @@ const GIT_MESSAGE_LIMIT = 500;
 
 
 const KEYS: Record<ViewName, [string, string][]> = {
-	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["S", "restart"], ["u", "usage"], ["K", "context"], ["J", "jobs"], ["?", "help"], ["q", "quit"]],
-	detail: [["Esc", "back"], ["Tab", "next ◆"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["S", "restart"], ["K", "context"], ["J", "jobs"], ["?", "help"]],
+	overview: [["1-9", "select"], ["Tab", "next ◆"], ["⏎", "detail"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["m", "menu"], ["x", "abort"], ["s", "said"], ["v", "peek"], ["a", "attach"], ["n", "new"], ["r", "resume"], ["e", "interrupted"], ["c", "close"], ["S", "restart"], ["u", "usage"], ["K", "context"], ["J", "jobs"], ["?", "help"], ["q", "quit"]],
+	detail: [["Esc", "back"], ["Tab", "next ◆"], ["o", "roadmap"], ["p", "prompt"], ["i", "ask"], ["H", "Hermes"], ["g", "git"], ["m", "menu"], ["x", "abort"], ["s", "read said"], ["PgUp/PgDn", "scroll said"], ["v", "peek"], ["a", "attach"], ["M", "model"], ["T", "thinking"], ["Z", "compact"], ["c", "close"], ["R", "rename"], ["S", "restart"], ["K", "context"], ["J", "jobs"], ["?", "help"]],
 	jobs: [["Esc", "back"], ["j/k", "scroll"], ["PgUp/PgDn", "page"], ["?", "help"]],
 	usage: [["Esc", "back"], ["t", "today"], ["w", "7 days"], ["m", "30 days"], ["$", "cost/tokens"], ["K", "context"], ["?", "help"]],
 	context: [["Esc", "back"], ["a", "scope"], ["j/k", "scroll"], ["PgUp/PgDn", "page"], ["⏎", "detail"], ["?", "help"]],
@@ -266,7 +267,7 @@ export class App implements Component {
 			if (this.view === "jobs") return;
 			const row = this.selected();
 			if (!row) {
-				if ("ogpixsvacCRrdMTZ".includes(data)) this.notify("No session selected", true);
+				if ("ogmpixsvacCRrdMTZLN".includes(data)) this.notify("No session selected", true);
 				return;
 			}
 			this.rowAction(row, data);
@@ -329,6 +330,8 @@ export class App implements Component {
 				return this.openAsk(row);
 			case "g":
 				return this.openGit(row);
+			case "m":
+				return this.openSessionMenu(row);
 			case "x":
 				if (row.status.kind !== "working" && row.status.kind !== "stalled" && row.status.kind !== "rate-limited") return this.notify(`${label} is not working`, true);
 				return this.confirm("Abort", `Abort the current run of ${label}?`, () => this.send(row, { kind: "abort" }, `aborted ${label}`));
@@ -343,11 +346,15 @@ export class App implements Component {
 				return this.confirmClose(row, false);
 			case "C":
 				return this.confirmClose(row, true);
+			case "L":
+				if (!this.requireIdle(row, "reload")) return;
+				return this.confirm("Reload session", `Reload ${label}? pi reloads its extensions, skills, prompts, themes and context files without closing or clearing the conversation. Only available while idle.`, () => this.send(row, { kind: "reload" }, `reloading ${label}`));
+			case "N":
+				if (!this.requireIdle(row, "start a new conversation")) return;
+				return this.confirm("New conversation", `Start a new conversation in ${label}? Like pi's /new: the current context is cleared, and its saved conversation stays in pi's history. Only available while idle.`, () => this.send(row, { kind: "new" }, `starting a new conversation in ${label}`));
 			case "S": {
-				if (!this.requireBridge(row)) return;
-				if (row.bridge?.phase !== "idle") return this.notify(`${label} must be idle to restart`, true);
-				if (row.bridge.asks.some((ask) => ask.status === "answering")) return this.notify("A side question is still answering", true);
-				if (!row.bridge.sessionFile) return this.notify(`${label} has no saved conversation to restart`, true);
+				if (!this.requireIdle(row, "restart")) return;
+				if (!row.bridge?.sessionFile) return this.notify(`${label} has no saved conversation to restart`, true);
 				return this.confirm("Restart session", `Restart ${label}? Close pi gracefully, then resume this same saved conversation in a new pi process on the same host. Only available while idle. Select the restarted session afterward.`, () => {
 					this.services.restart(row).then(
 						() => this.notify(`restarting ${label}; select its new instance when it appears`),
@@ -443,6 +450,20 @@ export class App implements Component {
 		return true;
 	}
 
+	/** Reload, new conversation and restart replace what runs in the session, so nothing may be running in it. */
+	private requireIdle(row: SessionRow, action: string): boolean {
+		if (!this.requireBridge(row)) return false;
+		if (row.bridge?.phase !== "idle") {
+			this.notify(`${rowLabel(row)} must be idle to ${action}`, true);
+			return false;
+		}
+		if (row.bridge.asks.some((ask) => ask.status === "answering")) {
+			this.notify("A side question is still answering", true);
+			return false;
+		}
+		return true;
+	}
+
 	private send(row: SessionRow, command: Command, success: string): void {
 		this.services.network.send(row, command).then(
 			() => this.notify(success),
@@ -484,6 +505,42 @@ export class App implements Component {
 			}),
 			{ width: 64 },
 		);
+	}
+
+	private openSessionMenu(row: SessionRow): void {
+		const identity = rowIncarnation(row);
+		const label = rowLabel(row);
+		// The menu follows the session's state, but never acts on a successor that took over its row.
+		const current = () => {
+			const live = this.services.store.rows.get(row.key);
+			return live && rowIncarnation(live) === identity ? live : undefined;
+		};
+		this.show(
+			new SessionMenu({
+				title: `Session · ${label}`,
+				state: () => {
+					const live = current();
+					return live && this.sessionState(live);
+				},
+				onCommand: (key) => {
+					const live = current();
+					this.closeOverlay();
+					if (!live) return this.notify(`${label} ended or was replaced; select its current instance`, true);
+					this.rowAction(live, key);
+				},
+				onClose: () => this.closeOverlay(),
+			}),
+			{ width: 80 },
+		);
+	}
+
+	/** What the session is doing, with the settings its commands change. */
+	private sessionState(row: SessionRow): string {
+		const bridge = row.bridge;
+		const parts = [statusCell(row, this.viewContext())];
+		if (bridge?.model) parts.push(`${theme.text(bridge.model)}${bridge.thinking ? theme.muted(` · ${bridge.thinking}`) : ""}`);
+		if (bridge?.context?.percent != null) parts.push(theme.muted(`ctx ${Math.round(bridge.context.percent)}%`));
+		return parts.join(theme.dim(" · "));
 	}
 
 	/** Git runs where the session's project is. */

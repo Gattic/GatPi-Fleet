@@ -52,8 +52,8 @@ troubleshooting. This README remains the reference for current commands and beha
   shown/accepted/dismissed/executed outcomes so future advice can adapt.
 - **Control without switching tabs**: prompt (steer or follow-up while working, or take the
   suggested next prompt), abort, compact, switch model or thinking level, close,
-  close-and-restart, restart (same saved conversation), new session, resume, rename, live read-only peek, full attach, and common
-  Git project shortcuts.
+  close-and-restart, restart (same saved conversation), reload, new conversation, new session, resume, rename, live read-only peek, full attach, and common
+  Git project shortcuts. `m` lists the selected session's commands in one menu.
 
 ## Screenshots
 
@@ -135,6 +135,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `i` | ask the session a side question about its work (full screen: earlier questions and answers above, the editor below; `PgUp` `PgDn` scroll). One question at a time; closing the view does not cancel it, and the footer says when the answer arrives |
 | `H` | Hermes advisor: refresh cross-session advice cards, dismiss noisy cards, or confirm a proposed ask / prompt / compact / notification / proposal action |
 | `g` | Git shortcuts for the selected project (`u` update/pull, `s` send/push, `b` branch, `v` view `git status` full screen, `c` AI commit-review prompt, `r` refresh) |
+| `m` | session menu: the selected session's state and its commands with their keys (abort, compact, model, thinking, rename, attach, reload, new conversation, restart, close, recycle, resume, dismiss). A command key runs it; `Esc` closes. The same keys work without the menu |
 | `x` | abort the current run |
 | `Z` | compact the conversation (idle sessions; asks first) |
 | `M` / `T` | switch the model / thinking level (pi limits the level to what the model supports) |
@@ -148,6 +149,8 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `e` | find interrupted sessions across projects and connected hosts; resume or dismiss a suggestion |
 | `c` / `C` | close / close and start a fresh session in the same project and slot |
 | `S` | restart the session: gracefully close pi, then resume the same saved conversation in a new process on the same host. Idle sessions with a saved conversation only; asks first, and the new instance keeps its slot |
+| `L` | reload the session: pi re-reads its extensions, skills, prompts, themes and context files without closing or clearing the conversation. Idle sessions only; asks first |
+| `N` | new conversation in the same pi, like `/new`: the context is cleared and the old conversation stays saved. Idle sessions only; asks first |
 | `R` | rename the session |
 | `d` | dismiss an exited row (here, in the gateway and on the phone; dismissing it on the phone removes it here too) |
 | `u` | usage view (`t` / `w` / `m`: today, 7 days, 30 days; `$`: cost or tokens) |
@@ -156,7 +159,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `?` | help and legend |
 | `q` | quit (sessions keep running) |
 
-Abort, compact, close, close-and-restart and restart ask before they act. Git pull runs `git pull --ff-only`
+Abort, compact, close, close-and-restart, restart, reload and new conversation ask before they act. Git pull runs `git pull --ff-only`
 and asks first; push always asks first and can create an upstream only when there is exactly one
 remote; branch switching uses local branches and requires a clean working tree. The commit shortcut
 opens the standard AI prompt to review the changes and commit if everything looks good; pi-dash does
@@ -421,7 +424,7 @@ notification delivery.
 ```sh
 npm run check      # tsc (strict, type stripping compatible)
 npm test           # unit, attribution (real processes / systemd units) and render tests
-npm run test:e2e   # real interactive pi in a detached screen with a local scripted model; real pi-dash TUI quota renewal
+npm run test:e2e   # real interactive pi in a detached screen with a local scripted model; real pi-dash TUI quota renewal and session menu
 ```
 
 The pi e2e test needs `pi` and `screen` on PATH. It uses an isolated agent directory, does not
@@ -440,3 +443,9 @@ the checks they target, so a check that cannot fail is itself a failure; a mutat
 matches the code fails loudly and needs updating. A run takes about 40 s. Interrupting it (Ctrl-C, SIGTERM)
 kills the TUIs it started and removes its directories; a run whose checks fail keeps its temporary
 directory (path in the output) for inspection, and you delete it afterwards.
+
+`test/e2e/session-menu.test.ts` drives the session menu of the real TUI (in tmux) against a real pi in a
+screen: the menu's live state, reload, new conversation, restart into a new process, close, and its refusal
+to act on a session that was replaced while it was open. It needs `pi`, `screen` and `tmux`, is offline
+(`PI_OFFLINE`, a temporary HOME, agent and Screen directory), and takes about 15 s. Other pi sessions on the
+machine show in that TUI as `? no bridge` rows; the test selects only its own and removes everything it started.

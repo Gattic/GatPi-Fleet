@@ -845,6 +845,105 @@ test("S restarts the same saved conversation after confirmation, only when idle 
 	assert.equal(ui.restarted.length, 1, "a failed restart is not recorded as restarted");
 });
 
+test("L reloads and N starts a new conversation after confirmation, only when idle with no answering ask", () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({}));
+
+	ui.press("L");
+	assert.match(ui.dialog() ?? "", /Reload session[\s\S]*Reload proj\? pi reloads its extensions[\s\S]*without closing or clearing/);
+	assert.deepEqual(ui.sent, [], "nothing is sent before the answer");
+	ui.press("y");
+	assert.deepEqual(ui.sent, [{ kind: "reload" }]);
+
+	ui.press("N");
+	assert.match(ui.dialog() ?? "", /New conversation[\s\S]*Start a new conversation in proj\? Like pi's \/new/);
+	ui.press("n");
+	assert.deepEqual(ui.sent, [{ kind: "reload" }], "declining sends nothing");
+	ui.press("N", "y");
+	assert.deepEqual(ui.sent, [{ kind: "reload" }, { kind: "new" }], "no saved conversation is needed");
+
+	ui.store.setState(101, session({ phase: "working" }));
+	ui.press("L");
+	assert.equal(ui.dialog(), undefined, "no dialog while working");
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj must be idle to reload/);
+	ui.press("N");
+	assert.equal(ui.dialog(), undefined, "no dialog while working");
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj must be idle to start a new conversation/);
+
+	ui.store.setState(101, session({ asks: [{ id: 1, question: "Why?", askedAt: Date.now(), status: "answering", answer: "" }] }));
+	for (const key of ["L", "N"]) {
+		ui.press(key);
+		assert.equal(ui.dialog(), undefined, "no dialog while a side question answers");
+		assert.match(strip(ui.app.render(120).at(-1) ?? ""), /A side question is still answering/);
+	}
+	assert.equal(ui.sent.length, 2);
+});
+
+test("m opens the session menu: it follows the session's state and its keys run the session's commands", async () => {
+	const ui = harness("/nonexistent");
+	const saved = { sessionFile: "/sessions/proj.jsonl", model: "anthropic/opus", thinking: "high" as const, context: { tokens: 160_000, window: 200_000, percent: 80 } };
+	ui.store.setState(101, session(saved));
+
+	ui.press("m");
+	const menu = ui.dialog() ?? "";
+	assert.match(menu, /Session · proj[\s\S]*○ ready · anthropic\/opus · high · ctx 80%/);
+	for (const command of [/x +abort/, /Z +compact/, /M +model/, /T +thinking/, /R +rename/, /a +attach/, /L +reload/, /N +new conversation/, /S +restart/, /c +close/, /C +recycle/, /r +resume/, /d +dismiss/]) assert.match(menu, command);
+	ui.press("p");
+	assert.match(ui.dialog() ?? "", /Session · proj/, "a key that is not a session command leaves the menu open");
+
+	ui.press("S");
+	assert.match(ui.dialog() ?? "", /Restart proj\? Close pi gracefully/, "the command's own confirmation replaces the menu");
+	ui.press("y");
+	await eventually(() => assert.equal(ui.restarted.length, 1));
+	assert.equal(ui.dialog(), undefined);
+
+	ui.press("m", "L", "y");
+	assert.deepEqual(ui.sent, [{ kind: "reload" }]);
+	ui.press("m", "Z", "y");
+	assert.deepEqual(ui.sent.at(-1), { kind: "compact" });
+
+	for (const close of ["\x1b", "m", "q"]) {
+		ui.press("m");
+		assert.match(ui.dialog() ?? "", /Session · proj/);
+		ui.press(close);
+		assert.equal(ui.dialog(), undefined);
+	}
+	assert.equal(ui.quits(), 0, "q closes only the menu");
+
+	ui.press("m");
+	const state = () => ui.dialog()?.split("\n")[1] ?? "";
+	assert.match(state(), /○ ready · anthropic\/opus/);
+	ui.store.setState(101, session({ ...saved, phase: "working" }));
+	assert.match(state(), /… model \d+s · anthropic\/opus/, "the open menu shows the session's current state");
+	ui.press("S");
+	assert.equal(ui.dialog(), undefined, "a command that cannot run now closes the menu");
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj must be idle to restart/, "and says why");
+	assert.equal(ui.restarted.length, 1);
+});
+
+test("the session menu never acts on a session that replaced the one it was opened for", () => {
+	const ui = harness("/nonexistent");
+	ui.store.setState(101, session({}));
+
+	ui.press("m");
+	ui.store.setState(101, session({ instanceId: "replacement" }));
+	assert.match(ui.dialog() ?? "", /session ended or was replaced/);
+	ui.press("c");
+	assert.equal(ui.dialog(), undefined, "no close confirmation for the replacement");
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /proj ended or was replaced; select its current instance/);
+	assert.deepEqual(ui.sent, []);
+
+	ui.press("m", "c");
+	assert.match(ui.dialog() ?? "", /Close proj\?/, "a menu opened for the replacement acts on it");
+});
+
+test("m without a selected session says so", () => {
+	const ui = harness("/nonexistent");
+	ui.press("m");
+	assert.equal(ui.dialog(), undefined);
+	assert.match(strip(ui.app.render(120).at(-1) ?? ""), /No session selected/);
+});
+
 test("i asks the selected session a side question; one at a time; an answer that lands unseen is announced", async () => {
 	const ui = harness("/nonexistent");
 	const asked = Date.now();
