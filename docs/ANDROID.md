@@ -247,7 +247,12 @@ pairing/drafts; revoke the old device token and re-pair afterward.
 ## 3. Session management
 
 The app has six tabs: **Sessions**, **Projects** (new/resume in any known project),
-**Usage**, **Context**, **Glasses** and **Pairing**. Tapping a session opens its detail. A header
+**Usage**, **Context**, **Glasses** and **Pairing**. Tapping a session opens its detail. A long press
+on a session in Sessions opens its management menu instead: abort, compact, reload, new session,
+restart, close gracefully and, once the session has exited, **Dismiss**. The menu lists only the
+commands the host advertises for that session, greys out blocked ones and stays disabled offline or
+while an action is pending; it never leaves the overview. Run control asks for confirmation and names
+the pressed session, which becomes the selected session when you confirm. A header
 that stays in view shows its status, model and thinking level, context fill (CTX), the active
 roadmap step with progress, why it cannot be prompted (if so) and, once exited, **Dismiss**.
 Below it, four tabs split the detail by what you are doing:

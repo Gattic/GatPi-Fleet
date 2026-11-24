@@ -108,6 +108,16 @@ class DashViewModel @JvmOverloads constructor(
     fun suggest(session: Session, direction: String = "") { run { repository.command(session, suggestionCommand(direction)) } }
     /** Removes an exited session from the list, here and in pi-dash, then returns to the list. */
     fun dismiss(session: Session) { run { repository.command(session, JSONObject().put("kind", "dismiss")); back() } }
+    /**
+     * Runs a choice from the overview's session menu without leaving the overview. Dismiss acts at once;
+     * the other commands open their confirmation, which selects the pressed session when it is confirmed.
+     */
+    fun listCommand(session: Session, kind: String) {
+        if (kind != "dismiss") { confirm(session, kind); return }
+        // Commands act on the selected session, so select it before dismissing.
+        if (repository.state.value.selected != session.id) repository.select(session.id)
+        dismiss(session)
+    }
     fun confirm(session: Session, kind: String) {
         val (title, text) = when (kind) {
             "abort" -> "Abort run?" to "Abort the current run? This does not close pi."
@@ -129,6 +139,8 @@ class DashViewModel @JvmOverloads constructor(
                 c.dismissReceipt -> { repository.clearPending(); repository.message("Receipt dismissed after manual inspection; no command was replayed") }
                 c.git != null -> { closeGit(); repository.gitAction(c.git) }
                 c.target != null && c.command != null -> {
+                    // The command API acts on the selected session; a menu confirmation names its target explicitly.
+                    if (repository.state.value.selected != c.target.id) repository.select(c.target.id)
                     repository.command(c.target, c.command)
                     if (c.command.getString("kind") in listOf("reload", "new", "restart")) back()
                 }

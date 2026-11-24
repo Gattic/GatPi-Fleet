@@ -1,7 +1,10 @@
 package dev.pidash.android.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,6 +22,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -28,6 +33,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.compositeOver
@@ -40,8 +48,14 @@ import dev.pidash.android.DashViewModel
 import dev.pidash.android.Screen
 import dev.pidash.android.Session
 
+/** The same run-control commands the Manage tab offers, in the order the session menu lists them. */
+private val sessionMenuCommands = listOf(
+    "abort" to "Abort", "compact" to "Compact", "reload" to "Reload",
+    "new" to "New session", "restart" to "Restart", "shutdown" to "Close gracefully",
+)
+
 @Composable
-internal fun SessionsScreen(vm: DashViewModel, state: Dashboard) {
+internal fun SessionsScreen(vm: DashViewModel, state: Dashboard, actionsEnabled: Boolean) {
     val query by vm.filter.collectAsStateWithLifecycle()
     val attention by vm.attentionOnly.collectAsStateWithLifecycle()
     val needing = state.sessions.count { it.attentionKey != null }
@@ -76,44 +90,64 @@ internal fun SessionsScreen(vm: DashViewModel, state: Dashboard) {
             state.updatedAt == 0L -> Loading("Loading sessions…", Modifier.padding(horizontal = 16.dp))
             sessions.isEmpty() -> EmptyState("No matching sessions", "Start pi on the host, or check pairing and the bridge.")
             else -> LazyColumn(contentPadding = PaddingValues(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(sessions, key = { it.id }) { session -> SessionCard(session, state.updatedAt) { vm.select(session) } }
+                items(sessions, key = { it.id }) { session ->
+                    SessionCard(session, state.updatedAt, actionsEnabled, { vm.select(session) }) { kind -> vm.listCommand(session, kind) }
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SessionCard(session: Session, now: Long, onClick: () -> Unit) {
+private fun SessionCard(session: Session, now: Long, actionsEnabled: Boolean, onOpen: () -> Unit, onManage: (String) -> Unit) {
     val attention = session.attentionKey != null
     val surface = MaterialTheme.colorScheme.surfaceContainer
-    Card(
-        onClick = onClick, modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = if (attention) Pi.Waiting.copy(alpha = 0.08f).compositeOver(surface) else surface),
-        border = if (attention) BorderStroke(1.dp, Pi.Waiting.copy(alpha = 0.5f)) else null,
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(session.label, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(session.project, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    var menu by rememberSaveable(session.id) { mutableStateOf(false) }
+    // A command is usable only when the host lists it unblocked and no action is pending.
+    val can = { kind: String -> actionsEnabled && session.commands.containsKey(kind) && session.commands[kind] == null }
+    Box {
+        Card(
+            modifier = Modifier.fillMaxWidth().combinedClickable(
+                onClickLabel = "Open session", onLongClickLabel = "Session actions",
+                onClick = onOpen, onLongClick = { menu = true },
+            ),
+            colors = CardDefaults.cardColors(containerColor = if (attention) Pi.Waiting.copy(alpha = 0.08f).compositeOver(surface) else surface),
+            border = if (attention) BorderStroke(1.dp, Pi.Waiting.copy(alpha = 0.5f)) else null,
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(session.label, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(session.project, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    StatusPill(session.status, session.statusLabel)
                 }
-                StatusPill(session.status, session.statusLabel)
-            }
-            session.plan?.let { PlanProgress(it) }
-            session.metrics?.background?.takeIf { it.isNotEmpty() }?.let { work ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("BG", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        work.joinToString(" · ") { "${it.kind} ${it.label} ${duration((now - it.startedAt).coerceAtLeast(0))}" },
-                        Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
+                session.plan?.let { PlanProgress(it) }
+                session.metrics?.background?.takeIf { it.isNotEmpty() }?.let { work ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("BG", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            work.joinToString(" · ") { "${it.kind} ${it.label} ${duration((now - it.startedAt).coerceAtLeast(0))}" },
+                            Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(session.model ?: "Model unavailable", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    ContextLabel(session.contextPercent)
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(session.model ?: "Model unavailable", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                ContextLabel(session.contextPercent)
+            // Only the commands the host advertises for this session; Dismiss appears once the session has exited.
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                sessionMenuCommands.filter { session.commands.containsKey(it.first) }.forEach { (kind, label) ->
+                    DropdownMenuItem(text = { Text(label) }, onClick = { menu = false; onManage(kind) }, enabled = can(kind))
+                }
+                if (session.commands.containsKey("dismiss") && session.commands["dismiss"] == null) {
+                    DropdownMenuItem(text = { Text("Dismiss") }, onClick = { menu = false; onManage("dismiss") }, enabled = can("dismiss"))
+                }
             }
         }
     }
