@@ -84,7 +84,7 @@ fun DashScreen(vm: DashViewModel = viewModel()) {
             }
             Box(Modifier.weight(1f)) {
                 when (screen) {
-                    Screen.Sessions -> SessionsScreen(vm, state)
+                    Screen.Sessions -> SessionsScreen(vm, state, actionsEnabled)
                     Screen.Session -> SessionScreen(vm, state, actionsEnabled)
                     Screen.Jobs -> JobsScreen(vm, state)
                     Screen.Projects -> ProjectsScreen(vm, actionsEnabled)

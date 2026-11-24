@@ -53,7 +53,7 @@ class JobsScreenTest {
     @Test fun sessionsLinkToJobsAndNameBackgroundWork() {
         val vm = vm()
         val state = Dashboard(sessions = listOf(session("a", "project-a", "job", "nightly-build", "npm run test")), updatedAt = 61_000L)
-        compose.setContent { MaterialTheme { SessionsScreen(vm, state) } }
+        compose.setContent { MaterialTheme { SessionsScreen(vm, state, actionsEnabled = true) } }
         compose.onNodeWithText("Jobs · 1").assertIsDisplayed()
         compose.onNodeWithText("BG").assertIsDisplayed()
         compose.onNodeWithText("job nightly-build 1m00s").assertIsDisplayed()
