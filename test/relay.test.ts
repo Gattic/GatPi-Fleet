@@ -16,6 +16,7 @@ import { UsageIndex } from "../src/manager/usage/usage-index.ts";
 import { type ClientMessage, emptyUsage, encodeMessage, LineDecoder, PROTOCOL_VERSION, type SessionState, socketPath } from "../src/protocol/index.ts";
 import { chunkUsage, type GitMethod, RELAY_VERSION } from "../src/relay/protocol.ts";
 import { RecoveryJournal } from "../src/manager/recovery.ts";
+import { ManagerRuntime } from "../src/manager/runtime.ts";
 
 const RELAY = fileURLToPath(new URL("../src/relay/main.ts", import.meta.url));
 
@@ -180,6 +181,53 @@ test("a host's relay reports its dismissals and records a controller's dismissal
 	// A controller elsewhere dismisses another run: the relay records it on this host.
 	await remote.dismiss(`${process.pid}:session:two`);
 	assert.equal(existsSync(join(dismissed, dismissalName(`${process.pid}:session:two`))), true);
+});
+
+test("a dismissal crosses machines through the run's host runtime directory", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-dismiss-cross-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	// The host's runtime directory is the shared record: both controllers run their own relay against
+	// it, as a dashboard and a gateway on different machines would.
+	const hostRun = join(root, "host-run");
+	const dismissed = join(hostRun, "pi-dash", "dismissed");
+	const command = ["env", `XDG_RUNTIME_DIR=${hostRun}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `XDG_CACHE_HOME=${join(root, "cache")}`, `PI_CODING_AGENT_DIR=${join(root, "agent")}`, process.execPath, RELAY];
+	const controllers = ["dashboard", "gateway"].map((name) => new ManagerRuntime({
+		agent: join(root, "agent"), runtimeDir: join(root, name, "run"), cacheDir: join(root, name, "cache"),
+		hosts: ["box"], relay: () => command,
+	}));
+	t.after(() => Promise.all(controllers.map((runtime) => runtime.close())));
+	const [dashboard, gateway] = controllers;
+	const exited = (pid: number, sessionId: string, instanceId: string): SessionState => ({
+		pid, cwd: root, sessionId, instanceId, phase: "idle", phaseSince: 1, lastEventAt: 1,
+		usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [],
+	});
+	// Each controller holds the same exited remote row, with separate runtime directories of its own.
+	for (const { store } of controllers) {
+		store.setState(50, exited(50, "s50", "i50"), "box");
+		store.bye(50, "quit", "box");
+	}
+	for (const runtime of controllers) runtime.network.remotes.get("box")!.start();
+	await until(() => controllers.every((runtime) => runtime.network.remotes.get("box")!.status.kind === "online"));
+
+	// The dashboard records the dismissal on the run's host, not only in its own runtime directory.
+	await dashboard.dismiss(dashboard.store.rows.get("box:50")!);
+	assert.equal(dashboard.store.rows.has("box:50"), false);
+	assert.equal(existsSync(join(dismissed, dismissalName("50:s50:i50"))), true);
+
+	// The gateway learns it from the host's relay report and releases its row too.
+	const remote = gateway.network.remotes.get("box")!;
+	await remote.sample([]);
+	assert.deepEqual([...remote.dismissed], [dismissalName("50:s50:i50")]);
+	gateway.releaseDismissed();
+	assert.equal(gateway.store.rows.has("box:50"), false);
+
+	// A run dismissed on the host itself (its local TUI) reaches a controller holding the row.
+	gateway.store.setState(60, exited(60, "s60", "i60"), "box");
+	gateway.store.bye(60, "quit", "box");
+	writeFileSync(join(dismissed, dismissalName("60:s60:i60")), "");
+	await remote.sample([]);
+	gateway.releaseDismissed();
+	assert.equal(gateway.store.rows.has("box:60"), false);
 });
 
 test("a remote host's relay indexes its session files and pushes their usage", async (t) => {
