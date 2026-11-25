@@ -1,12 +1,13 @@
 // pi-dash-relay and RemoteHost end to end, with the relay as a local child process in place of ssh.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { sessionDirName } from "../src/manager/actions/sessions.ts";
+import { dismissalName } from "../src/manager/dismissals.ts";
 import { UncertainCommandError } from "../src/manager/collectors/bridges.ts";
 import { type HostStatus, RemoteHost, type RemoteEvents } from "../src/manager/remote/host.ts";
 import { loadHosts, saveHosts, shellQuote, sshCommand } from "../src/manager/remote/hosts.ts";
@@ -151,6 +152,34 @@ test("remote recovery discovers persisted records at relay startup and revalidat
 	assert.deepEqual(remote.interrupted, []);
 	assert.equal(readFileSync(file, "utf8"), "saved transcript");
 	await assert.rejects(remote.request("recover", { instanceId: "killed" }), /recovery changed/);
+});
+
+test("a host's relay reports its dismissals and records a controller's dismissal", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-relay-dismiss-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const run = join(root, "run");
+	mkdirSync(join(run, "pi-dash"), { recursive: true, mode: 0o700 });
+	const remote = new RemoteHost("box", recorder().events, ["env", `XDG_RUNTIME_DIR=${run}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `XDG_CACHE_HOME=${join(root, "cache")}`, `PI_CODING_AGENT_DIR=${join(root, "agent")}`, process.execPath, RELAY]);
+	t.after(() => remote.close());
+	const dismissed = join(run, "pi-dash", "dismissed");
+	// A dismissal requested before the link is up is queued, then recorded on connect.
+	const queued = `${process.pid}:session:queued`;
+	await remote.dismiss(queued);
+	remote.start();
+	await until(() => remote.status.kind === "online");
+	await until(() => existsSync(join(dismissed, dismissalName(queued))));
+	await remote.sample([]);
+	assert.deepEqual([...remote.dismissed], [dismissalName(queued)]);
+
+	// This host's dashboard dismissed a run: its relay reports the file name to controllers elsewhere.
+	const incarnation = `${process.pid}:session:one`;
+	writeFileSync(join(dismissed, dismissalName(incarnation)), "");
+	await remote.sample([]);
+	assert.deepEqual([...remote.dismissed].sort(), [dismissalName(incarnation), dismissalName(queued)].sort());
+
+	// A controller elsewhere dismisses another run: the relay records it on this host.
+	await remote.dismiss(`${process.pid}:session:two`);
+	assert.equal(existsSync(join(dismissed, dismissalName(`${process.pid}:session:two`))), true);
 });
 
 test("a remote host's relay indexes its session files and pushes their usage", async (t) => {

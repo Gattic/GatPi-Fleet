@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parseGpuQuery } from "../src/manager/collectors/gpu.ts";
+import { dismissalName } from "../src/manager/dismissals.ts";
 import { Series } from "../src/manager/model/series.ts";
 import { deriveStatus, STALL_MS } from "../src/manager/model/status.ts";
 import type { ResourceSample } from "../src/manager/collectors/procs.ts";
@@ -207,7 +208,7 @@ test("an exited session dismissed in the dashboard or the gateway leaves both, a
 	const root = mkdtempSync(join(tmpdir(), "pi-dash-dismiss-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	// Separate processes with their own stores, sharing this user's runtime directory.
-	const [dashboard, gateway] = ["dashboard", "gateway"].map((name) => new ManagerRuntime({ agent: join(root, "agent"), runtimeDir: join(root, "run"), cacheDir: join(root, name) }));
+	const [dashboard, gateway] = ["dashboard", "gateway"].map((name) => new ManagerRuntime({ agent: join(root, "agent"), runtimeDir: join(root, "run"), cacheDir: join(root, name), hosts: ["box03"] }));
 	t.after(() => Promise.all([dashboard.close(), gateway.close()]));
 	for (const { store } of [dashboard, gateway]) {
 		store.setState(10, bridge({ pid: 10, instanceId: "a" }));
@@ -233,6 +234,68 @@ test("an exited session dismissed in the dashboard or the gateway leaves both, a
 	dashboard.store.bye(10, "quit");
 	dashboard.releaseDismissed();
 	assert.deepEqual(keys(dashboard), ["10", "20"]);
+});
+
+test("a dismissal releases a disconnected row whose host went offline before its bye arrived", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-dismiss-offline-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const [dashboard, gateway] = ["dashboard", "gateway"].map((name) => new ManagerRuntime({ agent: join(root, "agent"), runtimeDir: join(root, "run"), cacheDir: join(root, name), hosts: ["box03"] }));
+	t.after(() => Promise.all([dashboard.close(), gateway.close()]));
+	// The dashboard saw the remote session exit gracefully; the gateway's own relay dropped before the bye.
+	for (const { store } of [dashboard, gateway]) store.setState(30, bridge({ pid: 30, sessionId: "s30", instanceId: "i30" }), "box03");
+	dashboard.store.bye(30, "quit", "box03");
+	gateway.store.hostLost("box03");
+	assert.equal(gateway.store.rows.get("box03:30")?.exitedAt, undefined, "the gateway only knows the session is disconnected");
+
+	await dashboard.dismiss(dashboard.store.rows.get("box03:30")!);
+	gateway.releaseDismissed();
+	assert.equal(gateway.store.rows.has("box03:30"), false, "the dismissal names that run, so the phone drops it too");
+
+	// The same run reconnecting is running: its dismissal must not keep hiding it.
+	gateway.store.setState(30, bridge({ pid: 30, sessionId: "s30", instanceId: "i30" }), "box03");
+	gateway.releaseDismissed();
+	assert.ok(gateway.store.rows.get("box03:30")?.connected);
+});
+
+test("dismissing an interrupted suggestion records that run for processes still holding its row", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-dismiss-recovery-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const [dashboard, gateway] = ["dashboard", "gateway"].map((name) => new ManagerRuntime({ agent: join(root, "agent"), runtimeDir: join(root, "run"), cacheDir: join(root, name) }));
+	t.after(() => Promise.all([dashboard.close(), gateway.close()]));
+	// This dashboard started after the crash and has no row; the gateway saw the session run and exit.
+	gateway.store.setState(40, bridge({ pid: 40, sessionId: "s40", instanceId: "i40" }));
+	gateway.store.bye(40, "quit");
+	assert.equal(dashboard.store.rows.has("40"), false);
+
+	await dashboard.dismissInterrupted({ version: 1, pid: 40, instanceId: "i40", processIdentity: "dead", sessionId: "s40", sessionFile: "/sessions/x.jsonl", cwd: "/p", startedAt: NOW });
+	gateway.releaseDismissed();
+	assert.equal(gateway.store.rows.has("40"), false, "the phone drops the exited row the suggestion stood for");
+});
+
+test("a host's relay report releases a remote row it dismissed", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-remote-dismiss-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const runtime = new ManagerRuntime({ agent: join(root, "agent"), runtimeDir: join(root, "run"), cacheDir: join(root, "cache"), hosts: ["box"], relay: () => ["true"] });
+	t.after(() => runtime.close());
+	const remote = runtime.network.remotes.get("box")!;
+	runtime.store.setState(10, bridge({ pid: 10, instanceId: "a" }), "box");
+	runtime.store.bye(10, "quit", "box");
+	// The host names its runs without the host prefix; its relay reports the dismissal's file name.
+	remote.dismissed = new Set([dismissalName("10:s:a")]);
+	runtime.releaseDismissed();
+	assert.equal(runtime.store.rows.has("box:10"), false);
+
+	// The same pid and run on this machine is another session: that host's dismissal does not hide it.
+	runtime.store.setState(10, bridge({ pid: 10, instanceId: "a" }));
+	runtime.store.bye(10, "quit");
+	runtime.releaseDismissed();
+	assert.equal(runtime.store.rows.has("10"), true);
+
+	// A connected session is running; a stale dismissal never hides it.
+	runtime.store.setState(20, bridge({ pid: 20, instanceId: "b" }), "box");
+	remote.dismissed.add(dismissalName("20:s:b"));
+	runtime.releaseDismissed();
+	assert.equal(runtime.store.rows.has("box:20"), true);
 });
 
 test("Store fills a new row's activity lane from the bridge's timeline", () => {

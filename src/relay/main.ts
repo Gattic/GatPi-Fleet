@@ -12,9 +12,10 @@ import { restartSession } from "../manager/actions/restart.ts";
 import { readHardcopy, requestHardcopy } from "../manager/actions/peek.ts";
 import { listProjects, listSessions } from "../manager/actions/sessions.ts";
 import { BridgeHub, pidAlive, UncertainCommandError } from "../manager/collectors/bridges.ts";
+import { Dismissals } from "../manager/dismissals.ts";
 import { GpuMonitor } from "../manager/collectors/gpu.ts";
 import { ProcSampler } from "../manager/collectors/procs.ts";
-import { rowCwd, Store } from "../manager/model/store.ts";
+import { rowCwd, rowIncarnation, Store } from "../manager/model/store.ts";
 import { agentDir, RecoveryJournal } from "../manager/recovery.ts";
 import type { IndexUpdate } from "../manager/usage/types.ts";
 import { UsageIndex, USAGE_RETENTION_MS } from "../manager/usage/usage-index.ts";
@@ -35,6 +36,10 @@ function serve(): void {
 	// The state last forwarded per bridge: later states go out as patches against it.
 	const forwarded = new Map<number, SessionState>();
 	const store = new Store(() => {});
+	// This host's dismissals, which its local dashboard and gateway also write: a controller elsewhere
+	// learns them through the sample below, and a dismissal it sends is recorded here for every controller.
+	const dismissals = new Dismissals(join(dir, "dismissed"));
+	let reportedDismissed = "";
 	const hub = new BridgeHub(dir, {
 		onState: (pid, state) => {
 			store.setState(pid, state);
@@ -97,7 +102,12 @@ function serve(): void {
 		sample: ({ targets }) => {
 			const sample = sampler.sample(targets, gpu.latest);
 			const latest = gpu.latest;
-			return { resources: [...sample.resources], piProcesses: sample.piProcesses, interrupted: recovery.list(), host: sample.host, gpu: latest && { utilization: latest.utilization, memUsed: latest.memUsed, memTotal: latest.memTotal } };
+			// Report the full set only when it changed, so a steady link does not repeat it every sample.
+			const names = [...dismissals.names()].sort();
+			const key = names.join(",");
+			const dismissed = key === reportedDismissed ? undefined : names;
+			reportedDismissed = key;
+			return { resources: [...sample.resources], piProcesses: sample.piProcesses, interrupted: recovery.list(), host: sample.host, gpu: latest && { utilization: latest.utilization, memUsed: latest.memUsed, memTotal: latest.memTotal }, dismissed };
 		},
 		peek: ({ pid, sty, window }) => {
 			// The pid names a file in the private runtime directory.
@@ -124,6 +134,13 @@ function serve(): void {
 			return launchSession({ cwd: record.cwd, label: record.name ?? "recovered", sessionFile: record.sessionFile }, launchRows(), dir);
 		},
 		dismissRecovery: ({ instanceId }) => { recovery.dismiss(instanceId); return null; },
+		dismiss: ({ incarnation }) => {
+			dismissals.add(incarnation);
+			// A controller may dismiss a row the relay still holds as disconnected; drop it too.
+			const row = [...store.rows.values()].find((row) => rowIncarnation(row) === incarnation);
+			if (row) store.dismiss(row.key);
+			return null;
+		},
 		git: ({ method, args }) => {
 			if (!GIT_METHODS.includes(method)) throw new Error(`unknown git operation ${String(method)}`);
 			return (git[method] as (...args: unknown[]) => Promise<unknown>).apply(git, args);
