@@ -267,6 +267,25 @@ survive pid reuse. Per tick:
 - Known gap: LLM calls made by extensions outside the session (e.g. advisory/memory
   helpers) are not in session usage; shown as "not tracked" in help, not guessed.
 
+### 3.7 Session dismissal sharing (runtime directory)
+
+A dismissal must leave every view of an exited session, including a gateway on another
+machine and the phone behind it, so it is recorded where the session ran rather than in a
+controller's memory. The record is an empty file named `dismissalName(incarnation)` in
+`$XDG_RUNTIME_DIR/pi-dash/dismissed/` (dir 0700) on the run's host. The incarnation is
+`pid:sessionId:instanceId` (`pid:proc:<starttime>` for a process without a bridge), so a
+later pi reusing the pid is a new run and a stale file never hides it. A host's own files
+carry no host prefix; a controller's local files name the row as its store does.
+
+The directory is the single shared record for every pi-dash process on that host: the local
+dashboard and gateway both write it, so a row dismissed in either leaves both. Each host's
+relay reads the same directory and reports the file-name set to controllers elsewhere on
+the first sample where it changed (relay protocol 7); a controller sends a remote row's
+dismissal to the run's host through the relay instead of recording it only locally, and a
+dismissal for an unreachable host is queued until the link returns. Entries older than a
+week are pruned when a dismissal is written. Rows are released only while not connected: a
+running session is never hidden by a stale dismissal.
+
 ## 4. UX design
 
 ### 4.1 Principles
@@ -449,7 +468,9 @@ Each phase ends with a working tool; later phases add capability on top.
 - Dashboard: < 2 % of one core average with 6 sessions; < 150 MB RSS.
 - Bridge: < 0.5 % of one core added to pi; ≤ 4 patches/s per session.
 - Disk: only `~/.cache/pi-dash/usage-index.json` (derived, pruned to 30 days, expected
-  < 5 MB) and per-session peek files in `$XDG_RUNTIME_DIR` (tmpfs, deleted on close).
+  < 5 MB), per-session peek files in `$XDG_RUNTIME_DIR` (tmpfs, deleted on close), and the
+  empty dismissal markers in `$XDG_RUNTIME_DIR/pi-dash/dismissed/` on each host (pruned
+  after a week; see 3.7).
   Sockets removed on shutdown; stale sockets (dead pid) removed by the dashboard.
 - No logs are written. *Updated:* no `--debug` flag; nothing needed it.
 
