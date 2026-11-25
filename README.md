@@ -258,8 +258,9 @@ recovery menu to remove a suggestion without deleting the saved conversation. Un
 stay until resumed or dismissed; resolved records are removed rather than accumulating history.
 Dismissing an exited row also clears its recovery suggestion, including from the gateway. Dismissing
 an interrupted remote row requires that host to be reachable so the dismissal can be saved there;
-a known graceful exit can still be dismissed offline. Remote launches recheck process ownership on
-the host, rather than trusting a potentially stale dashboard snapshot.
+a known graceful exit can still be dismissed offline, and the row's host records it when its link
+returns. Remote launches recheck process ownership on the host, rather than trusting a potentially
+stale dashboard snapshot.
 Existing duplicate-session checks and shared launch reservations still apply. Failed reservation
 writes and project-directory failures release the reservation created by that attempt. If an entire screen
 and its cleanup shell were killed, a stale reservation can require local inspection before removal;
@@ -387,9 +388,10 @@ the usage index cache at `~/.cache/pi-dash/usage-index.json` (derived, keeps
 30 days, about 200 KB; remote hosts keep their own as `usage-index-relay.json`), Hermes advisor feedback at
 `~/.cache/pi-dash/hermes-advisor-events.jsonl`, and short-lived peek captures and sockets in
 `$XDG_RUNTIME_DIR/pi-dash/` (on remote hosts too; the relay removes its captures when it ends).
-Dismissed exited sessions are empty files in `$XDG_RUNTIME_DIR/pi-dash/dismissed/`, which is how
-pi-dash and the gateway (separate processes) drop the same rows; entries older than a week are
-removed.
+Dismissed sessions are empty files in `$XDG_RUNTIME_DIR/pi-dash/dismissed/` on the host that ran
+them, which is how pi-dash and the gateway (separate processes, possibly on different machines)
+drop the same rows: each host's relay reports its files to controllers elsewhere, and a controller
+records a remote row's dismissal on that row's host. Entries older than a week are removed.
 `pi-dash-host` writes `~/.config/pi-dash/hosts.json` here, and on each host it adds installs
 `~/.local/share/pi-dash` (about 500 KB) and its entry in pi's `settings.json`.
 The first start indexes recent session files in a background thread; on this machine that took

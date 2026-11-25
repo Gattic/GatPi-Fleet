@@ -150,7 +150,10 @@ test("a delayed remote dismissal cannot delete a replacement row with the same P
 	let finish!: () => void;
 	const pending = new Promise<void>((resolve) => { finish = resolve; });
 	const requests: unknown[] = [];
-	t.mock.method(runtime.network, "remote", () => ({ request: async (...args: unknown[]) => { requests.push(args); await pending; return null; } }) as unknown as RemoteHost);
+	t.mock.method(runtime.network, "remote", () => ({
+		request: async (...args: unknown[]) => { requests.push(args); await pending; return null; },
+		dismiss: async (incarnation: string) => { requests.push(["dismiss", incarnation]); await pending; },
+	}) as unknown as RemoteHost);
 	const bridge = { ...state, phase: "idle" as const, phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
 	runtime.store.setState(state.pid, bridge, "box");
 	runtime.store.disconnect(state.pid, false, "box");
@@ -158,7 +161,7 @@ test("a delayed remote dismissal cannot delete a replacement row with the same P
 	runtime.store.setState(state.pid, { ...bridge, instanceId: "replacement" }, "box");
 	finish();
 	await dismissed;
-	assert.deepEqual(requests, [["dismissRecovery", { instanceId: state.instanceId }]]);
+	assert.deepEqual(requests, [["dismissRecovery", { instanceId: state.instanceId }], ["dismiss", `${state.pid}:${state.sessionId}:${state.instanceId}`]]);
 	assert.equal(runtime.store.rows.get(`box:${state.pid}`)?.bridge?.instanceId, "replacement");
 });
 

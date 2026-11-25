@@ -10,7 +10,7 @@ import { BridgeHub, pidAlive } from "./collectors/bridges.ts";
 import { GpuMonitor } from "./collectors/gpu.ts";
 import { ProcSampler } from "./collectors/procs.ts";
 import { QuotaMonitor } from "./collectors/quota.ts";
-import { Dismissals } from "./dismissals.ts";
+import { Dismissals, dismissalName } from "./dismissals.ts";
 import { hostRows, rowCwd, rowIncarnation, rowLabel, SAMPLE_MS, type SessionRow, Store } from "./model/store.ts";
 import { Network } from "./network.ts";
 import { relayCommand } from "./remote/hosts.ts";
@@ -88,8 +88,19 @@ export class ManagerRuntime {
 	}
 
 	async dismissInterrupted(entry: InterruptedSession): Promise<void> {
-		if (entry.host !== undefined) await this.network.remote(entry.host).request("dismissRecovery", { instanceId: entry.instanceId });
-		else this.recovery.dismiss(entry.instanceId);
+		// The suggestion names one run, identified on its own host without the host prefix.
+		const incarnation = `${entry.pid}:${entry.sessionId}:${entry.instanceId}`;
+		if (entry.host !== undefined) {
+			const remote = this.network.remote(entry.host);
+			await remote.request("dismissRecovery", { instanceId: entry.instanceId });
+			// Record it on the host, where its relay reports it to every controller.
+			await remote.dismiss(incarnation);
+			this.dismissals.add(`${entry.host}:${incarnation}`);
+		} else {
+			this.recovery.dismiss(entry.instanceId);
+			// Record it even where this process has no row for it, so other controllers release theirs.
+			this.dismissals.add(incarnation);
+		}
 		const row = [...this.store.rows.values()].find((row) => row.host === entry.host && row.bridge?.instanceId === entry.instanceId);
 		if (row?.exitedAt !== undefined) this.forgetRow(row);
 		this.interrupted = this.recovery.list();
@@ -117,7 +128,7 @@ export class ManagerRuntime {
 		this.store.expectLaunch(screen, slot, key, host);
 	}
 
-	/** Removes an exited session's row here and in this user's other pi-dash processes (dashboard, gateway). */
+	/** Removes an exited session's row here, in this machine's other pi-dash processes and in the gateway. */
 	async dismiss(row: SessionRow): Promise<void> {
 		// The store reuses row objects when a PID is reused; retain the requested incarnation.
 		row = { ...row };
@@ -126,6 +137,9 @@ export class ManagerRuntime {
 			if (row.host === undefined) this.recovery.dismiss(row.bridge.instanceId);
 			else await this.network.remote(row.host).request("dismissRecovery", { instanceId: row.bridge.instanceId });
 		}
+		// The run's own host records the dismissal, so every controller (including a gateway on another
+		// machine) releases it. An unreachable host keeps it until its link returns.
+		if (row.host !== undefined) await this.network.remote(row.host).dismiss(rowIncarnation({ ...row, host: undefined }));
 		this.interrupted = this.recovery.list();
 		const remote = row.host === undefined ? undefined : this.network.remotes.get(row.host);
 		if (remote) remote.interrupted = remote.interrupted.filter((record) => record.instanceId !== row.bridge?.instanceId);
@@ -139,12 +153,22 @@ export class ManagerRuntime {
 		if (current?.exitedAt !== undefined && rowIncarnation(current) === incarnation) this.store.dismiss(row.key);
 	}
 
-	/** Removes the exited rows that another pi-dash process dismissed. */
+	/**
+	 * Removes the rows that another pi-dash process dismissed: this machine's own, or one recorded on a
+	 * remote host and reported by its relay. A run this process has not marked exited yet (a remote
+	 * host's link dropped before its bye arrived) is released too; a connected session is running, so a
+	 * dismissal never hides it.
+	 */
 	releaseDismissed(): void {
-		const exited = [...this.store.rows.values()].filter((row) => row.exitedAt !== undefined);
-		if (!exited.length) return;
-		const dismissed = this.dismissals.dismissed(exited.map(rowIncarnation));
-		for (const row of exited) if (dismissed.has(rowIncarnation(row))) this.store.dismiss(row.key);
+		const candidates = [...this.store.rows.values()].filter((row) => !row.connected);
+		if (!candidates.length) return;
+		const local = this.dismissals.names();
+		for (const row of candidates) {
+			// This machine's files name the row as its store does; a host's files and report name its own run
+			// without the host prefix.
+			const hostDismissed = row.host === undefined ? undefined : this.network.remotes.get(row.host)?.dismissed;
+			if (local.has(dismissalName(rowIncarnation(row))) || hostDismissed?.has(dismissalName(rowIncarnation({ ...row, host: undefined })))) this.store.dismiss(row.key);
+		}
 	}
 
 	start(): void {

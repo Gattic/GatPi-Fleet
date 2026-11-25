@@ -64,6 +64,8 @@ function lastLine(text: string): string | undefined {
 export class RemoteHost {
 	readonly name: string;
 	interrupted: RecoveryRecord[] = [];
+	/** The host's dismissed incarnation file names, from its latest sample. */
+	dismissed = new Set<string>();
 	status: HostStatus = { kind: "connecting", since: Date.now() };
 	/** From the latest sample. */
 	vitals?: { host: HostSample; gpu?: GpuSummary };
@@ -72,6 +74,8 @@ export class RemoteHost {
 	private child?: ChildProcessWithoutNullStreams;
 	private readonly states = new Map<number, SessionState>();
 	private readonly pending = new Map<number, Pending>();
+	/** Dismissals to record on the host once its link is back. */
+	private readonly pendingDismissals = new Set<string>();
 	private nextId = 1;
 	private retryMs = RETRY_MS.min;
 	private retryTimer?: NodeJS.Timeout;
@@ -107,7 +111,24 @@ export class RemoteHost {
 		const wire = await this.request("sample", { targets });
 		this.vitals = { host: wire.host, gpu: wire.gpu };
 		this.interrupted = wire.interrupted;
+		// The relay reports the full set when it changed; until then the previous one still holds.
+		if (wire.dismissed) this.dismissed = new Set(wire.dismissed);
 		return { resources: new Map(wire.resources), piProcesses: wire.piProcesses, host: wire.host };
+	}
+
+	/** Records a run (without the host prefix) in the host's dismissals; queues it until the host is reachable. */
+	async dismiss(incarnation: string): Promise<void> {
+		this.pendingDismissals.delete(incarnation);
+		if (this.status.kind !== "online") {
+			this.pendingDismissals.add(incarnation);
+			return;
+		}
+		try {
+			await this.request("dismiss", { incarnation });
+		} catch {
+			// The link may have dropped; a retry writes the same empty file.
+			this.pendingDismissals.add(incarnation);
+		}
 	}
 
 	request<K extends RelayOp>(op: K, params: RelayOps[K]["params"], timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<RelayOps[K]["result"]> {
@@ -185,6 +206,8 @@ export class RemoteHost {
 				clearTimeout(this.helloTimer);
 				this.status = { kind: "online", since: Date.now(), hostname: message.hostname };
 				this.retryMs = RETRY_MS.min;
+				// Dismissals requested while the host was unreachable go out with the new link.
+				for (const incarnation of [...this.pendingDismissals]) void this.dismiss(incarnation);
 				return;
 			case "snapshot":
 				this.states.set(message.pid, message.state);
@@ -233,6 +256,7 @@ export class RemoteHost {
 		this.status = { kind: "offline", since: Date.now(), error };
 		this.vitals = undefined;
 		this.interrupted = [];
+		this.dismissed.clear();
 		this.states.clear();
 		this.failPending();
 		if (wasOnline) this.events.onLost();

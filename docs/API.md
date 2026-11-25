@@ -170,7 +170,8 @@ ask (4k), rename (120), model (`provider`, `id`), thinking (`level`), abort,
 shutdown, compact, reload, new, restart, suggest (optionally shaped by a `direction`), dismiss. No unknown properties/commands are accepted. Dismiss is
 the only command for an exited session and does not reach a bridge: it removes the
 session from the overview and from the dashboard (`d` there does the same for the
-gateway; both record dismissals in `$XDG_RUNTIME_DIR/pi-dash/dismissed/`). Prompts beginning
+gateway; both record dismissals in `$XDG_RUNTIME_DIR/pi-dash/dismissed/` on the session's host,
+whose relay reports them to controllers on other machines). Prompts beginning
 with `/` are rejected: extension dialogs/slash commands require local pi. Prompts
 still grant the session its normal tool authority, so a paired phone is privileged.
 Compact requires idle state. Ask is refused while another side question is active.

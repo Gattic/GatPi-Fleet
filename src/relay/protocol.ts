@@ -10,7 +10,7 @@ import type { FileUsage, UsageDelta } from "../manager/usage/types.ts";
 import type { Command, SessionIdentity, SessionPatch, SessionState } from "../protocol/index.ts";
 
 /** Bumped on any change to these messages; the bridge protocol version is checked separately. */
-export const RELAY_VERSION = 6;
+export const RELAY_VERSION = 7;
 
 export interface GpuSummary {
 	utilization: number;
@@ -25,6 +25,8 @@ export interface WireSample {
 	interrupted: RecoveryRecord[];
 	host: HostSample;
 	gpu?: GpuSummary;
+	/** The host's dismissed incarnation file names, when they changed since the last sample. */
+	dismissed?: string[];
 }
 
 export const GIT_METHODS = ["getSummary", "listBranches", "status", "pull", "push", "pushSetUpstream", "switchBranch"] as const satisfies readonly (keyof GitService)[];
@@ -45,6 +47,8 @@ export interface RelayOps {
 	/** Revalidate the host's lifecycle record before launching or dismissing it. */
 	recover: { params: { instanceId: string }; result: string };
 	dismissRecovery: { params: { instanceId: string }; result: null };
+	/** Record a run (without a host prefix) in this host's dismissals, so every controller releases it. */
+	dismiss: { params: { incarnation: string }; result: null };
 	git: { params: { method: GitMethod; args: unknown[] }; result: unknown };
 }
 

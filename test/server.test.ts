@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
+import { dismissalName } from "../src/manager/dismissals.ts";
 import { ManagerRuntime } from "../src/manager/runtime.ts";
 import { usageReport } from "../src/server/usage.ts";
 import { UncertainCommandError } from "../src/manager/collectors/bridges.ts";
@@ -304,6 +305,8 @@ test("the gateway lists, drives and dismisses the sessions of remote hosts", asy
 	await sessions.command(exited.id, { requestId: randomUUID(), epoch, revision: exited.revision, command: { kind: "dismiss" } });
 	assert.deepEqual(sessions.overview(), []);
 	assert.equal(received.length, 1);
+	// The gateway records the dismissal on the run's own host, so the host's dashboard releases it too.
+	assert.equal(existsSync(join(boxRun, "pi-dash", "dismissed", dismissalName(`${process.pid}:a:${state.instanceId}`))), true);
 });
 
 test("the gateway listens only on its configured addresses, and waits for one not on any interface yet", async (t) => {
