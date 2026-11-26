@@ -11,7 +11,14 @@ window is not mislabelled as five hours.
 Anthropic's five-hour and weekly balances are both shown when reported. Its unused five-hour
 window can have 0% used with a null reset timestamp: the balance remains visible with
 “Reset time not reported,” not a made-up countdown. This does not override an exhausted weekly
-limit. Codex only shows its returned windows; a missing five-hour window is not added.
+limit. Anthropic also meters the Fable family's week apart from the all-model week; when the
+provider reports that window it appears as its own line (`7d fable`) with its own reset, and when
+it does not, nothing is invented and the all-model week is unchanged. Codex only shows its
+returned windows; a missing five-hour window is not added.
+Google Antigravity's ACP login (`google-antigravity-acp`) reports one bucket per provisioned
+model, and each bucket with a remaining fraction becomes its own line labelled with the model id.
+The IDE's `tab_*` and `chat_*` completion buckets are not chat quota and stay out; a bucket
+without a remaining fraction stays unknown rather than 0% used.
 Android receives the same sanitized readings through the gateway and advances countdowns from
 host time using elapsed time, not the phone's potentially different wall clock. The report and
 its monotonic receipt-time anchor are retained together across Activity recreation, so rotation
@@ -33,16 +40,36 @@ proxies and persistent quota cache are not copied.
 `src/manager/collectors/provider-usage.ts` is the credential-bearing integration adapter:
 
 - Anthropic OAuth: `GET https://api.anthropic.com/api/oauth/usage`, with the provider's OAuth beta header.
+  Its `seven_day_fable` field, when present, is normalized as a separate `7d fable` window; a
+  malformed or absent field leaves the all-model windows untouched.
 - Codex OAuth: `GET https://chatgpt.com/backend-api/wham/usage`, with the stored account ID when present.
 - xAI OAuth: `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`, with the CLI auth
   headers and the user id from the access-token JWT. Only the reported current-period percentage
   and reset time are normalized; a period without a percentage is not treated as unused quota.
   API-key logins have no usage endpoint and are not probed.
-- Fixed HTTPS destinations, normal certificate verification, no redirects, a ten-second request
-  bound and a 64 KiB response bound. No inference or billable generation request is made.
-- Credentials are read locally from Pi's `auth.json`, never sent to Android or exported in reports.
-  API keys and other provider families are not sent to these endpoints. Responses expose only
-  normalized windows, timestamps and sanitized diagnostics, not email, account IDs or raw bodies.
+- Google Antigravity ACP: `POST` to `v1internal:retrieveUserQuota` on
+  `https://cloudcode-pa.googleapis.com`, falling through to
+  `https://daily-cloudcode-pa.googleapis.com` only when the first endpoint is unreachable or answers
+  403/404 for this client.
+  The request carries the login's project and Antigravity's client metadata (the announced version
+  follows `PI_AI_ANTIGRAVITY_VERSION`, defaulting to the companion provider's pin), matching the
+  endpoint and envelope GatPi-Harness's multi-login Antigravity provider already uses. One bucket per
+  provisioned model becomes one window; the IDE's `tab_*`/`chat_*` completion buckets and buckets
+  without a remaining fraction are not shown, and a model id with control characters is rejected
+  rather than rendered. The ACP server owns this login: Pi stores only a marker in `auth.json` and
+  the server keeps the refresh token at `~/.gemini/antigravity-acp/acp_token.json` (or under
+  `GEMINI_HOME`). The collector reads that file, exchanges the refresh token at the fixed
+  `https://oauth2.googleapis.com/token` with the stored client id and secret, and keeps the
+  access token in memory only. It never writes the server's file and never persists the access
+  token. A token file whose `token_uri` is anything else is rejected, so a tampered file cannot
+  redirect the client secret. This login is never renewed through Pi's runtime, which does not
+  know an extension-owned provider.
+- Fixed HTTPS destinations, normal certificate verification, no redirects, a ten-second bound per
+  request and a 64 KiB response bound. No inference or billable generation request is made.
+- Credentials are read locally from Pi's `auth.json` (and, for Antigravity ACP, from that server's own
+  token file), never sent to Android or exported in reports. API keys and other provider families are
+  not sent to these endpoints. Responses expose only normalized windows, timestamps and sanitized
+  diagnostics, not email, account IDs or raw bodies.
 - Pi refreshes OAuth tokens only when a model request needs one, so a token can sit expired in
   `auth.json` while no session is using that provider. When a polled login's stored expiry is at or
   before the current time, the collector asks **Pi's own runtime** (`ModelRuntime.getAuth`, loaded
@@ -84,7 +111,10 @@ with an explicit diagnostic rather than bypassing coordination. OS locks release
 a crashed request's lease expires normally.
 
 Codex and xAI still poll independently per process, at most once a minute; Anthropic at most once
-every ten minutes across controllers. A known window reset permits a fresh probe at that boundary.
+every ten minutes across controllers, Antigravity at most once every ten minutes per process.
+Antigravity's login belongs to its own server and is not coordinated through the shared Anthropic
+store, so a TUI and a gateway each refresh it; the resulting Google requests are cheap and bounded
+by the same interval. A known window reset permits a fresh probe at that boundary.
 Failed probes retain the ordinary interval. A valid `Retry-After` (delay seconds or an HTTP date)
 can extend it, never shorten it. Discarding an error response body cannot erase its HTTP status or
 retry deadline, even if body cleanup fails. Anthropic deadlines survive controller restarts, token
