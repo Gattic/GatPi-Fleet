@@ -16,10 +16,10 @@ provider reports it in `limits`, it appears as its own line (`7d fable`) with it
 when it does not, nothing is invented and the all-model week is unchanged. Codex only shows its
 returned windows; a missing five-hour window is not added.
 Google Antigravity's ACP login (`google-antigravity-acp`) answers a quota summary that groups the
-models sharing one weekly pool. Only that weekly pool is shown: a single group is one `7d` line,
-and separate groups keep their name beside the duration. The per-model buckets and the five-hour
-smoothing window are not shown; a missing weekly bucket or remaining fraction stays unknown rather
-than 0% used.
+models sharing one weekly pool and one five-hour smoothing pool. Both pools are shown: a single
+group is a `5h`/`7d` pair, and separate groups keep their name beside each duration. The per-model
+buckets are not shown; a group without a usable bucket, or with a missing or out-of-range remaining
+fraction, stays unknown rather than 0% used.
 Android receives the same sanitized readings through the gateway and advances countdowns from
 host time using elapsed time, not the phone's potentially different wall clock. The report and
 its monotonic receipt-time anchor are retained together across Activity recreation, so rotation
@@ -55,10 +55,10 @@ proxies and persistent quota cache are not copied.
   403/404 for this client.
   The request carries the login's project and Antigravity's client metadata (the announced version
   follows `PI_AI_ANTIGRAVITY_VERSION`, defaulting to the companion provider's pin). The summary
-  groups the models that share one weekly pool; only that group's `weekly` bucket becomes a window
-  (one `7d` line for a single group, `7d <group>` when several groups keep separate pools), so the
-  per-model buckets and the five-hour smoothing window never reach the views. A group without a
-  weekly bucket or remaining fraction is not shown, and a group name with control characters is
+  groups the models that share one weekly pool and one five-hour smoothing pool; each group's `5h`
+  and `weekly` buckets become windows (`5h`/`7d` for a single group, `5h <group>`/`7d <group>` when
+  several groups keep separate pools), so the per-model buckets never reach the views. A group
+  without a usable bucket is not shown, and a group name with control characters is
   rejected rather than rendered. The ACP server owns this login: Pi stores only a marker in
   `auth.json` and the server keeps the refresh token at `~/.gemini/antigravity-acp/acp_token.json`
   (or under `GEMINI_HOME`). The collector reads that file, exchanges the refresh token at the fixed
