@@ -829,27 +829,39 @@ test("a captured Anthropic body keeps the all-model week and adds each scoped po
 	assert.deepEqual(windows.map(({ label }) => label), ["7d", "7d fable", "7d cowork"]);
 });
 
-test("Antigravity's summary keeps one weekly window per shared pool", () => {
+test("Antigravity's summary keeps one five-hour and one weekly window per shared pool", () => {
 	const weekly = (remainingFraction: unknown, resetTime: unknown = new Date(NOW + 5 * 86400_000).toISOString()) =>
 		({ window: "weekly", bucketId: "3p-weekly", displayName: "Weekly Limit Remaining", remainingFraction, resetTime });
-	const fiveHour = { window: "5h", bucketId: "3p-5h", remainingFraction: 0.4, resetTime: new Date(NOW + HOUR).toISOString() };
-	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [fiveHour, weekly(0.9)] }] }, NOW), [
+	const fiveHour = (remainingFraction: unknown, resetTime: unknown = new Date(NOW + HOUR).toISOString()) =>
+		({ window: "5h", bucketId: "3p-5h", displayName: "Five Hour Limit Remaining", remainingFraction, resetTime });
+	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [weekly(0.9), fiveHour(0.4)] }] }, NOW), [
+		{ label: "5h", usedPercent: 60, resetAt: NOW + HOUR },
 		{ label: "7d", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
 	]);
-	// Several pools keep their group name beside the duration.
+	// Several pools keep their group name beside each duration.
 	assert.deepEqual(parseUsage("antigravity", { groups: [
-		{ displayName: "Claude and GPT models", buckets: [weekly(0.9)] },
-		{ displayName: "Gemini models", buckets: [weekly(0.5)] },
+		{ displayName: "Claude and GPT models", buckets: [fiveHour(0.4), weekly(0.9)] },
+		{ displayName: "Gemini models", buckets: [fiveHour(0.5), weekly(0.5)] },
 	] }, NOW), [
+		{ label: "5h claude-and-gpt-models", usedPercent: 60, resetAt: NOW + HOUR },
 		{ label: "7d claude-and-gpt-models", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
+		{ label: "5h gemini-models", usedPercent: 50, resetAt: NOW + HOUR },
 		{ label: "7d gemini-models", usedPercent: 50, resetAt: NOW + 5 * 86400_000 },
 	]);
-	// No weekly bucket, an out-of-range or missing fraction, a bad reset, or no name (with several pools) stays out.
+	// A single pool with only one usable bucket keeps that bucket.
+	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [weekly(0.9)] }] }, NOW), [
+		{ label: "7d", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
+	]);
+	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [fiveHour(0.4)] }] }, NOW), [
+		{ label: "5h", usedPercent: 60, resetAt: NOW + HOUR },
+	]);
+	// Out-of-range or missing fractions, a bad reset and an empty group stay out.
 	assert.deepEqual(parseUsage("antigravity", { groups: [
-		{ displayName: "A", buckets: [fiveHour] },
-		{ displayName: "B", buckets: [weekly(2)] },
-		{ displayName: "C", buckets: [weekly(undefined)] },
-		{ displayName: "D", buckets: [weekly(0.5, "bad")] },
+		{ displayName: "A", buckets: [fiveHour(2)] },
+		{ displayName: "B", buckets: [weekly(undefined)] },
+		{ displayName: "C", buckets: [weekly(0.5, "bad")] },
+		{ displayName: "D", buckets: [fiveHour(0.5, "bad")] },
+		{ displayName: "E", buckets: [] },
 	] }, NOW), []);
 	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: undefined, buckets: [weekly(0.5)] }, { displayName: "Gemini", buckets: [weekly(0.5)] }] }, NOW).map(({ label }) => label), ["7d gemini"]);
 	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [weekly(0.5)] }, { displayName: "Claude and GPT models", buckets: [weekly(0.5)] }] }, NOW).map(({ label }) => label), ["7d"], "a repeated pool is one line");
@@ -910,7 +922,10 @@ test("the Antigravity ACP login exchanges its own refresh token and reads the we
 		] }] });
 	};
 	const windows = await fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal, impl as typeof fetch, () => NOW, file);
-	assert.deepEqual(windows, [{ label: "7d", usedPercent: 10, resetAt: NOW + 5 * 86400_000 }]);
+	assert.deepEqual(windows, [
+		{ label: "5h", usedPercent: 10, resetAt: NOW + HOUR },
+		{ label: "7d", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
+	]);
 	assert.deepEqual(calls, ["https://oauth2.googleapis.com/token", ACP_QUOTA_URL]);
 	assert.doesNotMatch(JSON.stringify(windows), /acp-secret|acp-refresh|google-access|acp-project/);
 });

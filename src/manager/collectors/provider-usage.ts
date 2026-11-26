@@ -183,32 +183,39 @@ export function parseUsage(family: UsageFamily, body: unknown, now = Date.now())
 }
 
 /**
- * The quota summary groups the models that share one weekly pool. Only that pool is shown: the five-hour
- * smoothing bucket and the per-model buckets say nothing about the week.
+ * The quota summary groups the models that share one weekly pool and one five-hour smoothing pool.
+ * Both pools are shown; the per-model buckets say nothing beyond them.
  */
 function antigravityWindows(body: Record<string, unknown>): QuotaWindow[] {
 	const groups = body.groups;
 	if (!Array.isArray(groups)) return [];
-	const weekly: { scope: string | undefined; usedPercent: number; resetAt: number | null }[] = [];
+	const pools: { scope: string | undefined; windows: QuotaWindow[] }[] = [];
 	const seen = new Set<string>();
 	for (const value of groups) {
 		const group = record(value);
-		const bucket = Array.isArray(group.buckets) ? group.buckets.map(record).find((entry) => entry.window === "weekly") : undefined;
-		if (!bucket) continue;
-		const remaining = number(bucket.remainingFraction);
-		const resetAt = bucket.resetTime === undefined || bucket.resetTime === null ? null : epoch(bucket.resetTime);
-		if (remaining === undefined || remaining < 0 || remaining > 1 || resetAt === undefined) continue;
+		if (!Array.isArray(group.buckets)) continue;
+		const buckets = group.buckets.map(record);
+		const windows: QuotaWindow[] = [];
+		for (const [kind, label] of [["5h", "5h"], ["weekly", "7d"]] as const) {
+			const bucket = buckets.find((entry) => entry.window === kind);
+			if (!bucket) continue;
+			const remaining = number(bucket.remainingFraction);
+			const resetAt = bucket.resetTime === undefined || bucket.resetTime === null ? null : epoch(bucket.resetTime);
+			if (remaining === undefined || remaining < 0 || remaining > 1 || resetAt === undefined) continue;
+			windows.push({ label, usedPercent: Math.round((1 - remaining) * 100), resetAt });
+		}
+		if (!windows.length) continue;
 		const scope = scopeLabel(group.displayName);
 		if (scope !== undefined) {
 			if (seen.has(scope)) continue;
 			seen.add(scope);
 		}
-		weekly.push({ scope, usedPercent: Math.round((1 - remaining) * 100), resetAt });
+		pools.push({ scope, windows });
 	}
-	if (!weekly.length) return [];
-	// One group is the account's only weekly pool; several groups need their name beside the duration.
-	if (weekly.length === 1) return [{ label: "7d", usedPercent: weekly[0].usedPercent, resetAt: weekly[0].resetAt }];
-	return weekly.flatMap(({ scope, ...reading }) => scope === undefined ? [] : [{ label: `7d ${scope}`, ...reading }]);
+	if (!pools.length) return [];
+	// One pool is the account's only group; several groups need their name beside each duration.
+	if (pools.length === 1) return pools[0].windows;
+	return pools.flatMap(({ scope, windows }) => scope === undefined ? [] : windows.map((window) => ({ ...window, label: `${window.label} ${scope}` })));
 }
 
 export class UsageFetchError extends Error {
