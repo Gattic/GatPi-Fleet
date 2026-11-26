@@ -268,3 +268,55 @@ test("tool runs restored from a transcript keep arguments and output", async (t)
 	assert.equal(run.arguments, '{"path":"README.md"}');
 	assert.equal(run.result, "hello");
 });
+
+test("provider-executed calls are shown and do not hide the model's reply", async (t) => {
+	const at = new Date(0).toISOString();
+	const assistant = {
+		role: "assistant",
+		usage: emptyUsage(),
+		content: [
+			{ type: "toolCall", id: "call-1", name: "acp_execute", arguments: { CommandLine: "npm test" }, providerExecuted: true, providerResult: { content: "all green", isError: false } },
+			{ type: "text", text: "Tests pass." },
+		],
+	};
+	const entries = [
+		{ type: "message", timestamp: at, message: { role: "user", content: [{ type: "text", text: "Run the tests" }] } },
+		{ type: "message", timestamp: at, message: assistant },
+		{ type: "message", timestamp: at, message: { role: "toolResult", toolCallId: "call-1", isError: false, content: [{ type: "text", text: "all green" }] } },
+	];
+	const { handlers, snapshot } = startBridge(t, entries);
+	const state = await snapshot();
+	const run = state.tools.at(-1)!;
+	assert.equal(run.name, "acp_execute", "an ACP server's call is a tool run like any other");
+	assert.equal(run.detail, "npm test");
+	assert.equal(run.arguments, '{"CommandLine":"npm test"}');
+	assert.equal(run.result, "all green");
+	assert.equal(run.isError, false);
+	assert.notEqual(run.endedAt, undefined);
+	assert.equal(state.lastSaid, "Tests pass.", "the answer travels in the same message as the server's tool calls");
+
+	handlers.get("message_end")!({ message: assistant });
+	assert.equal((await snapshot()).lastSaid, "Tests pass.", "the live path keeps the answer too");
+});
+
+test("a Pi tool call still suppresses its narration text", async (t) => {
+	const at = new Date(0).toISOString();
+	const entries = [
+		{
+			type: "message",
+			timestamp: at,
+			message: {
+				role: "assistant",
+				usage: emptyUsage(),
+				content: [
+					{ type: "text", text: "Running the tests now." },
+					{ type: "toolCall", id: "call", name: "bash", arguments: { command: "npm test" } },
+				],
+			},
+		},
+	];
+	const { snapshot } = startBridge(t, entries);
+	const state = await snapshot();
+	assert.equal(state.lastSaid, undefined, "text that only narrates Pi's own tool calls is not the reply");
+	assert.equal(state.tools.at(-1)?.name, "bash");
+});

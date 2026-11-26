@@ -224,6 +224,10 @@ class WireTest {
                 .put("startedAt", 1000L).put("endedAt", 2500L).put("isError", false))
             .put(JSONObject().put("name", "read").put("detail", "README.md")
                 .put("startedAt", 3000L).put("endedAt", JSONObject.NULL).put("isError", false))
+            // An ACP server's own call is a tool run like any other: name, arguments and output.
+            .put(JSONObject().put("name", "acp_execute").put("detail", "npm test")
+                .put("arguments", "{\"CommandLine\":\"npm test\"}").put("result", "all green")
+                .put("startedAt", 4000L).put("endedAt", 5200L).put("isError", false))
         val detail = Detail.parse(detailJson(tools))
         val finished = detail.tools[0]
         assertEquals("bash", finished.name)
@@ -237,6 +241,13 @@ class WireTest {
         assertNull(running.duration)
         assertNull("a host that predates tool arguments is not an error", running.arguments)
         assertNull(running.result)
+        val acp = detail.tools[2]
+        assertEquals("acp_execute", acp.name)
+        assertEquals("npm test", acp.detail)
+        assertEquals("{\"CommandLine\":\"npm test\"}", acp.arguments)
+        assertEquals("all green", acp.result)
+        assertFalse(acp.running)
+        assertEquals(1200L, acp.duration)
     }
 
     private fun detailJson(tools: JSONArray) = JSONObject()
