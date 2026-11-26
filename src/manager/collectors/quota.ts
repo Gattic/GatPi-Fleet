@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { renewLoginWithPi, type RenewLogin } from "./oauth-renewal.ts";
-import { assertUsageCredential, credentialExpired, fetchProviderUsage, REFRESH_REQUIRED, UsageCredentialError, UsageFetchError, usageFamily, type QuotaWindow, type UsageCredential } from "./provider-usage.ts";
+import { assertUsageCredential, credentialExpired, fetchProviderUsage, REFRESH_REQUIRED, resolveAcpTokenFile, UsageCredentialError, UsageFetchError, usageFamily, type QuotaWindow, type UsageCredential } from "./provider-usage.ts";
 import { SharedUsageState } from "./quota-state.ts";
 
 export interface QuotaReading { fetchedAt: number | null; windows: QuotaWindow[]; error?: string }
@@ -15,7 +15,11 @@ export interface QuotaAccount {
 	windows: QuotaWindow[];
 }
 interface Login { key: string; credential: UsageCredential; nextAt: number; pending?: Promise<void> }
-const refreshMs = (provider: string) => usageFamily(provider) === "anthropic" ? 10 * 60_000 : 60_000;
+const refreshMs = (provider: string) => {
+	const family = usageFamily(provider);
+	// Anthropic and Antigravity meter allowance over hours or days; Codex and xAI answer cheaply every minute.
+	return family === "anthropic" || family === "antigravity" ? 10 * 60_000 : 60_000;
+};
 const RENEW_RETRY_MS = 5 * 60_000;
 
 export interface AccountCooldown {
@@ -49,13 +53,16 @@ export class QuotaMonitor {
 	/** A started refresh may hold the only copy of a rotated refresh token, so close() outlives it. */
 	private readonly renewing = new Map<string, Promise<void>>();
 	private readonly shared: SharedUsageState;
+	/** The ACP server's own login; auth.json holds only a marker for it. */
+	private readonly acpTokenFile: string;
 
-	constructor(file: string, authFile: string, options: { fetch?: typeof fetch; now?: () => number; renew?: RenewLogin } = {}) {
+	constructor(file: string, authFile: string, options: { fetch?: typeof fetch; now?: () => number; renew?: RenewLogin; acpTokenFile?: string } = {}) {
 		this.file = file;
 		this.authFile = authFile;
 		this.fetchImpl = options.fetch ?? fetch;
 		this.now = options.now ?? Date.now;
 		this.renewLogin = options.renew ?? renewLoginWithPi;
+		this.acpTokenFile = options.acpTokenFile ?? resolveAcpTokenFile();
 		this.shared = new SharedUsageState(authFile);
 	}
 
@@ -83,17 +90,21 @@ export class QuotaMonitor {
 			if (!family) return;
 			if (login.pending) return login.pending;
 			const now = this.now();
-			if (credentialExpired(login.credential, now)) {
-				const renewal = this.renewing.get(provider);
-				if (renewal) return renewal;
-				if (now >= (this.renewAt.get(provider) ?? 0)) return this.startRenewal(provider, now);
-				// Inside the retry spacing the expiry itself is diagnosed below.
-			}
-			try { assertUsageCredential(login.credential, now); }
-			catch (error) {
-				const previous = this.readings.get(provider) ?? { fetchedAt: null, windows: [] };
-				this.readings.set(provider, { ...previous, error: (error as UsageFetchError).message });
-				return;
+			// The ACP server owns its own login and renews it itself; auth.json holds only a marker, so Pi's
+			// renewal would fail on a provider its runtime does not know and would report a false expiry.
+			if (family !== "antigravity") {
+				if (credentialExpired(login.credential, now)) {
+					const renewal = this.renewing.get(provider);
+					if (renewal) return renewal;
+					if (now >= (this.renewAt.get(provider) ?? 0)) return this.startRenewal(provider, now);
+					// Inside the retry spacing the expiry itself is diagnosed below.
+				}
+				try { assertUsageCredential(login.credential, now); }
+				catch (error) {
+					const previous = this.readings.get(provider) ?? { fetchedAt: null, windows: [] };
+					this.readings.set(provider, { ...previous, error: (error as UsageFetchError).message });
+					return;
+				}
 			}
 			let reservation: string | undefined;
 			try {
@@ -118,7 +129,7 @@ export class QuotaMonitor {
 				let localAuthFailure = false;
 				let retryAt: number | undefined;
 				try {
-					const windows = await fetchProviderUsage(provider, login.credential, this.controller.signal, this.fetchImpl, this.now);
+					const windows = await fetchProviderUsage(provider, login.credential, this.controller.signal, this.fetchImpl, this.now, this.acpTokenFile);
 					const fetchedAt = this.now();
 					reading = { fetchedAt, windows };
 					login.nextAt = Math.min(fetchedAt + refreshMs(provider), ...windows.flatMap(({ resetAt }) => resetAt !== null && resetAt > fetchedAt ? [resetAt] : []));

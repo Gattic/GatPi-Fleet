@@ -27,7 +27,8 @@ troubleshooting. This README remains the reference for current commands and beha
 - **API usage**: tokens and API-equivalent $ per session (direct, nested tool LLM calls,
   subagents), per-minute trends, separate multi-login account cooldowns,
   and a usage view for today / 7 days / 30 days in $ or tokens, across this machine and your
-  [remote hosts](#remote-hosts) with a per-host share. Anthropic, Codex and xAI subscription
+  [remote hosts](#remote-hosts) with a per-host share. Anthropic (including its separate Fable
+  week), Codex, xAI and Google Antigravity ACP subscription
   quotas show account bars, remaining percentages and provider reset countdowns; unavailable or stale
   readings are labelled explicitly. Sessions on models without a price show tokens (`173Mt`) instead of an empty $.
 - **Context breakdown**: each session's model context as pi measures it (tokens, window, fill,
@@ -398,12 +399,15 @@ The first start indexes recent session files in a background thread; on this mac
 about 17 s for 3.6 GB, and later scans take milliseconds.
 
 $ figures are pi's API-equivalent cost, not subscription balances. [Account quotas](docs/QUOTAS.md)
-come from read-only Anthropic/Codex/xAI usage endpoints using local Pi OAuth logins, including account aliases.
+come from read-only Anthropic/Codex/xAI usage endpoints using local Pi OAuth logins, including account aliases,
+and from Google Antigravity ACP's per-model quota using the ACP server's own login file.
 Bars show the allowance **left**, with provider reset timers. Failed/old readings are explicitly stale;
 missing or unsupported data never becomes 100% available. The old `provider-failover-state.json` stays ignored.
 Account cooldowns come separately from `multi-login-state.json`: local failover timers, not provider resets.
 Quota probes never change cooldowns or model selection. An expired OAuth login is renewed through pi's own
 locked refresh, not a dashboard implementation, so usage keeps working while no session is using that provider.
+The Antigravity ACP login is the exception: its server owns the refresh token, so the quota probe exchanges
+it at Google's fixed token endpoint and keeps only the resulting access token in memory.
 Models without a price count in tokens.
 LLM calls that extensions make outside the session transcript are not counted. That includes asks (`i`): each answer shows its own tokens, cache
 share and cost, but they are not added to the session's totals.

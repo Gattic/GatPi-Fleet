@@ -58,7 +58,9 @@ label, never an email or credential. `status` is `fresh`, `stale`, `unknown`, or
 `fetchedAt` and `freshUntil` are host epoch milliseconds (null before any reading); `message`
 is a sanitized diagnostic or null. Each window is `{ label, usedPercent, resetAt }`, with a
 0–100 percentage and host epoch reset time, or `resetAt: null` when the provider reports no
-reset timestamp (for example, Anthropic's unused five-hour window). A null reset does not discard
+reset timestamp (for example, Anthropic's unused five-hour window). `label` is the provider's
+duration, and may name a separate pool: Anthropic's Fable week is `7d fable`, and an Antigravity
+ACP bucket carries its model id. Clients must render labels as plain text. A null reset does not discard
 the reported balance or mean “reset due”; show “Reset time not reported” without a countdown.
 Bars show `100 - usedPercent` **left**.
 Clients must stop presenting a fresh reading as current at `freshUntil`, even without another
