@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { renewLoginWithPi, type RenewLogin } from "../src/manager/collectors/oauth-renewal.ts";
-import { fetchProviderUsage, parseUsage, resolveAcpTokenFile, UsageFetchError, xaiUserIdFromAccessToken } from "../src/manager/collectors/provider-usage.ts";
+import { fetchProviderUsage, parseUsage, UsageFetchError, xaiUserIdFromAccessToken } from "../src/manager/collectors/provider-usage.ts";
 import { QuotaMonitor } from "../src/manager/collectors/quota.ts";
 import { SharedUsageState } from "../src/manager/collectors/quota-state.ts";
 
@@ -829,189 +829,31 @@ test("a captured Anthropic body keeps the all-model week and adds each scoped po
 	assert.deepEqual(windows.map(({ label }) => label), ["7d", "7d fable", "7d cowork"]);
 });
 
-test("Antigravity's summary keeps one five-hour and one weekly window per shared pool", () => {
-	const weekly = (remainingFraction: unknown, resetTime: unknown = new Date(NOW + 5 * 86400_000).toISOString()) =>
-		({ window: "weekly", bucketId: "3p-weekly", displayName: "Weekly Limit Remaining", remainingFraction, resetTime });
-	const fiveHour = (remainingFraction: unknown, resetTime: unknown = new Date(NOW + HOUR).toISOString()) =>
-		({ window: "5h", bucketId: "3p-5h", displayName: "Five Hour Limit Remaining", remainingFraction, resetTime });
-	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [weekly(0.9), fiveHour(0.4)] }] }, NOW), [
-		{ label: "5h", usedPercent: 60, resetAt: NOW + HOUR },
-		{ label: "7d", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
-	]);
-	// Several pools keep their group name beside each duration.
-	assert.deepEqual(parseUsage("antigravity", { groups: [
-		{ displayName: "Claude and GPT models", buckets: [fiveHour(0.4), weekly(0.9)] },
-		{ displayName: "Gemini models", buckets: [fiveHour(0.5), weekly(0.5)] },
-	] }, NOW), [
-		{ label: "5h claude-and-gpt-models", usedPercent: 60, resetAt: NOW + HOUR },
-		{ label: "7d claude-and-gpt-models", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
-		{ label: "5h gemini-models", usedPercent: 50, resetAt: NOW + HOUR },
-		{ label: "7d gemini-models", usedPercent: 50, resetAt: NOW + 5 * 86400_000 },
-	]);
-	// A single pool with only one usable bucket keeps that bucket.
-	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [weekly(0.9)] }] }, NOW), [
-		{ label: "7d", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
-	]);
-	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [fiveHour(0.4)] }] }, NOW), [
-		{ label: "5h", usedPercent: 60, resetAt: NOW + HOUR },
-	]);
-	// Out-of-range or missing fractions, a bad reset and an empty group stay out.
-	assert.deepEqual(parseUsage("antigravity", { groups: [
-		{ displayName: "A", buckets: [fiveHour(2)] },
-		{ displayName: "B", buckets: [weekly(undefined)] },
-		{ displayName: "C", buckets: [weekly(0.5, "bad")] },
-		{ displayName: "D", buckets: [fiveHour(0.5, "bad")] },
-		{ displayName: "E", buckets: [] },
-	] }, NOW), []);
-	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: undefined, buckets: [weekly(0.5)] }, { displayName: "Gemini", buckets: [weekly(0.5)] }] }, NOW).map(({ label }) => label), ["7d gemini"]);
-	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [weekly(0.5)] }, { displayName: "Claude and GPT models", buckets: [weekly(0.5)] }] }, NOW).map(({ label }) => label), ["7d"], "a repeated pool is one line");
-	assert.deepEqual(parseUsage("antigravity", {}, NOW), [], "an HTTP success alone is not quota data");
-	assert.deepEqual(parseUsage("antigravity", { groups: "bad" }, NOW), []);
-});
-
-/** The ACP server's own login file, with synthetic values; no real token is ever used here. */
-function acpFixture(t: TestContext, token: Record<string, unknown> = {}) {
-	const dir = mkdtempSync(join(tmpdir(), "pi-acp-"));
+/** A disposable auth directory; no real login file is read. */
+function tempDir(t: TestContext) {
+	const dir = mkdtempSync(join(tmpdir(), "pi-usage-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
-	const file = join(dir, "acp_token.json");
-	writeFileSync(file, JSON.stringify({
-		client_id: "acp-client", client_secret: "acp-secret", refresh_token: "acp-refresh",
-		token_uri: "https://oauth2.googleapis.com/token", project_id: "acp-project", ...token,
-	}));
-	return { dir, file };
+	return { dir };
 }
 
-const ACP_QUOTA_URL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
-const ACP_FALLBACK_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
-const acpCredential = { type: "oauth", access: "antigravity-acp-managed", refresh: "antigravity-acp-managed", expires: NOW + 86400_000 };
-
-test("the ACP token file is resolved from the server's own Gemini home", () => {
-	assert.equal(resolveAcpTokenFile({ HOME: "/home/user" }), join("/home/user", ".gemini", "antigravity-acp", "acp_token.json"));
-	assert.equal(resolveAcpTokenFile({ HOME: "/home/user", GEMINI_HOME: "~/gemini" }), join("/home/user", "gemini", "antigravity-acp", "acp_token.json"));
-	assert.equal(resolveAcpTokenFile({ HOME: "/home/user", GEMINI_HOME: "/opt/gemini" }), join("/opt/gemini", "antigravity-acp", "acp_token.json"));
-});
-
-test("the Antigravity ACP login exchanges its own refresh token and reads the weekly quota summary", async (t) => {
-	const { file } = acpFixture(t);
-	const calls: string[] = [];
-	const impl = async (input: string | URL | Request, init?: RequestInit) => {
-		const url = String(input);
-		calls.push(url);
-		if (url === "https://oauth2.googleapis.com/token") {
-			assert.equal(init?.method, "POST");
-			assert.equal(init?.redirect, "error");
-			const form = new URLSearchParams(String(init?.body));
-			assert.equal(form.get("grant_type"), "refresh_token");
-			assert.equal(form.get("client_id"), "acp-client");
-			assert.equal(form.get("client_secret"), "acp-secret");
-			assert.equal(form.get("refresh_token"), "acp-refresh");
-			return Response.json({ access_token: "google-access", expires_in: 3600 });
-		}
-		assert.equal(url, ACP_QUOTA_URL);
-		assert.equal(init?.method, "POST");
-		assert.equal(init?.redirect, "error");
-		const headers = new Headers(init?.headers);
-		assert.equal(headers.get("Authorization"), "Bearer google-access");
-		assert.equal(headers.get("Content-Type"), "application/json");
-		assert.match(headers.get("User-Agent") ?? "", /^antigravity\/\d/);
-		assert.deepEqual(JSON.parse(String(headers.get("Client-Metadata"))), { ideType: "ANTIGRAVITY", platform: "DARWIN_ARM64", pluginType: "CLOUD_CODE", ideName: "antigravity" });
-		assert.deepEqual(JSON.parse(String(init?.body)), { project: "acp-project" });
-		return Response.json({ groups: [{ displayName: "Claude and GPT models", buckets: [
-			{ window: "5h", remainingFraction: 0.9, resetTime: new Date(NOW + HOUR).toISOString() },
-			{ window: "weekly", remainingFraction: 0.9, resetTime: new Date(NOW + 5 * 86400_000).toISOString() },
-		] }] });
-	};
-	const windows = await fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal, impl as typeof fetch, () => NOW, file);
-	assert.deepEqual(windows, [
-		{ label: "5h", usedPercent: 10, resetAt: NOW + HOUR },
-		{ label: "7d", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
-	]);
-	assert.deepEqual(calls, ["https://oauth2.googleapis.com/token", ACP_QUOTA_URL]);
-	assert.doesNotMatch(JSON.stringify(windows), /acp-secret|acp-refresh|google-access|acp-project/);
-});
-
-test("the ACP quota fails closed on a missing, incomplete or foreign login without any request", async (t) => {
-	const unexpected: typeof fetch = async () => { throw new Error("must not fetch"); };
-	const request = (file: string, impl: typeof fetch = unexpected) => fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal, impl, () => NOW, file);
-	const { dir, file } = acpFixture(t);
-	await assert.rejects(request(join(dir, "missing.json")), { message: "ACP login not found" });
-	writeFileSync(file, "{");
-	await assert.rejects(request(file), { message: "ACP token file is unreadable" });
-	writeFileSync(file, JSON.stringify({ client_id: "a", client_secret: "b", refresh_token: "c", token_uri: "https://oauth2.googleapis.com/token" }));
-	await assert.rejects(request(file), { message: "ACP token file is incomplete" });
-	// The endpoint comes from a local file, so only Google's own token endpoint may receive the secret.
-	writeFileSync(file, JSON.stringify({ client_id: "a", client_secret: "b", refresh_token: "c", project_id: "p", token_uri: "https://evil.example/token" }));
-	await assert.rejects(request(file), { message: "ACP token file has an unsupported token endpoint" });
-	writeFileSync(file, JSON.stringify({ client_id: "a", client_secret: "b", refresh_token: "c", project_id: "p", token_uri: "https://oauth2.googleapis.com/token" }));
-	await assert.rejects(request(file, async () => new Response("secret", { status: 400 })), { message: "ACP login needs re-authentication" });
-	await assert.rejects(request(file, async () => { throw new Error("secret"); }), { message: "ACP token request failed or timed out" });
-	await assert.rejects(request(file, async () => Response.json({})), { message: "ACP token response has no access token" });
-});
-
-test("the ACP quota cascades a gated endpoint, reports the last answer and never exposes the token", async (t) => {
-	const { file } = acpFixture(t);
-	const quota = (url: string) => url === "https://oauth2.googleapis.com/token";
-	const urls: string[] = [];
-	const cascade = async (input: string | URL | Request) => {
-		const url = String(input);
-		urls.push(url);
-		if (quota(url)) return Response.json({ access_token: "google-access" });
-		if (url === ACP_QUOTA_URL) return new Response("secret", { status: 403 });
-		return Response.json({ groups: [{ displayName: "Gemini models", buckets: [{ window: "weekly", remainingFraction: 0.5 }] }] });
-	};
-	const windows = await fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal, cascade as typeof fetch, () => NOW, file);
-	assert.deepEqual(urls, ["https://oauth2.googleapis.com/token", ACP_QUOTA_URL, ACP_FALLBACK_URL]);
-	assert.deepEqual(windows, [{ label: "7d", usedPercent: 50, resetAt: null }]);
-	// The last endpoint's answer stands: a 403 there is the provider's verdict, not another endpoint to try.
-	await assert.rejects(fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal,
-		async (input) => String(input) === "https://oauth2.googleapis.com/token" ? Response.json({ access_token: "google-access" }) : new Response("secret", { status: 403 }), () => NOW, file), { message: "Usage endpoint HTTP 403" });
-	await assert.rejects(fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal,
-		async (input) => String(input) === "https://oauth2.googleapis.com/token" ? Response.json({ access_token: "google-access" }) : Response.json({ groups: [] }), () => NOW, file), { message: "Provider returned no quota windows" });
-});
-
-test("the ACP login polls slowly and is never renewed through Pi's runtime", async (t) => {
-	const { dir, file } = acpFixture(t);
-	let now = NOW;
+test("Google logins are disabled: no quota request, no renewal, no row", async (t) => {
+	const { dir } = tempDir(t);
+	const google = { type: "oauth", access: "google-access", expires: NOW + 86400_000 };
+	writeFileSync(join(dir, "auth.json"), JSON.stringify({ anthropic: credential, "google-antigravity": google, "google-antigravity-acp": google }));
 	let calls = 0;
-	let renewed = 0;
 	const quota = new QuotaMonitor(join(dir, "multi-login-state.json"), join(dir, "auth.json"), {
-		fetch: async (input) => {
-			calls++;
-			return String(input) === "https://oauth2.googleapis.com/token"
-				? Response.json({ access_token: "google-access" })
-				: Response.json({ groups: [{ displayName: "Claude and GPT models", buckets: [{ window: "weekly", remainingFraction: 0.75, resetTime: new Date(now + 5 * 86400_000).toISOString() }] }] });
-		},
-		now: () => now,
-		renew: async () => { renewed++; },
-		acpTokenFile: file,
+		fetch: async () => { calls++; return Response.json(anthropic); },
+		now: () => NOW,
+		renew: async () => { throw new Error("must not renew a disabled login"); },
 	});
 	t.after(() => quota.close());
-	// The marker's own expiry is meaningless: the server holds the real login.
-	writeFileSync(join(dir, "auth.json"), JSON.stringify({ "google-antigravity-acp": { ...acpCredential, expires: NOW - 86400_000 } }));
-	quota.poll();
 	await quota.refresh();
-	assert.equal(renewed, 0, "Pi's runtime cannot renew an extension-owned login");
-	assert.deepEqual(quota.snapshot(now), [{
-		provider: "google-antigravity-acp", status: "fresh", fetchedAt: now, freshUntil: now + 20 * 60_000, message: null,
-		windows: [{ label: "7d", usedPercent: 25, resetAt: now + 5 * 86400_000 }],
-	}]);
-	assert.equal(calls, 2);
-	await quota.refresh();
-	assert.equal(calls, 2, "ten-minute interval");
-	now += 10 * 60_000;
-	await quota.refresh();
-	assert.equal(calls, 4);
-	// A vanished ACP login is a local diagnostic: the old reading stays visible, stale, and no request is made.
-	rmSync(file);
-	now += 10 * 60_000;
-	await quota.refresh();
-	assert.equal(calls, 4);
-	assert.equal(quota.snapshot(now)![0].status, "stale");
-	assert.equal(quota.snapshot(now)![0].message, "ACP login not found");
+	assert.equal(calls, 1, "only the Anthropic login is polled");
+	assert.deepEqual(quota.snapshot(NOW)!.map(({ provider }) => provider), ["anthropic"]);
 });
 
 test("shared Anthropic state carries the separately metered Fable week", (t) => {
-	const { dir } = acpFixture(t);
+	const { dir } = tempDir(t);
 	const state = new SharedUsageState(join(dir, "auth.json"));
 	const claim = state.claim("anthropic", "a".repeat(64), NOW, 600_000);
 	const reading = { fetchedAt: NOW, windows: [
