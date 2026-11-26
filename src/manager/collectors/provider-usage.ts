@@ -138,6 +138,33 @@ function xaiPeriodDiagnostic(body: unknown, fetchedAt: number): string | undefin
 	return `${kind} reset ${reset} UTC · usage % not reported`;
 }
 
+/** Provider scopes become labels; a name is slugged so it cannot break the shared-state label grammar. */
+function scopeLabel(value: unknown): string | undefined {
+	const name = text(value);
+	if (!name || name.length > 60 || /[\x00-\x1f\x7f]/.test(name)) return undefined;
+	const slug = name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 40);
+	return slug || undefined;
+}
+
+/** Anthropic reports scoped weekly pools in `limits`; the all-model week stays `seven_day`. */
+function anthropicScopedWindows(source: Record<string, unknown>): QuotaWindow[] {
+	if (!Array.isArray(source.limits)) return [];
+	const windows: QuotaWindow[] = [];
+	const seen = new Set<string>();
+	for (const value of source.limits) {
+		const limit = record(value);
+		if (limit.kind !== "weekly_scoped" || limit.group !== "weekly") continue;
+		const scope = scopeLabel(record(record(limit.scope).model).display_name);
+		if (!scope || seen.has(scope)) continue;
+		const percent = number(limit.percent);
+		const resetAt = limit.resets_at === null ? null : epoch(limit.resets_at);
+		if (percent === undefined || percent < 0 || resetAt === undefined) continue;
+		seen.add(scope);
+		windows.push({ label: `7d ${scope}`, usedPercent: Math.min(100, percent), resetAt });
+	}
+	return windows;
+}
+
 /** Missing/malformed windows stay unknown; an HTTP success alone is not quota data. */
 export function parseUsage(family: UsageFamily, body: unknown, now = Date.now()): QuotaWindow[] {
 	const source = record(body);
@@ -147,36 +174,41 @@ export function parseUsage(family: UsageFamily, body: unknown, now = Date.now())
 	}
 	if (family === "antigravity") return antigravityWindows(source);
 	const limits = record(source.rate_limit);
-	return [
+	const windows = [
 		window(family === "anthropic" ? source.five_hour : limits.primary_window, 5 * 3600),
 		window(family === "anthropic" ? source.seven_day : limits.secondary_window, 7 * 86400),
-		// Anthropic meters the Fable family's week apart from the all-model week; absent stays absent.
-		family === "anthropic" ? window(source.seven_day_fable, 7 * 86400, "fable") : undefined,
-	].filter((entry): entry is QuotaWindow => entry !== undefined);
+	];
+	if (family === "anthropic") windows.push(...anthropicScopedWindows(source));
+	return windows.filter((entry): entry is QuotaWindow => entry !== undefined);
 }
 
 /**
- * Cloud Code Assist answers one bucket per provisioned model. `tab_*` and `chat_*` buckets meter the
- * IDE's completion features, not chat quota. A bucket without a remaining fraction stays unknown.
+ * The quota summary groups the models that share one weekly pool. Only that pool is shown: the five-hour
+ * smoothing bucket and the per-model buckets say nothing about the week.
  */
 function antigravityWindows(body: Record<string, unknown>): QuotaWindow[] {
-	const buckets = body.buckets;
-	if (!Array.isArray(buckets)) return [];
-	const windows: QuotaWindow[] = [];
+	const groups = body.groups;
+	if (!Array.isArray(groups)) return [];
+	const weekly: { scope: string | undefined; usedPercent: number; resetAt: number | null }[] = [];
 	const seen = new Set<string>();
-	for (const value of buckets) {
-		const bucket = record(value);
-		const label = text(bucket.modelId);
-		// The label is rendered as-is in terminals; a provider id must not smuggle control characters.
-		if (!label || label.length > 100 || /[^\w.-]/.test(label) || label.startsWith("tab_") || label.startsWith("chat_") || seen.has(label)) continue;
+	for (const value of groups) {
+		const group = record(value);
+		const bucket = Array.isArray(group.buckets) ? group.buckets.map(record).find((entry) => entry.window === "weekly") : undefined;
+		if (!bucket) continue;
 		const remaining = number(bucket.remainingFraction);
-		if (remaining === undefined || remaining < 0 || remaining > 1) continue;
 		const resetAt = bucket.resetTime === undefined || bucket.resetTime === null ? null : epoch(bucket.resetTime);
-		if (resetAt === undefined) continue;
-		seen.add(label);
-		windows.push({ label, usedPercent: Math.round((1 - remaining) * 100), resetAt });
+		if (remaining === undefined || remaining < 0 || remaining > 1 || resetAt === undefined) continue;
+		const scope = scopeLabel(group.displayName);
+		if (scope !== undefined) {
+			if (seen.has(scope)) continue;
+			seen.add(scope);
+		}
+		weekly.push({ scope, usedPercent: Math.round((1 - remaining) * 100), resetAt });
 	}
-	return windows;
+	if (!weekly.length) return [];
+	// One group is the account's only weekly pool; several groups need their name beside the duration.
+	if (weekly.length === 1) return [{ label: "7d", usedPercent: weekly[0].usedPercent, resetAt: weekly[0].resetAt }];
+	return weekly.flatMap(({ scope, ...reading }) => scope === undefined ? [] : [{ label: `7d ${scope}`, ...reading }]);
 }
 
 export class UsageFetchError extends Error {
@@ -343,7 +375,7 @@ export async function fetchProviderUsage(provider: string, credential: UsageCred
 		}
 		request = {
 			method: "POST",
-			endpoints: ANTIGRAVITY_QUOTA_ENDPOINTS.map((endpoint) => `${endpoint}/v1internal:retrieveUserQuota`),
+			endpoints: ANTIGRAVITY_QUOTA_ENDPOINTS.map((endpoint) => `${endpoint}/v1internal:retrieveUserQuotaSummary`),
 			headers: { Authorization: `Bearer ${token.access}`, Accept: "application/json", "Content-Type": "application/json", "User-Agent": antigravityUserAgent(), "Client-Metadata": JSON.stringify(ANTIGRAVITY_CLIENT_METADATA) },
 			body: JSON.stringify({ project: token.projectId }),
 		};

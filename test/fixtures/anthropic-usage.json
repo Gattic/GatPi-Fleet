@@ -1,0 +1,25 @@
+{
+  "five_hour": null,
+  "seven_day": {
+    "utilization": 74.0,
+    "resets_at": "2026-11-27T03:00:00.000000+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+  },
+  "limits": [
+    { "kind": "weekly_all", "group": "weekly", "percent": 74, "severity": "normal", "resets_at": "2026-11-27T03:00:00.000000+00:00", "scope": null, "is_active": false },
+    { "kind": "weekly_scoped", "group": "weekly", "percent": 100, "severity": "critical", "resets_at": "2026-11-27T03:00:01.000000+00:00", "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null }, "is_active": true },
+    { "kind": "weekly_scoped", "group": "weekly", "percent": 12, "severity": "normal", "resets_at": "2026-11-27T03:00:02.000000+00:00", "scope": { "model": { "id": null, "display_name": "Cowork" }, "surface": null }, "is_active": false },
+    { "kind": "weekly_scoped", "group": "weekly", "percent": 50, "severity": "normal", "resets_at": "2026-11-27T03:00:03.000000+00:00", "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null }, "is_active": false },
+    { "kind": "weekly_scoped", "group": "weekly", "percent": 5, "severity": "normal", "resets_at": "2026-11-27T03:00:04.000000+00:00", "scope": { "model": { "id": null, "display_name": "Fable\u001b[31m" }, "surface": null }, "is_active": false },
+    { "kind": "weekly_scoped", "group": "weekly", "percent": 5, "severity": "normal", "resets_at": "2026-11-27T03:00:05.000000+00:00", "scope": { "model": null, "surface": { "id": null, "display_name": "Chat" } }, "is_active": false },
+    { "kind": "weekly_scoped", "group": "weekly", "percent": null, "severity": "normal", "resets_at": "2026-11-27T03:00:06.000000+00:00", "scope": { "model": { "id": null, "display_name": "Omelette" }, "surface": null }, "is_active": false }
+  ],
+  "weekly_scoped_shares": [
+    { "limit_index": 1, "used_percent_of_weekly": 50, "allowance_percent_of_weekly": 50 }
+  ],
+  "extra_usage": { "is_enabled": false, "utilization": null, "monthly_limit": null, "used_credits": null },
+  "usage_scopes": null
+}
