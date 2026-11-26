@@ -293,7 +293,7 @@ test("live quota bars, remaining percentages, both window timers and stale label
 	assert.doesNotMatch(stale, /100% left/, "reset is not assumed to refill quota");
 });
 
-test("separate Fable and Antigravity model windows render as plain labels at every width", () => {
+test("separate Fable and Antigravity weekly windows render as plain labels at every width", () => {
 	const ctx = context();
 	ctx.quota.readings.set("anthropic", { fetchedAt: ctx.now, windows: [
 		{ label: "5h", usedPercent: 25, resetAt: ctx.now + 60_000 },
@@ -302,15 +302,13 @@ test("separate Fable and Antigravity model windows render as plain labels at eve
 	] });
 	ctx.quota.providers!.push("google-antigravity-acp");
 	ctx.quota.readings.set("google-antigravity-acp", { fetchedAt: ctx.now, windows: [
-		{ label: "gemini-4-neon", usedPercent: 10, resetAt: ctx.now + 3 * 3600_000 },
-		{ label: "claude-sonnet-5-5-high", usedPercent: 100, resetAt: null },
+		{ label: "7d", usedPercent: 10, resetAt: ctx.now + 5 * 86400_000 },
 	] });
 	for (const width of [80, 100, 140]) {
 		for (const lines of [renderOverview(ctx, width, 30), renderUsage(ctx, width, 30, "today", "cost")]) {
 			const text = strip(lines.join("\n"));
 			assert.match(text, /anthropic 7d fable .+60% left.*↻ 2d/);
-			assert.match(text, /google-antigravity-acp gemini-4-neon .+90% left/);
-			assert.match(text, /google-antigravity-acp claude-sonnet-5-5-high .+0% left.*reset time/);
+			assert.match(text, /google-antigravity-acp 7d .+90% left.*↻ 5d/);
 			for (const line of lines) assert.ok(visibleWidth(line) <= width);
 		}
 	}

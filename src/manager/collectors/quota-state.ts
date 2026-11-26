@@ -24,7 +24,7 @@ function valid(value: unknown): value is PollState {
 	return r === undefined || (r !== null && typeof r === "object" &&
 		(r.fetchedAt === null || (Number.isSafeInteger(r.fetchedAt) && r.fetchedAt >= 0)) &&
 		(r.error === undefined || (typeof r.error === "string" && r.error.length <= 160 && !/[\x00-\x1f\x7f]/.test(r.error))) &&
-		Array.isArray(r.windows) && r.windows.length <= 3 && r.windows.every((w) => w &&
+		Array.isArray(r.windows) && r.windows.length <= 8 && new Set(r.windows.map((w) => w?.label)).size === r.windows.length && r.windows.every((w) => w &&
 			typeof w.label === "string" && /^\d+(m|h|d)(?: [a-z0-9._-]+)?$/.test(w.label) &&
 			typeof w.usedPercent === "number" && Number.isFinite(w.usedPercent) && w.usedPercent >= 0 && w.usedPercent <= 100 &&
 			(w.resetAt === null || (Number.isSafeInteger(w.resetAt) && w.resetAt > 0))));

@@ -400,7 +400,7 @@ about 17 s for 3.6 GB, and later scans take milliseconds.
 
 $ figures are pi's API-equivalent cost, not subscription balances. [Account quotas](docs/QUOTAS.md)
 come from read-only Anthropic/Codex/xAI usage endpoints using local Pi OAuth logins, including account aliases,
-and from Google Antigravity ACP's per-model quota using the ACP server's own login file.
+and from Google Antigravity ACP's weekly quota summary using the ACP server's own login file.
 Bars show the allowance **left**, with provider reset timers. Failed/old readings are explicitly stale;
 missing or unsupported data never becomes 100% available. The old `provider-failover-state.json` stays ignored.
 Account cooldowns come separately from `multi-login-state.json`: local failover timers, not provider resets.

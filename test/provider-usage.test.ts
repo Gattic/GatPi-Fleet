@@ -784,41 +784,77 @@ test("a known Retry-After is retained even if the owner closes during response c
 	assert.equal(peer.snapshot(NOW + 1640_000)![0].status, "fresh");
 });
 
-test("Anthropic's Fable week is its own window beside the all-model week", () => {
-	const fable = { utilization: 88, resets_at: new Date(NOW + 2 * 86400_000).toISOString() };
-	assert.deepEqual(parseUsage("anthropic", { ...anthropic, seven_day_fable: fable }), [
+test("Anthropic's scoped weekly pools are their own windows beside the all-model week", () => {
+	const scoped = { kind: "weekly_scoped", group: "weekly", percent: 88, resets_at: new Date(NOW + 2 * 86400_000).toISOString(), scope: { model: { id: null, display_name: "Fable" }, surface: null }, is_active: true };
+	const all = { kind: "weekly_all", group: "weekly", percent: 57, resets_at: new Date(NOW + 3 * 86400_000).toISOString(), scope: null, is_active: false };
+	assert.deepEqual(parseUsage("anthropic", { ...anthropic, limits: [all, scoped] }), [
 		{ label: "5h", usedPercent: 25, resetAt: NOW + HOUR },
 		{ label: "7d", usedPercent: 57, resetAt: NOW + 3 * 86400_000 },
 		{ label: "7d fable", usedPercent: 88, resetAt: NOW + 2 * 86400_000 },
 	]);
-	assert.deepEqual(parseUsage("anthropic", anthropic).map(({ label }) => label), ["5h", "7d"], "an absent Fable week is not invented");
-	// A model-scoped window without a percentage or a usable reset stays unknown.
-	for (const bad of [{ utilization: null, resets_at: NOW }, { utilization: 50, resets_at: "bad" }, { utilization: 50 }, { utilization: -1, resets_at: NOW }]) {
-		assert.deepEqual(parseUsage("anthropic", { ...anthropic, seven_day_fable: bad }).map(({ label }) => label), ["5h", "7d"]);
+	assert.deepEqual(parseUsage("anthropic", anthropic).map(({ label }) => label), ["5h", "7d"], "an absent scoped pool is not invented");
+	// A scoped pool without a percentage, reset, model name or safe label stays unknown.
+	for (const bad of [
+		{ ...scoped, percent: null },
+		{ ...scoped, percent: -1 },
+		{ ...scoped, resets_at: "bad" },
+		{ ...scoped, scope: { model: { display_name: "" } } },
+		{ ...scoped, scope: { model: { display_name: "Fable\u001b[31m" } } },
+		{ ...scoped, scope: { surface: { display_name: "Chat" } } },
+		{ ...scoped, kind: "weekly_all" },
+	]) {
+		assert.deepEqual(parseUsage("anthropic", { ...anthropic, limits: [bad] }).map(({ label }) => label), ["5h", "7d"]);
 	}
-	assert.deepEqual(parseUsage("codex", { ...codex, seven_day_fable: fable }).map(({ label }) => label), ["30d"], "only Anthropic reports model-scoped weeks");
+	// A repeated scope adds one line; a name with spaces is slugged, never rendered raw.
+	assert.deepEqual(parseUsage("anthropic", { ...anthropic, limits: [scoped, scoped] }).map(({ label }) => label), ["5h", "7d", "7d fable"]);
+	assert.deepEqual(parseUsage("anthropic", { ...anthropic, limits: [{ ...scoped, scope: { model: { display_name: "Claude Opus 4.5" } } }] }).map(({ label }) => label), ["5h", "7d", "7d claude-opus-4.5"]);
+	assert.deepEqual(parseUsage("codex", { ...codex, limits: [scoped] }).map(({ label }) => label), ["30d"], "only Anthropic reports scoped pools");
 });
 
-test("Antigravity buckets become per-model windows and completion buckets stay out", () => {
-	const body = { buckets: [
-		{ modelId: "gemini-4-neon", remainingFraction: 0.9, resetTime: new Date(NOW + 5 * HOUR).toISOString() },
-		{ modelId: "claude-sonnet-5-5-high", remainingFraction: 0, resetTime: null },
-		{ modelId: "gemini-3-flash", remainingFraction: 0.5, resetTime: NOW + 60_000 },
-		{ modelId: "tab_jump_flash_lite_preview", remainingFraction: 1 },
-		{ modelId: "chat_20706", remainingFraction: 1 },
-		{ modelId: "gemini-4-neon", remainingFraction: 0.1, resetTime: NOW },
-		{ modelId: "gemini-4-carbon" },
-		{ modelId: "gemini-4-hydrogen", remainingFraction: 2, resetTime: NOW },
-		{ modelId: "gemini\u001b[31mred", remainingFraction: 0.5 },
-		{ modelId: "", remainingFraction: 1 },
-	] };
-	assert.deepEqual(parseUsage("antigravity", body, NOW), [
-		{ label: "gemini-4-neon", usedPercent: 10, resetAt: NOW + 5 * HOUR },
-		{ label: "claude-sonnet-5-5-high", usedPercent: 100, resetAt: null },
-		{ label: "gemini-3-flash", usedPercent: 50, resetAt: NOW + 60_000 },
+test("a captured Anthropic body keeps the all-model week and adds each scoped pool once", () => {
+	const body: unknown = JSON.parse(readFileSync(new URL("./fixtures/anthropic-usage.json", import.meta.url), "utf8"));
+	const reset = (second: number) => Date.parse(`2026-11-27T03:00:0${second}.000000+00:00`);
+	const windows = parseUsage("anthropic", body);
+	assert.deepEqual(windows, [
+		{ label: "7d", usedPercent: 74, resetAt: reset(0) },
+		{ label: "7d fable", usedPercent: 100, resetAt: reset(1) },
+		{ label: "7d cowork", usedPercent: 12, resetAt: reset(2) },
 	]);
+	// The all-model week keeps its own reported percentage and reset, untouched by the scoped pools.
+	assert.deepEqual(windows[0], { label: "7d", usedPercent: 74, resetAt: Date.parse("2026-11-27T03:00:00.000000+00:00") });
+	// A repeated scope, a control-character name, a surface-only scope and a missing percentage stay out.
+	assert.equal(windows.length, 3);
+	assert.ok(!windows.some(({ label }) => label.includes("\u001b")));
+	// five_hour is null in the capture, so no five-hour line is invented.
+	assert.deepEqual(windows.map(({ label }) => label), ["7d", "7d fable", "7d cowork"]);
+});
+
+test("Antigravity's summary keeps one weekly window per shared pool", () => {
+	const weekly = (remainingFraction: unknown, resetTime: unknown = new Date(NOW + 5 * 86400_000).toISOString()) =>
+		({ window: "weekly", bucketId: "3p-weekly", displayName: "Weekly Limit Remaining", remainingFraction, resetTime });
+	const fiveHour = { window: "5h", bucketId: "3p-5h", remainingFraction: 0.4, resetTime: new Date(NOW + HOUR).toISOString() };
+	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [fiveHour, weekly(0.9)] }] }, NOW), [
+		{ label: "7d", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
+	]);
+	// Several pools keep their group name beside the duration.
+	assert.deepEqual(parseUsage("antigravity", { groups: [
+		{ displayName: "Claude and GPT models", buckets: [weekly(0.9)] },
+		{ displayName: "Gemini models", buckets: [weekly(0.5)] },
+	] }, NOW), [
+		{ label: "7d claude-and-gpt-models", usedPercent: 10, resetAt: NOW + 5 * 86400_000 },
+		{ label: "7d gemini-models", usedPercent: 50, resetAt: NOW + 5 * 86400_000 },
+	]);
+	// No weekly bucket, an out-of-range or missing fraction, a bad reset, or no name (with several pools) stays out.
+	assert.deepEqual(parseUsage("antigravity", { groups: [
+		{ displayName: "A", buckets: [fiveHour] },
+		{ displayName: "B", buckets: [weekly(2)] },
+		{ displayName: "C", buckets: [weekly(undefined)] },
+		{ displayName: "D", buckets: [weekly(0.5, "bad")] },
+	] }, NOW), []);
+	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: undefined, buckets: [weekly(0.5)] }, { displayName: "Gemini", buckets: [weekly(0.5)] }] }, NOW).map(({ label }) => label), ["7d gemini"]);
+	assert.deepEqual(parseUsage("antigravity", { groups: [{ displayName: "Claude and GPT models", buckets: [weekly(0.5)] }, { displayName: "Claude and GPT models", buckets: [weekly(0.5)] }] }, NOW).map(({ label }) => label), ["7d"], "a repeated pool is one line");
 	assert.deepEqual(parseUsage("antigravity", {}, NOW), [], "an HTTP success alone is not quota data");
-	assert.deepEqual(parseUsage("antigravity", { buckets: "bad" }, NOW), []);
+	assert.deepEqual(parseUsage("antigravity", { groups: "bad" }, NOW), []);
 });
 
 /** The ACP server's own login file, with synthetic values; no real token is ever used here. */
@@ -833,8 +869,8 @@ function acpFixture(t: TestContext, token: Record<string, unknown> = {}) {
 	return { dir, file };
 }
 
-const ACP_QUOTA_URL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota";
-const ACP_FALLBACK_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota";
+const ACP_QUOTA_URL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+const ACP_FALLBACK_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
 const acpCredential = { type: "oauth", access: "antigravity-acp-managed", refresh: "antigravity-acp-managed", expires: NOW + 86400_000 };
 
 test("the ACP token file is resolved from the server's own Gemini home", () => {
@@ -843,7 +879,7 @@ test("the ACP token file is resolved from the server's own Gemini home", () => {
 	assert.equal(resolveAcpTokenFile({ HOME: "/home/user", GEMINI_HOME: "/opt/gemini" }), join("/opt/gemini", "antigravity-acp", "acp_token.json"));
 });
 
-test("the Antigravity ACP login exchanges its own refresh token and reads per-model quota", async (t) => {
+test("the Antigravity ACP login exchanges its own refresh token and reads the weekly quota summary", async (t) => {
 	const { file } = acpFixture(t);
 	const calls: string[] = [];
 	const impl = async (input: string | URL | Request, init?: RequestInit) => {
@@ -868,10 +904,13 @@ test("the Antigravity ACP login exchanges its own refresh token and reads per-mo
 		assert.match(headers.get("User-Agent") ?? "", /^antigravity\/\d/);
 		assert.deepEqual(JSON.parse(String(headers.get("Client-Metadata"))), { ideType: "ANTIGRAVITY", platform: "DARWIN_ARM64", pluginType: "CLOUD_CODE", ideName: "antigravity" });
 		assert.deepEqual(JSON.parse(String(init?.body)), { project: "acp-project" });
-		return Response.json({ buckets: [{ modelId: "gemini-4-neon", remainingFraction: 0.9, resetTime: new Date(NOW + HOUR).toISOString() }] });
+		return Response.json({ groups: [{ displayName: "Claude and GPT models", buckets: [
+			{ window: "5h", remainingFraction: 0.9, resetTime: new Date(NOW + HOUR).toISOString() },
+			{ window: "weekly", remainingFraction: 0.9, resetTime: new Date(NOW + 5 * 86400_000).toISOString() },
+		] }] });
 	};
 	const windows = await fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal, impl as typeof fetch, () => NOW, file);
-	assert.deepEqual(windows, [{ label: "gemini-4-neon", usedPercent: 10, resetAt: NOW + HOUR }]);
+	assert.deepEqual(windows, [{ label: "7d", usedPercent: 10, resetAt: NOW + 5 * 86400_000 }]);
 	assert.deepEqual(calls, ["https://oauth2.googleapis.com/token", ACP_QUOTA_URL]);
 	assert.doesNotMatch(JSON.stringify(windows), /acp-secret|acp-refresh|google-access|acp-project/);
 });
@@ -903,16 +942,16 @@ test("the ACP quota cascades a gated endpoint, reports the last answer and never
 		urls.push(url);
 		if (quota(url)) return Response.json({ access_token: "google-access" });
 		if (url === ACP_QUOTA_URL) return new Response("secret", { status: 403 });
-		return Response.json({ buckets: [{ modelId: "gemini-3-flash", remainingFraction: 0.5 }] });
+		return Response.json({ groups: [{ displayName: "Gemini models", buckets: [{ window: "weekly", remainingFraction: 0.5 }] }] });
 	};
 	const windows = await fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal, cascade as typeof fetch, () => NOW, file);
 	assert.deepEqual(urls, ["https://oauth2.googleapis.com/token", ACP_QUOTA_URL, ACP_FALLBACK_URL]);
-	assert.deepEqual(windows, [{ label: "gemini-3-flash", usedPercent: 50, resetAt: null }]);
+	assert.deepEqual(windows, [{ label: "7d", usedPercent: 50, resetAt: null }]);
 	// The last endpoint's answer stands: a 403 there is the provider's verdict, not another endpoint to try.
 	await assert.rejects(fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal,
 		async (input) => String(input) === "https://oauth2.googleapis.com/token" ? Response.json({ access_token: "google-access" }) : new Response("secret", { status: 403 }), () => NOW, file), { message: "Usage endpoint HTTP 403" });
 	await assert.rejects(fetchProviderUsage("google-antigravity-acp", acpCredential, new AbortController().signal,
-		async (input) => String(input) === "https://oauth2.googleapis.com/token" ? Response.json({ access_token: "google-access" }) : Response.json({ buckets: [] }), () => NOW, file), { message: "Provider returned no quota windows" });
+		async (input) => String(input) === "https://oauth2.googleapis.com/token" ? Response.json({ access_token: "google-access" }) : Response.json({ groups: [] }), () => NOW, file), { message: "Provider returned no quota windows" });
 });
 
 test("the ACP login polls slowly and is never renewed through Pi's runtime", async (t) => {
@@ -925,7 +964,7 @@ test("the ACP login polls slowly and is never renewed through Pi's runtime", asy
 			calls++;
 			return String(input) === "https://oauth2.googleapis.com/token"
 				? Response.json({ access_token: "google-access" })
-				: Response.json({ buckets: [{ modelId: "gemini-4-neon", remainingFraction: 0.75, resetTime: new Date(now + 4 * HOUR).toISOString() }] });
+				: Response.json({ groups: [{ displayName: "Claude and GPT models", buckets: [{ window: "weekly", remainingFraction: 0.75, resetTime: new Date(now + 5 * 86400_000).toISOString() }] }] });
 		},
 		now: () => now,
 		renew: async () => { renewed++; },
@@ -939,7 +978,7 @@ test("the ACP login polls slowly and is never renewed through Pi's runtime", asy
 	assert.equal(renewed, 0, "Pi's runtime cannot renew an extension-owned login");
 	assert.deepEqual(quota.snapshot(now), [{
 		provider: "google-antigravity-acp", status: "fresh", fetchedAt: now, freshUntil: now + 20 * 60_000, message: null,
-		windows: [{ label: "gemini-4-neon", usedPercent: 25, resetAt: now + 4 * HOUR }],
+		windows: [{ label: "7d", usedPercent: 25, resetAt: now + 5 * 86400_000 }],
 	}]);
 	assert.equal(calls, 2);
 	await quota.refresh();
@@ -964,6 +1003,7 @@ test("shared Anthropic state carries the separately metered Fable week", (t) => 
 		{ label: "5h", usedPercent: 0, resetAt: null },
 		{ label: "7d", usedPercent: 57, resetAt: NOW + 3 * 86400_000 },
 		{ label: "7d fable", usedPercent: 88, resetAt: NOW + 2 * 86400_000 },
+		{ label: "7d cowork", usedPercent: 10, resetAt: NOW + 2 * 86400_000 },
 	] };
 	assert.equal(state.complete("anthropic", claim.state.reservation, NOW + 600_000, reading), true);
 	assert.deepEqual(state.read("anthropic")!.reading, reading);
