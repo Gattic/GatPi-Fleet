@@ -75,9 +75,19 @@ function suggestionDirection(value: unknown): string | undefined {
 	return direction;
 }
 
-/** SAID text of an assistant message: none when it calls tools, since that text only narrates the work. */
+/**
+ * A call Pi ran itself. Provider-executed calls (an ACP server) do not suppress the reply: the
+ * server ran them inside the same message that carries the model's answer.
+ */
+function isPiToolCall(block: unknown): boolean {
+	if (!block || typeof block !== "object") return false;
+	const candidate = block as { type?: string; providerExecuted?: boolean };
+	return candidate.type === "toolCall" && candidate.providerExecuted !== true;
+}
+
+/** SAID text of an assistant message: none when it calls Pi's own tools, since that text only narrates the work. */
 function replyOf(content: unknown): string {
-	if (Array.isArray(content) && content.some((block) => block?.type === "toolCall")) return "";
+	if (Array.isArray(content) && content.some(isPiToolCall)) return "";
 	return bound(textOf(content), SAID_LIMIT);
 }
 
