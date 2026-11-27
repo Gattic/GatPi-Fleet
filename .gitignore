@@ -7,6 +7,9 @@ node_modules/
 # Nested Git worktrees created for task branches
 .worktrees/
 
+# Local Pi skills synced by Antigravity into the system namespace
+skills/system/
+
 # Local environment and credential material
 .env
 .env.*
