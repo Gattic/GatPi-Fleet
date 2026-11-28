@@ -1,7 +1,9 @@
 package dev.pidash.android.ui
 
 import android.os.SystemClock
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -9,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToNode
 import androidx.lifecycle.ViewModelProvider
+import dev.pidash.android.AccountCooldown
 import dev.pidash.android.DashViewModel
 import dev.pidash.android.HostUsage
 import dev.pidash.android.MainActivity
@@ -80,6 +83,48 @@ class UsageScreenTest {
         compose.onNodeWithText("Stale — refresh to update").assertIsDisplayed()
         compose.onNodeWithText("Reset due — refresh to update").assertIsDisplayed()
         compose.onNodeWithText("Weekly: 44% left").assertIsDisplayed()
+    }
+
+    @Test fun quotaBarsFillWithTheRemainingShareAndALiveAccountKeepsItsLastReading() {
+        val at = 1_000_000_000_000L
+        val measure = UsageMeasure(emptyList(), emptyList(), emptyList(), emptyList())
+        val report = UsageReport(at, false,
+            listOf(QuotaAccount("anthropic", "fresh", at, at + 120_000, null,
+                listOf(QuotaWindow("5h", 25.0, at + 60_000), QuotaWindow("7d", 100.0, at + 86_400_000), QuotaWindow("7d fable", 40.0, at + 2 * 86_400_000)))),
+            emptyList(), emptyList(), UsageReport.RANGES.map { UsageRange(it, 1, 0.0, 0.0, 0.0, measure, measure) })
+        compose.runOnUiThread {
+            val vm = ViewModelProvider(compose.activity)[DashViewModel::class.java]
+            vm.usage.value = UsageSnapshot(report, SystemClock.elapsedRealtime())
+            vm.screen.value = Screen.Usage
+        }
+        // Bars show 100 - usedPercent left, as in the terminal.
+        compose.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo(0.75f, 0f..1f))).assertExists()
+        compose.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo(0f, 0f..1f))).assertExists()
+        compose.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo(0.6f, 0f..1f))).assertExists()
+        compose.onNodeWithText("5h: 75% left").assertIsDisplayed()
+        compose.onNodeWithText("7d: 0% left").assertIsDisplayed()
+        // A scoped pool is a plain-text label, as in the terminal.
+        compose.onNodeWithText("7d fable: 60% left").assertIsDisplayed()
+    }
+
+    @Test fun cooldownsCountDownAgainstHostTimeAndExpireLikeTheTerminals() {
+        val at = 1_000_000_000_000L
+        val measure = UsageMeasure(emptyList(), emptyList(), emptyList(), emptyList())
+        val report = UsageReport(at, false, emptyList(),
+            listOf(AccountCooldown("anthropic", at + 10_000)), emptyList(),
+            UsageReport.RANGES.map { UsageRange(it, 1, 0.0, 0.0, 0.0, measure, measure) })
+        compose.runOnUiThread {
+            val vm = ViewModelProvider(compose.activity)[DashViewModel::class.java]
+            // One second has passed since the report was made, so the timer is counted down from host time.
+            vm.usage.value = UsageSnapshot(report, SystemClock.elapsedRealtime() - 1_000)
+            vm.screen.value = Screen.Usage
+        }
+        compose.onNode(hasText("anthropic: ", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("at last refresh", substring = true)).assertDoesNotExist()
+        compose.waitUntil(timeoutMillis = 15_000) {
+            compose.onAllNodesWithText("None recorded.").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("None recorded.").assertIsDisplayed()
     }
 
     @Test fun remoteHostsGetTheirOwnCardAndTheIncompleteOnesAreMarkedWithTheirFigures() {
