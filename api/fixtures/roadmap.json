@@ -95,6 +95,20 @@
     ]
   },
   "lastPrompt": null,
+  "slashCommands": [
+    {
+      "name": "model",
+      "description": "Switch the session's model",
+      "argumentHint": "<provider/modelId>",
+      "source": "builtin"
+    },
+    {
+      "name": "skill:commit",
+      "description": "Commit work",
+      "argumentHint": null,
+      "source": "skill"
+    }
+  ],
   "context": null,
   "prompts": [],
   "lastSaid": null,

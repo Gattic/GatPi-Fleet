@@ -741,6 +741,8 @@ export class App implements Component {
 				requestSuggestion: (direction) => this.send(row, { kind: "suggest", direction }, `requested a suggestion in that direction from ${rowLabel(row)}`),
 				initialText,
 				initialMode,
+				commands: () => store.rows.get(row.key)?.bridge?.slashCommands ?? [],
+				models: () => store.rows.get(row.key)?.bridge?.models ?? [],
 				onSubmit: (text, deliverAs) => {
 					this.closeOverlay();
 					const working = store.rows.get(row.key)?.bridge?.phase === "working";

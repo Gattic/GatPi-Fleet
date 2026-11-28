@@ -11,7 +11,10 @@ process.env.TZ = "UTC";
 mkdirSync("api/fixtures", { recursive: true });
 writeFileSync("api/requests.schema.json", JSON.stringify({ command: CommandRequestSchema, git: GitRequestSchema, launch: LaunchRequestSchema, subscribe: SubscriptionSchema }, null, 2) + "\n");
 const runtime = new ManagerRuntime();
-runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [
+	{ name: "model", description: "Switch the session's model", argumentHint: "<provider/modelId>", source: "builtin" },
+	{ name: "skill:commit", description: "Commit work", source: "skill" },
+] });
 writeFileSync("api/fixtures/snapshot.json", JSON.stringify({ version: 1, epoch: "00000000-0000-4000-8000-000000000000", seq: 1, at: 1000, type: "snapshot", sessions: [summary(runtime.store.rows.get("11")!)] }, null, 2) + "\n");
 runtime.store.setState(11, { ...runtime.store.rows.get("11")!.bridge!, plan: roadmapFixture() });
 const sessions = new Sessions(runtime);

@@ -12,7 +12,7 @@ function state(pid: number, cwd: string, context: SessionState["context"], name?
 		pid, instanceId: `instance-${pid}`, sessionId: `session-${pid}`, cwd, name,
 		phase: "idle", phaseSince: NOW - 60_000, lastEventAt: NOW - 60_000,
 		usage: { direct: emptyUsage(), indirect: emptyUsage() },
-		usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [],
+		usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [],
 		context,
 	};
 }

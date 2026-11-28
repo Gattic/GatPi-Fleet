@@ -31,6 +31,7 @@ function bridge(overrides: Partial<SessionState> = {}): SessionState {
 		models: [],
 		asks: [],
 		prompts: [],
+		slashCommands: [],
 		...overrides,
 	};
 }

@@ -9,7 +9,7 @@ import { Sessions, summary } from "../src/server/sessions.ts";
 
 function fixture() {
 	const runtime = new ManagerRuntime({ hosts: ["box"] });
-	runtime.store.setState(11, { pid: 11, instanceId: "instance", sessionId: "session", sessionFile: "/sessions/saved.jsonl", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	runtime.store.setState(11, { pid: 11, instanceId: "instance", sessionId: "session", sessionFile: "/sessions/saved.jsonl", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 	return { runtime, row: runtime.store.rows.get("11")!, sessions: new Sessions(runtime) };
 }
 
@@ -88,4 +88,21 @@ test("lifecycle actions preserve revision guards and route restart to the host l
 	}
 	assert.deepEqual(sent, [{ kind: "reload" }, { kind: "new" }]);
 	assert.equal(restart.mock.callCount(), 1);
+});
+
+test("slash prompts are ordinary prompt commands and reach the bridge unchanged", async (t) => {
+	const { runtime, row, sessions } = fixture();
+	row.bridge!.slashCommands = [
+		{ name: "model", description: "Switch the session's model", argumentHint: "<provider/modelId>", source: "builtin" },
+		{ name: "skill:commit", description: "Commit work", source: "skill" },
+	];
+	assert.deepEqual(sessions.detail(summary(row).id).slashCommands.map((command) => command.name), ["model", "skill:commit"]);
+	const sent: Command[] = [];
+	t.mock.method(runtime.network, "send", async (_row: SessionRow, command: Command) => { sent.push(command); });
+	const input = { requestId: randomUUID(), epoch: randomUUID(), revision: summary(row).revision, command: { kind: "prompt" as const, text: "/skill:commit now" } };
+	assert.equal(commandRequest.Check(input), true);
+	await sessions.command(summary(row).id, input);
+	assert.deepEqual(sent, [{ kind: "prompt", text: "/skill:commit now" }], "the gateway no longer refuses a slash prompt");
+	row.bridge!.phase = "working";
+	await assert.rejects(sessions.command(summary(row).id, { ...input, revision: summary(row).revision }), /steer or follow-up/);
 });

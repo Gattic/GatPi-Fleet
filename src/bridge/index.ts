@@ -38,6 +38,7 @@ import {
 } from "../protocol/index.ts";
 import { answerOf, buildAskContext, cacheBeforeQuestion, textOf } from "./ask.ts";
 import { computeContextBreakdown, contextHistory, type SystemMessage } from "./context.ts";
+import { DESKTOP_ONLY_SLASH_COMMANDS, parseSlashCommand, publishedSlashCommands } from "./slash.ts";
 import { RecoveryJournal } from "../manager/recovery.ts";
 
 const FLUSH_INTERVAL_MS = 250;
@@ -292,6 +293,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 		timeline,
 		models: models.map((model) => `${model.provider}/${model.id}`),
 		allModels: allModels?.map((model) => `${model.provider}/${model.id}`),
+		slashCommands: publishedSlashCommands(pi),
 		asks: [],
 	};
 }
@@ -531,6 +533,82 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 		}
 	}
 
+	function compactNow(session: ExtensionContext, customInstructions?: string): void {
+		session.compact({
+			customInstructions,
+			onError: (error) => {
+				set({ lastError: { message: clip(`compaction failed: ${error.message}`, TEXT_LIMIT), at: Date.now() } });
+				settleAfterCompaction();
+			},
+		});
+	}
+
+	/** Runs an idle-only extension command after the ACK, so reload/new cannot tear the socket down first. */
+	function deferExtensionCommand(name: string, target: ClientMessage["target"]): void {
+		setImmediate(() => {
+			if (state && sameSession(state, target)) pi.sendUserMessage(`/${name}`, { deliverAs: "followUp", expandPromptTemplates: true });
+		});
+	}
+
+	/**
+	 * Runs a slash command typed into a prompt. Pi's extension commands, prompt templates and skills
+	 * go through Pi's own dispatch; the built-ins with a remote equivalent are executed here.
+	 */
+	async function runSlash(text: string, command: Extract<Command, { kind: "prompt" }>, target: ClientMessage["target"], session: ExtensionContext, current: SessionState): Promise<void> {
+		const parsed = parseSlashCommand(text);
+		if (!parsed) throw new Error("slash command is empty");
+		const { name, args } = parsed;
+		if (name.startsWith("pi-dash-")) throw new Error(`unknown slash command /${name}`);
+		if (pi.getCommands().some((candidate) => candidate.name === name)) {
+			// Extension commands run even while streaming; skills and templates queue as steer or follow-up.
+			if (session.isIdle()) pi.sendUserMessage(text, { expandPromptTemplates: true });
+			else pi.sendUserMessage(text, { deliverAs: command.deliverAs ?? "steer", expandPromptTemplates: true });
+			return;
+		}
+		switch (name) {
+			case "model": {
+				const slash = args.indexOf("/");
+				if (slash <= 0 || slash === args.length - 1) throw new Error("/model needs <provider/modelId>; the model menu lists the choices");
+				const provider = args.slice(0, slash);
+				const model = session.modelRegistry.find(provider, args.slice(slash + 1));
+				if (!model) throw new Error(`unknown model ${args}`);
+				if (!(await pi.setModel(model))) throw new Error(`no credentials for ${provider}`);
+				return;
+			}
+			case "thinking":
+				if (!THINKING_LEVELS.includes(args as (typeof THINKING_LEVELS)[number])) throw new Error(`/thinking needs one of ${THINKING_LEVELS.join(", ")}`);
+				pi.setThinkingLevel(args as (typeof THINKING_LEVELS)[number]);
+				return;
+			case "compact":
+				if (!session.isIdle()) throw new Error("Compact only while idle");
+				if (current.asks.some((ask) => ask.status === "answering")) throw new Error("A side question is still answering");
+				compactNow(session, args || undefined);
+				return;
+			case "new":
+			case "clear":
+				if (!session.isIdle()) throw new Error("New session only while idle");
+				if (current.asks.some((ask) => ask.status === "answering")) throw new Error("A side question is still answering");
+				deferExtensionCommand("pi-dash-new", target);
+				return;
+			case "reload":
+				if (!session.isIdle()) throw new Error("Reload only while idle");
+				if (current.asks.some((ask) => ask.status === "answering")) throw new Error("A side question is still answering");
+				deferExtensionCommand("pi-dash-reload", target);
+				return;
+			case "name": {
+				if (!args) throw new Error(`session name is ${pi.getSessionName() ?? "(none)"}`);
+				pi.setSessionName(args);
+				return;
+			}
+			case "quit":
+			case "exit":
+				session.shutdown();
+				return;
+		}
+		if (DESKTOP_ONLY_SLASH_COMMANDS.has(name)) throw new Error(`/${name} needs desktop pi; use the session's controls instead`);
+		throw new Error(`unknown slash command /${name}; type / for the available commands`);
+	}
+
 	async function runCommand(command: Command, target: ClientMessage["target"]): Promise<void> {
 		if (!ctx || !state) throw new Error("session is not ready");
 		if (!target || !sameSession(state, target)) throw new Error("session changed; refresh before sending");
@@ -538,7 +616,8 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 			case "prompt": {
 				const text = command.text.trim();
 				if (!text) throw new Error("prompt is empty");
-				if (ctx.isIdle()) pi.sendUserMessage(text);
+				if (text.startsWith("/")) await runSlash(text, command, target, ctx, state);
+				else if (ctx.isIdle()) pi.sendUserMessage(text);
 				else pi.sendUserMessage(text, { deliverAs: command.deliverAs ?? "steer" });
 				set({ lastPrompt: clip(text, TEXT_LIMIT) });
 				return;
@@ -583,12 +662,7 @@ export default function piDashBridge(pi: ExtensionAPI): void {
 				return;
 			case "compact":
 				if (!ctx.isIdle()) throw new Error("session is working; compact when it is idle");
-				ctx.compact({
-					onError: (error) => {
-						set({ lastError: { message: clip(`compaction failed: ${error.message}`, TEXT_LIMIT), at: Date.now() } });
-						settleAfterCompaction();
-					},
-				});
+				compactNow(ctx);
 				return;
 			case "model": {
 				const model = ctx.modelRegistry.find(command.provider, command.id);

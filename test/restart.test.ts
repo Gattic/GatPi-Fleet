@@ -22,7 +22,7 @@ function fixture(t: TestContext, pid: number) {
 	process.env.PATH = `${root}:${path}`;
 	t.after(() => { process.env.PATH = path; });
 	const store = new Store(() => {});
-	store.setState(pid, { pid, instanceId: "instance", sessionId: "session", sessionFile: file, cwd: root, name: "saved", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	store.setState(pid, { pid, instanceId: "instance", sessionId: "session", sessionFile: file, cwd: root, name: "saved", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 	const hub = new BridgeHub(root, { onState() {}, onBye() {}, onDisconnect() {}, onIncompatible() {} });
 	return { root, file, record, store, row: store.rows.get(String(pid))!, hub };
 }

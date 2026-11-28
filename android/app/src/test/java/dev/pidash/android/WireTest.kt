@@ -16,6 +16,20 @@ class WireTest {
         assertNull(state.sessions.single().metrics)
         assertNull(state.sessions.single().contextPercent)
         assertTrue(state.sessions.single().commands.containsKey("prompt"))
+        assertTrue("the overview stays lean and omits the prompt's commands", state.sessions.single().slashCommands.isEmpty())
+    }
+    @Test fun selectedDetailCarriesTheSessionsSlashCommandsAndToleratesAHostWithoutThem() {
+        val commands = JSONArray()
+            .put(JSONObject().put("name", "model").put("description", "Switch the session's model")
+                .put("argumentHint", "<provider/modelId>").put("source", "builtin"))
+            .put(JSONObject().put("name", "skill:commit").put("description", "Commit work")
+                .put("argumentHint", JSONObject.NULL).put("source", "skill"))
+        val detail = Detail.parse(detailJson(JSONArray()).put("slashCommands", commands))
+        assertEquals(listOf("model", "skill:commit"), detail.session.slashCommands.map { it.name })
+        assertEquals("builtin", detail.session.slashCommands[0].source)
+        assertEquals("<provider/modelId>", detail.session.slashCommands[0].argumentHint)
+        assertNull("an optional hint is absent when the host sends none", detail.session.slashCommands[1].argumentHint)
+        assertEquals(emptyList<SlashCommand>(), Detail.parse(detailJson(JSONArray())).session.slashCommands)
     }
     @Test fun readsBackgroundJobsAndToleratesAHostThatDoesNotReportThem() {
         val json = fixture()

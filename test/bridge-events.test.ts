@@ -27,6 +27,14 @@ function startBridge(t: TestContext, entries: unknown[] = [], catalogue: { scope
 	const bus = new Map<string, (data: unknown) => void>();
 	const commands = new Map<string, { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
 	const sent: { text: string; options: Parameters<ExtensionAPI["sendUserMessage"]>[1] }[] = [];
+	let idle = true;
+	const calls = {
+		compacted: [] as (string | undefined)[],
+		thinking: [] as string[],
+		names: [] as string[],
+		models: [] as { provider: string; id: string }[],
+		shutdown: 0,
+	};
 	const pi = {
 		registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => commands.set(name, command),
 		sendUserMessage: (text: string, options: Parameters<ExtensionAPI["sendUserMessage"]>[1]) => sent.push({ text, options }),
@@ -35,12 +43,22 @@ function startBridge(t: TestContext, entries: unknown[] = [], catalogue: { scope
 			on: (name: string, handler: (data: unknown) => void) => bus.set(name, handler),
 			emit: (name: string, data: unknown) => bus.get(name)?.(data),
 		},
-		getSessionName: () => undefined,
+		getCommands: () => [
+			{ name: "review", description: "Review the diff", source: "prompt", sourceInfo: { path: join(root, "prompts/review.md"), source: "prompt", scope: "project", origin: "top-level" } },
+			{ name: "skill:commit", description: "Commit work", source: "skill", sourceInfo: { path: join(root, "skills/commit"), source: "skill", scope: "user", origin: "top-level" } },
+			{ name: "pi-dash-reload", description: "Reload pi resources from pi-dash", source: "extension", sourceInfo: { path: join(root, "bridge"), source: "extension", scope: "user", origin: "top-level" } },
+		],
+		getSessionName: () => calls.names.at(-1),
+		setSessionName: (name: string) => { calls.names.push(name); },
+		setThinkingLevel: (level: string) => { calls.thinking.push(level); },
+		setModel: async (model: { provider: string; id: string }) => { calls.models.push(model); return true; },
 	} as unknown as ExtensionAPI;
 	const ctx = {
-		mode: "tui", cwd: root, isIdle: () => true, scopedModels: catalogue.scoped ?? [],
-		modelRegistry: { getAvailable: () => catalogue.available ?? [] },
+		mode: "tui", cwd: root, isIdle: () => idle, scopedModels: catalogue.scoped ?? [],
+		modelRegistry: { getAvailable: () => catalogue.available ?? [], find: (provider: string, id: string) => ({ provider, id }) },
 		getContextUsage: () => undefined,
+		compact: (options?: { customInstructions?: string }) => calls.compacted.push(options?.customInstructions),
+		shutdown: () => { calls.shutdown++; },
 		sessionManager: { getEntries: () => entries, getSessionId: () => session.id, getSessionFile: () => session.file },
 	} as unknown as ExtensionContext;
 	piDashBridge(pi);
@@ -88,7 +106,7 @@ function startBridge(t: TestContext, entries: unknown[] = [], catalogue: { scope
 			await closed;
 		}
 	}
-	return { commands, sent, bus, command, handlers, snapshot, root, session, ctx, publish: (data: unknown) => bus.get("roadmap:changed")!(data) };
+	return { commands, sent, bus, command, handlers, snapshot, root, session, ctx, calls, setIdle: (value: boolean) => { idle = value; }, publish: (data: unknown) => bus.get("roadmap:changed")!(data) };
 }
 
 test("a scoped session reports the models it could still switch to", async (t) => {
@@ -337,4 +355,91 @@ test("a Pi tool call still suppresses its narration text", async (t) => {
 	const state = await snapshot();
 	assert.equal(state.lastSaid, undefined, "text that only narrates Pi's own tool calls is not the reply");
 	assert.equal(state.tools.at(-1)?.name, "bash");
+});
+
+test("the snapshot publishes the built-ins pi-dash can run, then Pi's resources, without its own commands", async (t) => {
+	const { snapshot } = startBridge(t);
+	const commands = (await snapshot()).slashCommands;
+	assert.deepEqual(commands.slice(0, 3), [
+		{ name: "model", description: "Switch the session's model", argumentHint: "<provider/modelId>", source: "builtin" },
+		{ name: "thinking", description: "Set the thinking level", argumentHint: "<level>", source: "builtin" },
+		{ name: "compact", description: "Summarize the conversation so far", argumentHint: "[instructions]", source: "builtin" },
+	]);
+	assert.deepEqual(commands.slice(-2), [
+		{ name: "review", description: "Review the diff", source: "prompt" },
+		{ name: "skill:commit", description: "Commit work", source: "skill" },
+	]);
+	assert.ok(commands.every((command) => !command.name.startsWith("pi-dash-")), "the bridge's own commands are not offered");
+});
+
+test("skills, prompt templates and extension commands run through Pi's own expansion", async (t) => {
+	const { command, sent, setIdle } = startBridge(t);
+	assert.equal((await command({ kind: "prompt", text: "/skill:commit now" })).ok, true);
+	assert.deepEqual(sent.at(-1), { text: "/skill:commit now", options: { expandPromptTemplates: true } });
+	assert.equal((await command({ kind: "prompt", text: "/review API compatibility" })).ok, true);
+	assert.deepEqual(sent.at(-1), { text: "/review API compatibility", options: { expandPromptTemplates: true } });
+	setIdle(false);
+	assert.equal((await command({ kind: "prompt", text: "/skill:commit", deliverAs: "followUp" })).ok, true);
+	assert.deepEqual(sent.at(-1), { text: "/skill:commit", options: { deliverAs: "followUp", expandPromptTemplates: true } }, "a skill queues as the chosen delivery while the agent works");
+	assert.equal(sent.length, 3);
+});
+
+test("built-ins with a remote equivalent execute without a prompt", async (t) => {
+	const { command, sent, calls } = startBridge(t);
+	assert.equal((await command({ kind: "prompt", text: "/thinking high" })).ok, true);
+	assert.deepEqual(calls.thinking, ["high"]);
+	assert.equal((await command({ kind: "prompt", text: "/model anthropic/claude-sonnet" })).ok, true);
+	assert.deepEqual(calls.models, [{ provider: "anthropic", id: "claude-sonnet" }]);
+	assert.equal((await command({ kind: "prompt", text: "/name Release" })).ok, true);
+	assert.deepEqual(calls.names, ["Release"]);
+	assert.equal((await command({ kind: "prompt", text: "/compact keep the decisions" })).ok, true);
+	assert.deepEqual(calls.compacted, ["keep the decisions"]);
+	assert.equal((await command({ kind: "prompt", text: "/quit" })).ok, true);
+	assert.equal(calls.shutdown, 1);
+	assert.deepEqual(sent, [], "a built-in is never sent to the model as literal text");
+});
+
+test("invalid, desktop-only and internal slash commands fail with a reason", async (t) => {
+	const { command, sent, setIdle } = startBridge(t);
+	const thinking = await command({ kind: "prompt", text: "/thinking loudly" });
+	assert.equal(thinking.ok, false);
+	assert.match(thinking.error!, /one of off, minimal/);
+	const model = await command({ kind: "prompt", text: "/model claude" });
+	assert.equal(model.ok, false);
+	assert.match(model.error!, /provider\/modelId/);
+	const name = await command({ kind: "prompt", text: "/name" });
+	assert.equal(name.ok, false);
+	assert.match(name.error!, /session name is/);
+	const desktop = await command({ kind: "prompt", text: "/settings" });
+	assert.equal(desktop.ok, false);
+	assert.match(desktop.error!, /needs desktop pi/);
+	const unknown = await command({ kind: "prompt", text: "/frobnicate" });
+	assert.equal(unknown.ok, false);
+	assert.match(unknown.error!, /unknown slash command \/frobnicate/);
+	const internal = await command({ kind: "prompt", text: "/pi-dash-reload" });
+	assert.equal(internal.ok, false);
+	assert.match(internal.error!, /unknown slash command/);
+	setIdle(false);
+	const compact = await command({ kind: "prompt", text: "/compact" });
+	assert.equal(compact.ok, false);
+	assert.match(compact.error!, /idle/);
+	assert.deepEqual(sent, [], "nothing invalid reaches the model");
+});
+
+test("/new, /clear and /reload dispatch the bridge's idle-only commands after the acknowledgement", async (t) => {
+	const { command, sent, setIdle } = startBridge(t);
+	const deferred = () => new Promise((resolve) => setImmediate(resolve));
+	assert.equal((await command({ kind: "prompt", text: "/new" })).ok, true);
+	await deferred();
+	assert.deepEqual(sent.at(-1), { text: "/pi-dash-new", options: { deliverAs: "followUp", expandPromptTemplates: true } });
+	assert.equal((await command({ kind: "prompt", text: "/clear" })).ok, true);
+	await deferred();
+	assert.equal(sent.at(-1)!.text, "/pi-dash-new");
+	assert.equal((await command({ kind: "prompt", text: "/reload" })).ok, true);
+	await deferred();
+	assert.deepEqual(sent.at(-1), { text: "/pi-dash-reload", options: { deliverAs: "followUp", expandPromptTemplates: true } });
+	setIdle(false);
+	assert.equal((await command({ kind: "prompt", text: "/reload" })).ok, false);
+	assert.equal((await command({ kind: "prompt", text: "/new" })).ok, false);
+	assert.equal(sent.length, 3);
 });

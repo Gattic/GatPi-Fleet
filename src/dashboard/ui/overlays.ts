@@ -20,9 +20,10 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import type { AskRun, DeliverAs } from "../../protocol/index.ts";
+import type { AskRun, DeliverAs, SlashCommand } from "../../protocol/index.ts";
 import type { HermesAdviceCard, HermesAdviceReview } from "../hermes/advisor.ts";
 import { ELLIPSIS, fit, fmtCost, fmtDuration, fmtTokens } from "./format.ts";
+import { SlashAutocompleteProvider } from "./slash.ts";
 import { TextPane } from "./text-pane.ts";
 import { keycap, keyHints, theme } from "./theme.ts";
 
@@ -74,6 +75,10 @@ export interface ComposerOptions {
 	requestSuggestion: (direction: string) => void;
 	initialText?: string;
 	initialMode?: DeliverAs;
+	/** The session's published slash commands, as the bridge will run them. */
+	commands: () => readonly SlashCommand[];
+	/** The session's models, for /model argument completion. */
+	models: () => readonly string[];
 	onSubmit: (text: string, deliverAs: DeliverAs) => void;
 	onCancel: () => void;
 }
@@ -95,6 +100,7 @@ export class Composer extends Container implements Focusable {
 		this.options = options;
 		this.mode = options.initialMode ?? "steer";
 		this.editor = new Editor(tui, editorTheme);
+		this.editor.setAutocompleteProvider(new SlashAutocompleteProvider(options.commands, options.models));
 		this.editor.onSubmit = (text) => this.submit(text);
 		if (options.initialText) this.editor.setText(options.initialText);
 		this.directionInput = new Input({ prompt: theme.accent("› "), placeholder: "direction for the next suggestion" });
@@ -115,11 +121,6 @@ export class Composer extends Container implements Focusable {
 	private submit(text: string): void {
 		const trimmed = text.trim();
 		if (!trimmed) return;
-		if (trimmed.startsWith("/")) {
-			this.error = "Slash commands only run inside pi. Attach (a) to use them.";
-			this.editor.setText(text);
-			return;
-		}
 		this.options.onSubmit(trimmed, this.mode);
 	}
 
@@ -177,6 +178,11 @@ export class Composer extends Container implements Focusable {
 			return;
 		}
 		if (matchesKey(data, Key.tab)) {
+			// Slash text owns Tab: complete the open menu, or open it when the debounce has not fired yet.
+			if (this.editor.isShowingAutocomplete() || this.editor.getText().trimStart().startsWith("/")) {
+				this.editor.handleInput(data);
+				return;
+			}
 			const suggestion = this.visibleSuggestion();
 			if (suggestion) {
 				this.editor.setText(suggestion);
@@ -215,7 +221,7 @@ export class Composer extends Container implements Focusable {
 			? [["⏎", "request suggestion"], ["Esc", "back"]]
 			: working
 				? [["⏎", "send"], ["Tab", "steer/follow-up"], ["Ctrl+G", "direction"]]
-				: [["⏎", "send"], ...(suggestion ? [["Tab", "accept suggestion"] as [string, string]] : []), ["Ctrl+G", "direction"]];
+				: [["⏎", "send"], ...(suggestion ? [["Tab", "accept suggestion"]] as [string, string][] : []), ["/", "commands"], ["Ctrl+G", "direction"]];
 		const footer = this.directionMode ? hints : [...hints, ["⇧⏎", "newline"] as [string, string], ["Esc", "cancel"] as [string, string]];
 		return frame(`Prompt → ${this.options.target}`, body, width, keyHints(footer));
 	}

@@ -56,6 +56,7 @@ function state(pid: number, overrides: Partial<SessionState>): SessionState {
 		models: [],
 		asks: [],
 		prompts: [],
+		slashCommands: [],
 		...overrides,
 	};
 }

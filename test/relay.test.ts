@@ -58,7 +58,7 @@ test("a remote host's bridges, samples, listings and commands go through the rel
 	writeFileSync(join(sessionDir, "a.jsonl"), `${JSON.stringify({ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: project })}\n`);
 
 	// A bridge of this (live) process on the "remote" host.
-	const state: SessionState = { pid: process.pid, cwd: project, sessionFile: join(sessionDir, "a.jsonl"), sessionId: "session", instanceId: "one", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: ["p/m"], asks: [], prompts: [], lastSaid: "hello" };
+	const state: SessionState = { pid: process.pid, cwd: project, sessionFile: join(sessionDir, "a.jsonl"), sessionId: "session", instanceId: "one", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: ["p/m"], asks: [], prompts: [], slashCommands: [], lastSaid: "hello" };
 	const received: ClientMessage[] = [];
 	let bridgeSocket: Socket | undefined;
 	const bridge: Server = createServer((socket) => {
@@ -199,7 +199,7 @@ test("a dismissal crosses machines through the run's host runtime directory", as
 	const [dashboard, gateway] = controllers;
 	const exited = (pid: number, sessionId: string, instanceId: string): SessionState => ({
 		pid, cwd: root, sessionId, instanceId, phase: "idle", phaseSince: 1, lastEventAt: 1,
-		usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [],
+		usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [],
 	});
 	// Each controller holds the same exited remote row, with separate runtime directories of its own.
 	for (const { store } of controllers) {
@@ -352,7 +352,7 @@ test("a relay of another version is not used and says how to update it", async (
 });
 
 test("a relay that sends something malformed, or speaks before greeting, loses its link instead of crashing pi-dash", async (t) => {
-	const state = { pid: 7, cwd: "/p", sessionId: "s", instanceId: "i", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
+	const state = { pid: 7, cwd: "/p", sessionId: "s", instanceId: "i", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] };
 	const cases: [string, unknown[], boolean][] = [
 		["a JSON null", [HELLO, "null"], true],
 		["a snapshot for another pid", [HELLO, { type: "snapshot", pid: 8, state }], true],
@@ -375,7 +375,7 @@ test("a relay that sends something malformed, or speaks before greeting, loses i
 });
 
 test("text from a remote host reaches this terminal without control sequences", async (t) => {
-	const state = { pid: 7, cwd: "/p", sessionId: "s", instanceId: "i", name: "\x1b]52;c;aGk=\x07\x1b[31mred\x1b[0m\r", lastSaid: "line one\n\tline two\x07", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
+	const state = { pid: 7, cwd: "/p", sessionId: "s", instanceId: "i", name: "\x1b]52;c;aGk=\x07\x1b[31mred\x1b[0m\r", lastSaid: "line one\n\tline two\x07", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] };
 	const { states, events } = recorder();
 	const remote = new RemoteHost("box", events, fakeRelay([{ ...HELLO, hostname: "box\x1b[2J" }, { type: "snapshot", pid: 7, state }], 5000));
 	t.after(() => remote.close());

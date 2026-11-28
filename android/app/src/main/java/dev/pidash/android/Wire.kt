@@ -17,12 +17,16 @@ data class Background(val kind: String, val label: String, val detail: String?, 
     }
 }
 data class Metrics(val cpu: Double, val memory: Double, val gpuMemory: Double?, val background: List<Background>)
+/** A slash command a prompt can run; [name] has no leading slash. */
+data class SlashCommand(val name: String, val description: String?, val argumentHint: String?, val source: String)
 data class Session(
     val id: String, val revision: String, val label: String, val project: String,
     val status: String, val statusLabel: String, val since: Long?, val attentionKey: String?,
     val connected: Boolean, val model: String?, val thinking: String?, val contextPercent: Double?,
     val plan: Plan?, val metrics: Metrics?, val tokens: Double?, val cost: Double?,
     val commands: Map<String, String?>,
+    /** Built-ins pi-dash can run, then Pi's extension commands, prompt templates and skills. */
+    val slashCommands: List<SlashCommand> = emptyList(),
 ) {
     /** A run is in progress, so a prompt must be delivered as a steer or follow-up. */
     val running: Boolean get() = status in listOf("working", "stalled", "rate-limited")
@@ -42,7 +46,10 @@ data class Session(
                     Metrics(it.getDouble("cpu"), it.getDouble("memory"), it.number("gpuMemory"),
                         it.optJSONArray("background")?.objects()?.map(Background::parse) ?: emptyList())
                 }, u?.number("tokens"), u?.number("cost"),
-                commands.keys().asSequence().associateWith { commands.text(it) })
+                commands.keys().asSequence().associateWith { commands.text(it) },
+                j.optJSONArray("slashCommands")?.objects()?.map {
+                    SlashCommand(it.getString("name"), it.text("description"), it.text("argumentHint"), it.getString("source"))
+                } ?: emptyList())
         }
     }
 }
