@@ -47,7 +47,7 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	mkdirSync(run); mkdirSync(project);
 	const runtime = new ManagerRuntime({ runtimeDir: run, agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
 	t.after(() => runtime.close());
-	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [{ id: "tool", name: "bash", detail: "npm test", arguments: '{"command":"npm test"}', result: "all green", startedAt: 1, endedAt: 2 }], timeline: [], models: [], asks: [], prompts: ["private earlier\nprompt", "x".repeat(32_001), "private prompt"], lastSaid: "private reply", lastPrompt: "private prompt" };
+	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [{ id: "tool", name: "bash", detail: "npm test", arguments: '{"command":"npm test"}', result: "all green", startedAt: 1, endedAt: 2 }], timeline: [], models: ["anthropic/claude-opus"], allModels: ["anthropic/claude-opus", "openai-codex/gpt-6"], asks: [], prompts: ["private earlier\nprompt", "x".repeat(32_001), "private prompt"], lastSaid: "private reply", lastPrompt: "private prompt" };
 	state.plan = roadmapFixture();
 	state.context = {
 		tokens: 1000, window: 200_000, percent: 0.5,
@@ -132,6 +132,8 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	assert.equal(detail.context.tokens, 1000);
 	assert.equal(overview[0].roadmap, undefined, "nested notes stay out of overview broadcasts");
 	assert.deepEqual(detail.prompts, ["private earlier\nprompt", "private prompt"], "only prompts short enough to send again");
+	assert.deepEqual(detail.models, ["anthropic/claude-opus"], "the session's scoped models");
+	assert.deepEqual(detail.allModels, ["anthropic/claude-opus", "openai-codex/gpt-6"], "the catalogue its scope hides");
 	const frames: any[] = [];
 	const ws = new WebSocket(`wss://127.0.0.1:${port}/api/v1/events`, { ca, headers: { Authorization: auth } });
 	ws.on("message", (m) => frames.push(JSON.parse(m.toString())));

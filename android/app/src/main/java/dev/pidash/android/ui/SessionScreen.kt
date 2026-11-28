@@ -415,7 +415,7 @@ private fun ManageTab(vm: DashViewModel, state: Dashboard, detail: Detail, enabl
             }
         }
         SectionCard("Model") {
-            ModelSelector(session.id, session.model, detail.models, can("model")) { model ->
+            ModelSelector(session.id, session.model, detail.models, detail.allModels, can("model")) { model ->
                 val slash = model.indexOf('/')
                 if (slash > 0) command("model") { put("provider", model.take(slash)); put("id", model.substring(slash + 1)) }
             }

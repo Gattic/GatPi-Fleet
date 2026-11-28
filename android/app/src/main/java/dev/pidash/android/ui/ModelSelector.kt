@@ -1,5 +1,7 @@
 package dev.pidash.android.ui
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -9,6 +11,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MenuAnchorType
@@ -25,6 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 
+/** Which catalogue the picker offers: the session's scoped models, or every model the host can switch to. */
+internal enum class ModelScope { Scoped, All }
+
 /** Match every search word in any order, so "sol 6.1" finds "gpt-6.1-sol". */
 internal fun modelSuggestions(models: List<String>, query: String): List<String> {
     if (query.isBlank()) return models
@@ -37,73 +43,95 @@ internal fun ModelSelector(
     sessionId: String,
     currentModel: String?,
     models: List<String>,
+    allModels: List<String>,
     enabled: Boolean,
     onSelect: (String) -> Unit,
 ) {
     // Dispose the popup's remembered exit transition too, not only the query, when its session changes.
-    key(sessionId, currentModel) { ModelSearchField(currentModel, models, enabled, onSelect) }
+    key(sessionId, currentModel) { ModelSearchField(currentModel, models, allModels, enabled, onSelect) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModelSearchField(currentModel: String?, models: List<String>, enabled: Boolean, onSelect: (String) -> Unit) {
+private fun ModelSearchField(currentModel: String?, models: List<String>, allModels: List<String>, enabled: Boolean, onSelect: (String) -> Unit) {
     var query by remember { mutableStateOf("") }
+    // A host that reports no separate catalogue already offers every model it can switch to.
+    var scope by remember { mutableStateOf(ModelScope.Scoped) }
     var expanded by remember { mutableStateOf(false) }
-    val suggestions = remember(models, query) { modelSuggestions(models, query) }
+    val offered = if (scope == ModelScope.All && allModels.isNotEmpty()) allModels else models
+    val suggestions = remember(offered, query) { modelSuggestions(offered, query) }
     val focus = LocalFocusManager.current
     LaunchedEffect(enabled) { if (!enabled) expanded = false }
 
-    ExposedDropdownMenuBox(
-        expanded = expanded && enabled,
-        onExpandedChange = { expanded = it && enabled },
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it; expanded = true },
-            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryEditable, enabled),
-            enabled = enabled,
-            singleLine = true,
-            label = { Text("Search models") },
-            placeholder = { Text("Model name or provider") },
-            supportingText = { Text("Current: ${currentModel ?: "not selected"}") },
-            trailingIcon = {
-                Row {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = ""; expanded = true }, enabled = enabled) {
-                            Icon(Icons.Filled.Close, "Clear model search")
-                        }
-                    }
-                    ExposedDropdownMenuDefaults.TrailingIcon(
-                        expanded = expanded && enabled,
-                        modifier = Modifier.menuAnchor(MenuAnchorType.SecondaryEditable, enabled),
-                    )
-                }
-            },
-        )
-        ExposedDropdownMenu(
-            expanded = expanded && enabled,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.heightIn(max = 280.dp),
-        ) {
-            if (suggestions.isEmpty()) {
-                DropdownMenuItem(
-                    text = { Text(if (models.isEmpty()) "No models available for this session" else "No matching models") },
-                    onClick = {},
-                    enabled = false,
+    Column {
+        if (allModels.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = scope == ModelScope.Scoped,
+                    onClick = { scope = ModelScope.Scoped },
+                    enabled = enabled,
+                    label = { Text("Scoped") },
+                )
+                FilterChip(
+                    selected = scope == ModelScope.All,
+                    onClick = { scope = ModelScope.All },
+                    enabled = enabled,
+                    label = { Text("All models") },
                 )
             }
-            suggestions.forEach { model ->
-                DropdownMenuItem(
-                    text = { Text(model) },
-                    onClick = {
-                        expanded = false
-                        query = ""
-                        focus.clearFocus()
-                        onSelect(model)
-                    },
-                    enabled = enabled,
-                )
+        }
+        ExposedDropdownMenuBox(
+            expanded = expanded && enabled,
+            onExpandedChange = { expanded = it && enabled },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it; expanded = true },
+                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryEditable, enabled),
+                enabled = enabled,
+                singleLine = true,
+                label = { Text("Search models") },
+                placeholder = { Text("Model name or provider") },
+                supportingText = { Text("Current: ${currentModel ?: "not selected"}") },
+                trailingIcon = {
+                    Row {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = ""; expanded = true }, enabled = enabled) {
+                                Icon(Icons.Filled.Close, "Clear model search")
+                            }
+                        }
+                        ExposedDropdownMenuDefaults.TrailingIcon(
+                            expanded = expanded && enabled,
+                            modifier = Modifier.menuAnchor(MenuAnchorType.SecondaryEditable, enabled),
+                        )
+                    }
+                },
+            )
+            ExposedDropdownMenu(
+                expanded = expanded && enabled,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.heightIn(max = 280.dp),
+            ) {
+                if (suggestions.isEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text(if (offered.isEmpty()) "No models available for this session" else "No matching models") },
+                        onClick = {},
+                        enabled = false,
+                    )
+                }
+                suggestions.forEach { model ->
+                    DropdownMenuItem(
+                        text = { Text(model) },
+                        onClick = {
+                            expanded = false
+                            query = ""
+                            focus.clearFocus()
+                            onSelect(model)
+                        },
+                        enabled = enabled,
+                    )
+                }
             }
         }
     }

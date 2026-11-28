@@ -8,6 +8,8 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -29,7 +31,7 @@ class ModelSelectorTest {
     private val selected = mutableListOf<String>()
 
     @Test fun typingKeepsKeyboardFocusAndOnlySelectingASuggestionChangesTheModel() {
-        compose.setContent { MaterialTheme { ModelSelector("session", current, models, true, selected::add) } }
+        compose.setContent { MaterialTheme { ModelSelector("session", current, models, emptyList(), true, selected::add) } }
         val search = compose.onNodeWithText("Search models").performClick()
         search.performTextInput("sol")
         search.assertIsFocused().performTextInput(" 6.1")
@@ -44,7 +46,7 @@ class ModelSelectorTest {
     }
 
     @Test fun noMatchesCanBeClearedWithoutSelectingOrSubmittingArbitraryText() {
-        compose.setContent { MaterialTheme { ModelSelector("session", current, models, true, selected::add) } }
+        compose.setContent { MaterialTheme { ModelSelector("session", current, models, emptyList(), true, selected::add) } }
         val search = compose.onNodeWithText("Search models").performClick()
         search.performTextInput("not-available")
         compose.onNodeWithText("No matching models").assertIsDisplayed().assertIsNotEnabled()
@@ -59,7 +61,7 @@ class ModelSelectorTest {
 
     @Test fun losingCommandPermissionClosesTheMenuAndDisablesSearch() {
         val enabled = mutableStateOf(true)
-        compose.setContent { MaterialTheme { ModelSelector("session", current, models, enabled.value, selected::add) } }
+        compose.setContent { MaterialTheme { ModelSelector("session", current, models, emptyList(), enabled.value, selected::add) } }
         val search = compose.onNodeWithText("Search models").performClick()
         search.performTextInput("sol 6.1")
         compose.onNodeWithText(sol).assertIsDisplayed()
@@ -72,7 +74,7 @@ class ModelSelectorTest {
     @Test fun changingSessionOrCurrentModelResetsTheSearchAndClosesSuggestions() {
         val session = mutableStateOf("first")
         val model = mutableStateOf(current)
-        compose.setContent { MaterialTheme { ModelSelector(session.value, model.value, models, true, selected::add) } }
+        compose.setContent { MaterialTheme { ModelSelector(session.value, model.value, models, emptyList(), true, selected::add) } }
         val search = compose.onNodeWithText("Search models").performClick()
         search.performTextInput("sol 6.1")
         compose.runOnUiThread { session.value = "second" }
@@ -86,9 +88,28 @@ class ModelSelectorTest {
     }
 
     @Test fun emptyCatalogExplainsWhyThereAreNoSuggestions() {
-        compose.setContent { MaterialTheme { ModelSelector("session", null, emptyList(), true, selected::add) } }
+        compose.setContent { MaterialTheme { ModelSelector("session", null, emptyList(), emptyList(), true, selected::add) } }
         compose.onNodeWithText("Search models").performClick().performTextInput("sol 6.1")
         compose.onNodeWithText("No models available for this session").assertIsDisplayed().assertIsNotEnabled()
         compose.runOnIdle { assertTrue(selected.isEmpty()) }
+    }
+
+    @Test fun aSessionThatOffersEveryModelHasNoScopeChoice() {
+        compose.setContent { MaterialTheme { ModelSelector("session", current, models, emptyList(), true, selected::add) } }
+        compose.onNodeWithText("Scoped").assertDoesNotExist()
+        compose.onNodeWithText("All models").assertDoesNotExist()
+    }
+
+    @Test fun switchingScopeOffersModelsOutsideTheSessionScopeAndSelectsOne() {
+        val extra = "google/gemini-9"
+        compose.setContent { MaterialTheme { ModelSelector("session", current, models, models + extra, true, selected::add) } }
+        compose.onNodeWithText("Scoped").assertIsSelected()
+        compose.onNodeWithText("All models").performClick().assertIsSelected()
+        compose.onNodeWithText("Scoped").assertIsNotSelected()
+        val search = compose.onNodeWithText("Search models").performClick()
+        search.performTextInput("gemini")
+        compose.onNodeWithText(extra).assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(listOf(extra), selected) }
+        compose.onNodeWithText("Current: $current").assertIsDisplayed()
     }
 }

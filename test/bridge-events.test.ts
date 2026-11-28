@@ -14,7 +14,9 @@ import { roadmapFixture } from "../scripts/roadmap-fixture.ts";
 type Handler = (event: unknown, ctx?: ExtensionContext) => void;
 
 // Drive the extension's registered events and observe its public socket snapshots.
-function startBridge(t: TestContext, entries: unknown[] = []) {
+interface ModelRef { provider: string; id: string }
+
+function startBridge(t: TestContext, entries: unknown[] = [], catalogue: { scoped?: { model: ModelRef }[]; available?: ModelRef[] } = {}) {
 	const root = mkdtempSync(join(tmpdir(), "pi-dash-events-"));
 	const previousRuntime = process.env.XDG_RUNTIME_DIR;
 	const previousAgent = process.env.PI_CODING_AGENT_DIR;
@@ -36,8 +38,8 @@ function startBridge(t: TestContext, entries: unknown[] = []) {
 		getSessionName: () => undefined,
 	} as unknown as ExtensionAPI;
 	const ctx = {
-		mode: "tui", cwd: root, isIdle: () => true, scopedModels: [],
-		modelRegistry: { getAvailable: () => [] },
+		mode: "tui", cwd: root, isIdle: () => true, scopedModels: catalogue.scoped ?? [],
+		modelRegistry: { getAvailable: () => catalogue.available ?? [] },
 		getContextUsage: () => undefined,
 		sessionManager: { getEntries: () => entries, getSessionId: () => session.id, getSessionFile: () => session.file },
 	} as unknown as ExtensionContext;
@@ -88,6 +90,22 @@ function startBridge(t: TestContext, entries: unknown[] = []) {
 	}
 	return { commands, sent, bus, command, handlers, snapshot, root, session, ctx, publish: (data: unknown) => bus.get("roadmap:changed")!(data) };
 }
+
+test("a scoped session reports the models it could still switch to", async (t) => {
+	const opus = { provider: "anthropic", id: "claude-opus" };
+	const sol = { provider: "openai-codex", id: "gpt-6.1-sol" };
+	const state = await startBridge(t, [], { scoped: [{ model: opus }], available: [opus, sol] }).snapshot();
+	assert.deepEqual(state.models, ["anthropic/claude-opus"], "the session's scope stays the offered list");
+	assert.deepEqual(state.allModels, ["anthropic/claude-opus", "openai-codex/gpt-6.1-sol"], "the rest of the catalogue is still reachable");
+});
+
+test("an unscoped session offers every model and reports no separate catalogue", async (t) => {
+	const opus = { provider: "anthropic", id: "claude-opus" };
+	const sol = { provider: "openai-codex", id: "gpt-6.1-sol" };
+	const state = await startBridge(t, [], { available: [opus, sol] }).snapshot();
+	assert.deepEqual(state.models, ["anthropic/claude-opus", "openai-codex/gpt-6.1-sol"]);
+	assert.equal(state.allModels, undefined, "no scope means no second list");
+});
 
 test("suggest requests the existing publisher, propagates rejection, and never submits a prompt", async (t) => {
 	const { command, bus, sent, snapshot, ctx } = startBridge(t);

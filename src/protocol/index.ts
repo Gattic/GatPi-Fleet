@@ -257,6 +257,11 @@ export interface SessionState extends SessionIdentity {
 	timeline: TimelineEntry[];
 	/** Models the session can switch to ("provider/modelId"): its scoped models, else all with configured auth. */
 	models: string[];
+	/**
+	 * Every model with configured auth ("provider/modelId") when `models` is limited to the session's
+	 * scoped models, so a viewer can offer the rest. Absent when the session already offers every model.
+	 */
+	allModels?: string[];
 	/** Side questions asked since the session started in this process, the last MAX_ASKS, oldest first. */
 	asks: AskRun[];
 }

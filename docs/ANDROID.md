@@ -367,7 +367,14 @@ models as you type and shows autocomplete suggestions. Search by model ID or pro
 words match in any order, so `sol 6.1` finds `openai-codex/gpt-6.1-sol` when that
 model is offered by the session. Clear the search to browse the full list. The current
 model remains labelled below the field; only tapping a suggestion sends a model change.
-If a model is not offered by the host session, search cannot add it to the catalog.
+
+When pi scopes a session to some models (`--models` or the `enabledModels` setting),
+the selector shows **Scoped** and **All models** chips, like pi's `/model` scope
+toggle. **Scoped** is the default and lists the session's scope; **All models** lists
+every model the host has credentials for, so one outside the scope can still be
+chosen. Switching scope keeps the current search. If a model is not offered by the
+host session — or the host reports no catalogue beyond it (an older bridge) and the
+chips are hidden — search cannot add it.
 
 Side questions use the session's provider context and are billed separately.
 Slash commands, interactive extension dialogs and terminal attachment remain
