@@ -237,7 +237,7 @@ test("manager recovery launches the exact persisted file and retains it on faile
 		if (config === undefined) delete process.env.XDG_CONFIG_HOME;
 		else process.env.XDG_CONFIG_HOME = config;
 	});
-	const version = 'if [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\n';
+	const version = 'if [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\nif [ "$1" = "-ls" ]; then exit 0; fi\n';
 	writeFileSync(join(bin, "screen"), '#!/bin/sh\n' + version + 'echo "screen unavailable" >&2\nexit 1\n', { mode: 0o700 });
 	await assert.rejects(runtime.resumeInterrupted(entry), /screen unavailable/);
 	assert.equal(runtime.recovery.list().length, 1);

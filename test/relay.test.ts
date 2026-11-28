@@ -138,7 +138,7 @@ test("remote recovery discovers persisted records at relay startup and revalidat
 	journal.track({ pid: process.pid, instanceId: "killed", sessionId: "saved", sessionFile: file, cwd: root });
 	const bin = join(root, "bin"); mkdirSync(bin);
 	const capture = join(root, "arguments");
-	writeFileSync(join(bin, "screen"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\nprintf '%s\\n' "$@" > '${capture}'\n`, { mode: 0o700 });
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\nif [ "$1" = "-ls" ]; then exit 0; fi\nprintf '%s\\n' "$@" > '${capture}'\n`, { mode: 0o700 });
 	const remote = new RemoteHost("box", recorder().events, ["env", `PATH=${bin}:${process.env.PATH}`, `XDG_RUNTIME_DIR=${join(root, "run")}`, `XDG_CONFIG_HOME=${join(root, "config")}`, `XDG_CACHE_HOME=${join(root, "cache")}`, `PI_CODING_AGENT_DIR=${agent}`, process.execPath, RELAY]);
 	t.after(() => remote.close());
 	remote.start();
