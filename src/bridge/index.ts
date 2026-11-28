@@ -250,7 +250,10 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 	timeline = pushTimeline(timeline, now, idle ? (lastSettledAt !== undefined ? "waiting" : "idle") : "working");
 	// A call without a result did not finish (the process ended or the run was cut off).
 	const recentTools = [...tools.values()].slice(-MAX_TOOL_RUNS).map((run) => (run.endedAt === undefined ? { ...run, endedAt: run.startedAt, isError: true } : run));
-	const models = ctx.scopedModels.length ? ctx.scopedModels.map((scoped) => scoped.model) : ctx.modelRegistry.getAvailable();
+	// A session scoped to some models can still switch to any other one with auth, so viewers get both lists.
+	const scoped = ctx.scopedModels.map((scoped) => scoped.model);
+	const models = scoped.length ? scoped : ctx.modelRegistry.getAvailable();
+	const allModels = scoped.length ? ctx.modelRegistry.getAvailable() : undefined;
 	const context = ctx.getContextUsage();
 	const breakdown = context
 		? computeContextBreakdown({
@@ -288,6 +291,7 @@ function initialState(pi: ExtensionAPI, ctx: ExtensionContext, published: Pick<S
 		tools: recentTools,
 		timeline,
 		models: models.map((model) => `${model.provider}/${model.id}`),
+		allModels: allModels?.map((model) => `${model.provider}/${model.id}`),
 		asks: [],
 	};
 }

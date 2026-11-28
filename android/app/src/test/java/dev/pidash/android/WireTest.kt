@@ -160,6 +160,16 @@ class WireTest {
         assertEquals(500.0, context.breakdown!!.unattributed!!, 0.0)
         assertEquals("measured", context.breakdown!!.totalBasis)
     }
+    @Test fun detailCarriesTheHostCatalogueBeyondTheSessionScopeAndToleratesOlderHosts() {
+        val session = fixture().getJSONArray("sessions").getJSONObject(0)
+        session.put("prompts", JSONArray()).put("asks", JSONArray()).put("tools", JSONArray())
+            .put("models", JSONArray().put("anthropic/claude-opus"))
+        assertEquals(emptyList<String>(), Detail.parse(session).allModels)
+        session.put("allModels", JSONArray().put("anthropic/claude-opus").put("openai-codex/gpt-6"))
+        val detail = Detail.parse(session)
+        assertEquals(listOf("anthropic/claude-opus"), detail.models)
+        assertEquals(listOf("anthropic/claude-opus", "openai-codex/gpt-6"), detail.allModels)
+    }
     @Test fun rejectsOutOfOrderFramesAndIncompatibleVersions() {
         val initial = fixture()
         val state = reduceFrame(Dashboard(), initial, 1)

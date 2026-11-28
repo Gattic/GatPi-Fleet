@@ -57,8 +57,8 @@ data class Tool(
     /** Wall-clock run time in milliseconds; unknown while the tool runs. */
     val duration: Long? get() = endedAt?.let { (it - startedAt).coerceAtLeast(0) }
 }
-/** [prompts] are the session's earlier prompts to recall, oldest first. */
-data class Detail(val session: Session, val prompt: String?, val prompts: List<String>, val reply: String?, val suggestion: String?, val error: String?, val models: List<String>, val asks: List<Ask>, val tools: List<Tool>, val roadmap: Roadmap? = null, val context: SessionContext? = null) {
+/** [prompts] are the session's earlier prompts to recall, oldest first. [allModels] is the host's full catalogue when the session is scoped to fewer models. */
+data class Detail(val session: Session, val prompt: String?, val prompts: List<String>, val reply: String?, val suggestion: String?, val error: String?, val models: List<String>, val asks: List<Ask>, val tools: List<Tool>, val roadmap: Roadmap? = null, val context: SessionContext? = null, val allModels: List<String> = emptyList()) {
     companion object {
         fun parse(j: JSONObject) = Detail(Session.parse(j), j.text("lastPrompt"), j.getJSONArray("prompts").let { a -> (0 until a.length()).map(a::getString) },
             j.text("lastSaid"), j.text("suggestion"), j.text("error"),
@@ -69,7 +69,9 @@ data class Detail(val session: Session, val prompt: String?, val prompts: List<S
                     it.getLong("startedAt"), it.long("endedAt"), it.getBoolean("isError"))
             },
             j.optJSONObject("roadmap")?.let(Roadmap::parse),
-            j.optJSONObject("context")?.let(SessionContext::parse))
+            j.optJSONObject("context")?.let(SessionContext::parse),
+            // A host that predates the field offers no models beyond the session's own list.
+            j.optJSONArray("allModels")?.let { a -> (0 until a.length()).map(a::getString) } ?: emptyList())
     }
 }
 /** [host] is a remote host of the gateway's pi-dash, or null for the gateway's own machine. */

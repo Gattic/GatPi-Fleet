@@ -118,7 +118,10 @@ the real projection and decoded by Android JVM tests.
 Selected detail adds a 200-character last-prompt preview, `prompts` (the session's
 earlier prompts to recall, oldest first), up to 32,000 characters of latest reply,
 suggested prompt, error, model choices, 20 recent tool runs and 10 bounded
-side-question records. Each tool run carries `name`, a 100-character `detail`
+side-question records. `models` lists what the session offers (`provider/modelId`);
+`allModels` lists every model with configured auth when the session is scoped to
+fewer, and is empty when it already offers them all. Both are bounded to 1,000.
+Each tool run carries `name`, a 100-character `detail`
 summary, `startedAt`, nullable `endedAt`, `isError`, and nullable `arguments` and
 `result`: the call's JSON arguments and the text the tool returned, each bounded to
 4,000 characters and absent when the bridge does not send them. Tool input and
