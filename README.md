@@ -166,8 +166,9 @@ remote; branch switching uses local branches and requires a clean working tree. 
 opens the standard AI prompt to review the changes and commit if everything looks good; pi-dash does
 not commit directly. Resume refuses when the project has a live session without a current bridge: pi-dash
 cannot see which session file that pi has open, and two pi processes writing one file mix its
-history. All manager-created resumes use a shared exclusive reservation; resolve unknown
-ownership locally instead of overriding it. Quit asks while a close-and-restart is still waiting for its session to exit, because only a
+history. All manager-created resumes use a shared exclusive reservation; a reservation whose recorded
+screen is provably gone is reclaimed automatically, and unknown ownership is resolved locally
+instead of overridden. Quit asks while a close-and-restart is still waiting for its session to exit, because only a
 running pi-dash starts the replacement.
 
 Sessions started from the dashboard run pi in a detached screen named `pi-<project>-<id>`.
@@ -263,9 +264,10 @@ a known graceful exit can still be dismissed offline, and the row's host records
 returns. Remote launches recheck process ownership on the host, rather than trusting a potentially
 stale dashboard snapshot.
 Existing duplicate-session checks and shared launch reservations still apply. Failed reservation
-writes and project-directory failures release the reservation created by that attempt. If an entire screen
-and its cleanup shell were killed, a stale reservation can require local inspection before removal;
-pi-dash reports its path instead of risking two writers to the same conversation.
+writes and project-directory failures release the reservation created by that attempt. A reservation
+records the screen server that owns the conversation, so one left behind by a killed screen is
+reclaimed on the next resume. If the owner cannot be proven gone, pi-dash reports the reservation's
+path for local inspection instead of risking two writers to the same conversation.
 
 “Interrupted” means **no graceful shutdown was recorded**, not proven OOM. Pi resumes the persisted
 conversation, not lost in-memory output or previously running tools. `--no-session` runs cannot be

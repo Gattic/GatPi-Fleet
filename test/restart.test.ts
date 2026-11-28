@@ -17,7 +17,7 @@ function fixture(t: TestContext, pid: number) {
 	const file = join(root, "conversation.jsonl");
 	writeFileSync(file, "saved conversation");
 	const record = join(root, "arguments");
-	writeFileSync(join(root, "screen"), '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\nprintf "%s\\n" "$@" > "' + record + '"\n', { mode: 0o700 });
+	writeFileSync(join(root, "screen"), '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\nif [ "$1" = "-ls" ]; then exit 0; fi\nprintf "%s\\n" "$@" > "' + record + '"\n', { mode: 0o700 });
 	const path = process.env.PATH;
 	process.env.PATH = `${root}:${path}`;
 	t.after(() => { process.env.PATH = path; });

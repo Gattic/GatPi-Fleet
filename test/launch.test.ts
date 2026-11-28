@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { launchSession } from "../src/manager/actions/launch.ts";
+import { launchReservation, launchSession } from "../src/manager/actions/launch.ts";
+import { processIdentity } from "../src/manager/recovery.ts";
 
 const screenVersion = 'if [ "$1" = "--version" ]; then echo "Screen version 4.09.01 (GNU)"; exit 0; fi\n';
 
@@ -65,7 +68,7 @@ test("launch reservations exclude another controller, including session symlink 
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	const bin = join(root, "bin"); mkdirSync(bin);
 	const record = join(root, "arguments");
-	writeFileSync(join(bin, "screen"), '#!/bin/sh\n' + screenVersion + 'printf "%s\\n" "$@" > "$PI_TEST_SCREEN_ARGUMENTS"\n', { mode: 0o700 });
+	writeFileSync(join(bin, "screen"), '#!/bin/sh\n' + screenVersion + 'if [ "$1" = "-ls" ]; then exit 0; fi\nprintf "%s\\n" "$@" > "$PI_TEST_SCREEN_ARGUMENTS"\n', { mode: 0o700 });
 	const path = process.env.PATH;
 	process.env.PATH = `${bin}:${path}`; process.env.PI_TEST_SCREEN_ARGUMENTS = record;
 	t.after(() => { process.env.PATH = path; delete process.env.PI_TEST_SCREEN_ARGUMENTS; });
@@ -86,6 +89,120 @@ test("launch reservations exclude another controller, including session symlink 
 	writeFileSync(reservation, stale);
 	assert.throws(() => launchSession(options, [], runtime), /Inspect .* before removing a stale reservation/);
 	assert.equal(readFileSync(reservation, "utf8"), stale, "neither age nor an absent screen is authority to steal a reservation");
+});
+
+function launches(root: string): string {
+	const dir = join(root, "launches");
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	return dir;
+}
+
+/** A PID whose recorded process identity is provably gone, as an abruptly killed screen server leaves it. */
+async function deadWitness(): Promise<{ pid: number; identity: string }> {
+	const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+	let identity: string | undefined | null;
+	const deadline = Date.now() + 3000;
+	while (typeof identity !== "string" && Date.now() < deadline) {
+		identity = processIdentity(child.pid!);
+		if (typeof identity !== "string") await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	assert.equal(typeof identity, "string", "the fixture needs a real process identity");
+	child.kill("SIGKILL");
+	await once(child, "exit");
+	return { pid: child.pid!, identity: identity as string };
+}
+
+test("a reservation whose recorded screen owner is provably gone is reclaimed", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-launch-owner-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const bin = join(root, "bin"); mkdirSync(bin);
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\n${screenVersion}exit 0\n`, { mode: 0o700 });
+	const path = process.env.PATH; process.env.PATH = `${bin}:${path}`;
+	t.after(() => { process.env.PATH = path; });
+	const file = join(root, "session.jsonl"); writeFileSync(file, "");
+	const runtime = join(root, "runtime");
+	const reservation = launchReservation(file, runtime);
+	launches(runtime);
+	writeFileSync(reservation, JSON.stringify({ screen: "pi-gone-00000000", at: Date.now() - 60_000, owner: await deadWitness() }));
+	const name = launchSession({ cwd: root, label: "test", sessionFile: file }, [], runtime);
+	assert.match(name, /^pi-test-/);
+	assert.equal(JSON.parse(readFileSync(reservation, "utf8")).screen, name, "the reclaiming launch owns the reservation");
+});
+
+test("a launch in flight is not reclaimed by age or by an absent screen", (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-launch-inflight-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const bin = join(root, "bin"); mkdirSync(bin);
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\n${screenVersion}exit 0\n`, { mode: 0o700 });
+	const path = process.env.PATH; process.env.PATH = `${bin}:${path}`;
+	t.after(() => { process.env.PATH = path; });
+	const file = join(root, "session.jsonl"); writeFileSync(file, "");
+	const runtime = join(root, "runtime");
+	const reservation = launchReservation(file, runtime);
+	launches(runtime);
+	// This process is the controller: it could still be between claiming and starting screen.
+	const claim = JSON.stringify({ screen: "pi-pending-00000000", at: 0, controller: { pid: process.pid, identity: processIdentity(process.pid) } });
+	writeFileSync(reservation, claim);
+	assert.throws(() => launchSession({ cwd: root, label: "test", sessionFile: file }, [], runtime), /launch is reserved/);
+	assert.equal(readFileSync(reservation, "utf8"), claim);
+});
+
+test("a claim left by a controller that died before starting screen is reclaimed", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-launch-controller-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const bin = join(root, "bin"); mkdirSync(bin);
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\n${screenVersion}exit 0\n`, { mode: 0o700 });
+	const path = process.env.PATH; process.env.PATH = `${bin}:${path}`;
+	t.after(() => { process.env.PATH = path; });
+	const file = join(root, "session.jsonl"); writeFileSync(file, "");
+	const runtime = join(root, "runtime");
+	const reservation = launchReservation(file, runtime);
+	launches(runtime);
+	writeFileSync(reservation, JSON.stringify({ screen: "pi-gone-11111111", at: Date.now() - 60_000, controller: await deadWitness() }));
+	const name = launchSession({ cwd: root, label: "test", sessionFile: file }, [], runtime);
+	assert.equal(JSON.parse(readFileSync(reservation, "utf8")).screen, name);
+});
+
+test("a claim replaced after it was judged stale is restored, not deleted", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-launch-race-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const bin = join(root, "bin"); mkdirSync(bin);
+	const file = join(root, "session.jsonl"); writeFileSync(file, "");
+	const runtime = join(root, "runtime");
+	const reservation = launchReservation(file, runtime);
+	launches(runtime);
+	const fresh = JSON.stringify({ screen: "pi-fresh-00000000", at: Date.now(), controller: { pid: process.pid, identity: processIdentity(process.pid) } });
+	const freshFile = join(root, "fresh"); writeFileSync(freshFile, fresh);
+	// A concurrent launch replaces the claim between judging it and moving it aside: `screen -ls`
+	// runs inside that window, so the fixture does the replacing there.
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\n${screenVersion}if [ "$1" = "-ls" ]; then cp "$PI_TEST_FRESH" "$PI_TEST_RESERVATION"; fi\nexit 0\n`, { mode: 0o700 });
+	const path = process.env.PATH; process.env.PATH = `${bin}:${path}`;
+	process.env.PI_TEST_FRESH = freshFile; process.env.PI_TEST_RESERVATION = reservation;
+	t.after(() => { process.env.PATH = path; delete process.env.PI_TEST_FRESH; delete process.env.PI_TEST_RESERVATION; });
+	writeFileSync(reservation, JSON.stringify({ screen: "pi-gone-22222222", at: Date.now() - 60_000, owner: await deadWitness() }));
+	assert.throws(() => launchSession({ cwd: root, label: "test", sessionFile: file }, [], runtime), /launch is reserved/);
+	assert.equal(readFileSync(reservation, "utf8"), fresh, "the claim another launch created survives");
+	assert.deepEqual(readdirSync(join(runtime, "launches")), [basename(reservation)], "the reclaim leaves no moved copy behind");
+});
+
+test("a claim without a recorded identity, or one that is unreadable, stays reserved", (t) => {
+	const root = mkdtempSync(join(tmpdir(), "pi-dash-launch-unknown-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const bin = join(root, "bin"); mkdirSync(bin);
+	writeFileSync(join(bin, "screen"), `#!/bin/sh\n${screenVersion}exit 0\n`, { mode: 0o700 });
+	const path = process.env.PATH; process.env.PATH = `${bin}:${path}`;
+	t.after(() => { process.env.PATH = path; });
+	const file = join(root, "session.jsonl"); writeFileSync(file, "");
+	const runtime = join(root, "runtime");
+	const reservation = launchReservation(file, runtime);
+	launches(runtime);
+	const options = { cwd: root, label: "test", sessionFile: file };
+	const unknown = JSON.stringify({ screen: "pi-unknown-00000000", at: 0, owner: { pid: 1 } });
+	writeFileSync(reservation, unknown);
+	assert.throws(() => launchSession(options, [], runtime), /Inspect .* before removing a stale reservation/);
+	assert.equal(readFileSync(reservation, "utf8"), unknown, "an unavailable identity is not proof of death");
+	writeFileSync(reservation, "not a claim");
+	assert.throws(() => launchSession(options, [], runtime), /launch is reserved/);
 });
 
 test("a failed screen launch releases its reservation and reports screen's reason on one line", (t) => {

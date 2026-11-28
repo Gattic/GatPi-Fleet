@@ -425,11 +425,13 @@ channel without stopping monitoring.
 Both TUI and gateway use exclusive resume reservations in
 `$XDG_RUNTIME_DIR/pi-dash/launches/`. A known open session, an unbridged process
 in the same project, or a reservation blocks resume. There is no unsafe
-"resume anyway" override. Normal pi exit removes its reservation. After an
-abnormal screen/host exit, inspect the recorded screen and all pi processes on
-the host before removing only a proven-stale reservation. Do not delete the
-whole directory to bypass protection. External manual `pi --session` invocations
-do not participate in the manager's reservation protocol.
+"resume anyway" override. Normal pi exit removes its reservation, and one whose
+recorded screen server is provably gone is reclaimed by the next resume. After an
+abnormal screen/host exit whose owner cannot be proven gone, inspect the recorded
+screen and all pi processes on the host before removing only a proven-stale
+reservation. Do not delete the whole directory to bypass protection. External
+manual `pi --session` invocations do not participate in the manager's reservation
+protocol.
 
 ## 4. G1 use
 

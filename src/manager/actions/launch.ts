@@ -1,18 +1,28 @@
 // All manager-created sessions use the same cross-process launch reservation.
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { closeSync, mkdirSync, openSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { socketDir } from "../../protocol/index.ts";
 import { rowCwd, type SessionRow } from "../model/store.ts";
-import { sessionFileKey } from "../recovery.ts";
+import { processIdentity, sessionFileKey } from "../recovery.ts";
 import { screenConfig } from "./screen-config.ts";
 
-export function screenNames(): Set<string> {
+interface ScreenSession {
+	pid: number;
+	alive: boolean;
+}
+
+/** Screen servers by session name; a server killed without cleanup leaves a "(Remote or dead)" socket. */
+export function screenSessions(): Map<string, ScreenSession> {
 	let output: string;
 	try { output = execFileSync("screen", ["-ls"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
 	catch (error) { output = String((error as { stdout?: string }).stdout ?? ""); }
-	return new Set([...output.matchAll(/^\s+\d+\.(\S+)\s/gm)].map((match) => match[1]));
+	const sessions = new Map<string, ScreenSession>();
+	for (const match of output.matchAll(/^\s+(\d+)\.(\S+)\s+\(([^)]*)\)/gm)) {
+		sessions.set(match[2], { pid: Number(match[1]), alive: !/dead/i.test(match[3]) });
+	}
+	return sessions;
 }
 
 export function resumeBlocked(rows: readonly SessionRow[], cwd: string, file: string): string | undefined {
@@ -34,6 +44,118 @@ export function launchReservation(file: string, runtimeDir: string): string {
 	return join(runtimeDir, "launches", `${createHash("sha256").update(realpathSync(file)).digest("hex")}.json`);
 }
 
+interface ProcessWitness {
+	pid: number;
+	/** Recorded only when /proc can prove it; without one, the process can never be proven gone. */
+	identity?: string;
+}
+
+/** A claim on one saved conversation: the screen that runs it, and the processes that can still be launching it. */
+interface LaunchClaim {
+	screen: string;
+	at: number;
+	/** The pi-dash process that created the claim: a launch can be in flight only while it lives. */
+	controller?: ProcessWitness;
+	/** The screen server that took the claim over, recorded once the session exists. */
+	owner?: ProcessWitness;
+}
+
+function witness(pid: number): ProcessWitness {
+	const identity = processIdentity(pid);
+	return typeof identity === "string" ? { pid, identity } : { pid };
+}
+
+/** An unavailable identity is unknown, not proof of death; a different one is a reused PID. */
+function gone(entry: ProcessWitness): boolean {
+	if (entry.identity === undefined) return false;
+	const current = processIdentity(entry.pid);
+	return current !== null && current !== entry.identity;
+}
+
+function readClaim(path: string): LaunchClaim | undefined {
+	try {
+		const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+		if (!value || typeof value !== "object") return undefined;
+		const claim = value as LaunchClaim;
+		return typeof claim.screen === "string" && claim.screen !== "" && Number.isFinite(claim.at) ? claim : undefined;
+	} catch {
+		// An unreadable claim stays reserved: only evidence, never a parse error, releases it.
+		return undefined;
+	}
+}
+
+/** Age is no proof: an absent screen can still be a launch in flight. Only a recorded owner proven gone is. */
+function staleClaim(claim: LaunchClaim, screens: Map<string, ScreenSession>): boolean {
+	const screen = screens.get(claim.screen);
+	if (screen) return !screen.alive;
+	// The claim precedes its screen, so before the owner is recorded only the controller can prove it idle.
+	if (claim.owner) return gone(claim.owner);
+	return claim.controller ? gone(claim.controller) : false;
+}
+
+function writeClaim(path: string, claim: LaunchClaim): void {
+	const temp = `${path}.${process.pid}.tmp`;
+	try {
+		writeFileSync(temp, JSON.stringify(claim), { mode: 0o600 });
+		renameSync(temp, path);
+	} catch (error) {
+		rmSync(temp, { force: true });
+		throw error;
+	}
+}
+
+/**
+ * Moves the judged claim aside. Renaming is atomic, so simultaneous reclaimers cannot both take it;
+ * the moved file then proves which claim was taken, so one replaced after judging is restored untouched.
+ */
+function reclaim(path: string, judged: LaunchClaim): boolean {
+	const moved = `${path}.${process.pid}.${randomUUID()}.stale`;
+	try { renameSync(path, moved); }
+	catch (error) {
+		// Another controller moved it first; the next create reports the winner's claim.
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+		throw error;
+	}
+	const taken = readClaim(moved);
+	if (taken && taken.screen === judged.screen && taken.at === judged.at) {
+		rmSync(moved, { force: true });
+		return true;
+	}
+	// A launch in flight replaced the claim after it was judged: put it back rather than delete it.
+	try { linkSync(moved, path); }
+	catch { /* another claim took the name first; the moved one no longer owns anything */ }
+	rmSync(moved, { force: true });
+	return false;
+}
+
+/** Takes the reservation, reclaiming only a claim whose recorded owner is provably gone. */
+function claimReservation(path: string, screen: string): void {
+	const claim: LaunchClaim = { screen, at: Date.now(), controller: witness(process.pid) };
+	for (;;) {
+		let fd: number;
+		try { fd = openSync(path, "wx", 0o600); }
+		catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			const existing = readClaim(path);
+			if (existing && staleClaim(existing, screenSessions()) && reclaim(path, existing)) continue;
+			throw new Error(`Session launch is reserved. Inspect ${path} on the host before removing a stale reservation`);
+		}
+		try { writeFileSync(fd, JSON.stringify(claim)); }
+		catch (error) { rmSync(path, { force: true }); throw error; }
+		finally { closeSync(fd); }
+		return;
+	}
+}
+
+/** Best effort: the session already runs, so an unrecorded owner only keeps the next launch conservative. */
+function recordOwner(path: string, screen: string): void {
+	const claim = readClaim(path);
+	const found = claim ? screenSessions().get(screen) : undefined;
+	if (!claim || !found?.alive) return;
+	try { writeClaim(path, { ...claim, owner: witness(found.pid) }); }
+	catch { /* The conservative claim still blocks a second writer. */ }
+}
+
 /** Reservation remains until its screen exits, including if this controller dies. */
 export function launchSession(options: LaunchOptions, rows: readonly SessionRow[], runtimeDir = socketDir()): string {
 	const cwd = realpathSync(options.cwd);
@@ -50,17 +172,7 @@ export function launchSession(options: LaunchOptions, rows: readonly SessionRow[
 		const dir = join(runtimeDir, "launches");
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 		reservation = launchReservation(file, runtimeDir);
-		// Do not reclaim by age: two controllers can race while replacing a stale file.
-		// Normal exit removes it; after an abnormal exit the operator reconciles locally.
-		let fd: number;
-		try { fd = openSync(reservation, "wx", 0o600); }
-		catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`Session launch is reserved. Inspect ${reservation} on the host before removing a stale reservation`);
-			throw error;
-		}
-		try { writeFileSync(fd, JSON.stringify({ screen: name, at: Date.now() })); }
-		catch (error) { rmSync(reservation, { force: true }); throw error; }
-		finally { closeSync(fd); }
+		claimReservation(reservation, name);
 	}
 	delete env.TMUX;
 	delete env.TMUX_PANE;
@@ -74,5 +186,8 @@ export function launchSession(options: LaunchOptions, rows: readonly SessionRow[
 		const reason = `${stdout ?? ""} ${stderr ?? ""}`.replace(/\s+/g, " ").trim();
 		throw reason ? new Error(`screen could not start pi: ${reason}`) : error;
 	}
+	// The session now owns the claim. A killed screen leaves this record behind, so the next launch
+	// can prove the claim stale instead of asking the operator to remove a file nothing owns.
+	if (reservation) recordOwner(reservation, name);
 	return name;
 }
