@@ -189,7 +189,7 @@ test("interrupted resume targets its exact record and replaces the exited slot a
 	const ui = harness("/nonexistent");
 	const entry = { ...interruptedSession, host: "box" };
 	ui.interrupted.push(entry);
-	const state: SessionState = { ...entry, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
+	const state: SessionState = { ...entry, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] };
 	ui.store.setState(entry.pid, state, "box");
 	ui.store.disconnect(entry.pid, false, "box");
 	ui.press("r");
@@ -206,7 +206,7 @@ test("recovery actions reject newly live ownership and dismissal leaves saved co
 	const ui = harness("/nonexistent");
 	ui.interrupted.push({ ...interruptedSession });
 	ui.press("e", "\r", "\r");
-	ui.store.setState(43, { ...interruptedSession, pid: 43, instanceId: "new-run", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	ui.store.setState(43, { ...interruptedSession, pid: 43, instanceId: "new-run", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 	ui.press("y");
 	assert.deepEqual(ui.resumed, []);
 	assert.match(strip(ui.app.render(120).join("\n")), /already open/);
@@ -218,7 +218,7 @@ test("recovery actions reject newly live ownership and dismissal leaves saved co
 test("quit asks first while a close-and-restart is waiting for its session to exit", () => {
 	const ui = harness("/nonexistent");
 	const now = Date.now();
-	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	ui.store.setState(101, { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "working", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 
 	ui.press("C");
 	assert.match(ui.dialog() ?? "", /Close and start a fresh session/);
@@ -237,7 +237,7 @@ test("quit asks first while a close-and-restart is waiting for its session to ex
 
 test("Roadmap Viewer opens for the selected remote session, follows updates, labels disconnects and guards reload identity", () => {
 	const ui = harness("/nonexistent");
-	const state: SessionState = { pid: 101, cwd: "/work", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], plan: roadmapFixture() };
+	const state: SessionState = { pid: 101, cwd: "/work", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [], plan: roadmapFixture() };
 	ui.store.setState(101, state, "box");
 	ui.press("o");
 	assert.match(ui.dialog() ?? "", /Roadmap Viewer · live · work@box/);
@@ -261,7 +261,7 @@ test("Roadmap Viewer handles no selection, unpublished plans and plan clearing",
 	const ui = harness("/nonexistent");
 	ui.press("o");
 	assert.match(strip(ui.app.render(120).join("\n")), /No session selected/);
-	const state: SessionState = { pid: 101, cwd: "/work", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
+	const state: SessionState = { pid: 101, cwd: "/work", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] };
 	ui.store.setState(101, state);
 	ui.press("o");
 	assert.match(ui.dialog() ?? "", /No roadmap published/);
@@ -430,7 +430,7 @@ test("the phone's project list is the n picker's: open projects first, then most
 
 function session(overrides: Partial<SessionState>): SessionState {
 	const now = Date.now();
-	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], ...overrides };
+	return { pid: 101, cwd: "/home/user/dev/proj", sessionId: "s", instanceId: "instance", phase: "idle", phaseSince: now, lastEventAt: now, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [], ...overrides };
 }
 
 test("Hermes advisor shows action cards and confirms an ask action", async () => {

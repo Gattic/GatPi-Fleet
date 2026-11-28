@@ -3,7 +3,7 @@
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 /** Directory holding one `<pid>.sock` per bridged pi process (mode 0700). */
 export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -141,6 +141,21 @@ export interface ToolRun {
 	isError?: boolean;
 }
 
+/** A slash command the session can run from a prompt; the name has no leading slash. */
+export interface SlashCommand {
+	name: string;
+	description?: string;
+	argumentHint?: string;
+	/** "builtin" is a Pi built-in that pi-dash can execute remotely; the others come from Pi's resources. */
+	source: "extension" | "prompt" | "skill" | "builtin";
+}
+
+/** How many slash commands a session publishes, most useful first. */
+export const MAX_SLASH_COMMANDS = 500;
+
+/** Characters in a published command description or argument hint. */
+export const SLASH_COMMAND_TEXT_LIMIT = 200;
+
 export type Phase = "working" | "idle";
 
 /** What a session is doing, for the activity lane: waiting means idle after a run (the user is up). */
@@ -262,6 +277,8 @@ export interface SessionState extends SessionIdentity {
 	 * scoped models, so a viewer can offer the rest. Absent when the session already offers every model.
 	 */
 	allModels?: string[];
+	/** Slash commands a prompt can run: Pi's extension commands, prompt templates and skills, plus supported built-ins. */
+	slashCommands: SlashCommand[];
 	/** Side questions asked since the session started in this process, the last MAX_ASKS, oldest first. */
 	asks: AskRun[];
 }

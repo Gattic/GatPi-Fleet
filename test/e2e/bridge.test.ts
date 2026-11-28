@@ -99,6 +99,10 @@ test("snapshot identifies the session, its screen and its plan", () => {
 	assert.equal(state.plan?.title, "E2E plan");
 	assert.deepEqual(state.plan?.activePath.map((step) => step.title), ["Two"]);
 	assert.deepEqual(state.models, ["dash-test/scripted", "dash-test/scripted-thinking"]);
+	const slash = state.slashCommands.map((command) => command.name);
+	assert.ok(slash.includes("model") && slash.includes("thinking") && slash.includes("compact") && slash.includes("name"), "the built-ins pi-dash can run are offered");
+	assert.ok(!slash.some((name) => name.startsWith("pi-dash-")), "the bridge's own commands are not offered");
+	assert.ok(state.slashCommands.every((command) => command.source === "builtin"), "this session loads no templates, skills or other extensions");
 	assert.equal(state.lastSettledAt, undefined, "a fresh session is ready, not waiting");
 	assert.equal(state.timeline.length, 1);
 	assert.equal(state.timeline[0].state, "idle");
@@ -269,6 +273,23 @@ test("model and thinking level can be switched; pi clamps the level to the model
 	await hub.send(current(), { kind: "model", provider: "dash-test", id: "scripted" });
 	await waitFor("model back, thinking clamped", () => current().model === "dash-test/scripted" && current().thinking === "off");
 	await assert.rejects(hub.send(current(), { kind: "model", provider: "dash-test", id: "missing" }), /unknown model dash-test\/missing/);
+});
+
+test("slash built-ins run from a prompt without starting a turn", async () => {
+	const settled = current().lastSettledAt;
+	const usage = current().usage.direct.tokens;
+	await hub.send(current(), { kind: "prompt", text: "/model dash-test/scripted-thinking" });
+	await waitFor("model from a slash prompt", () => current().model === "dash-test/scripted-thinking");
+	await hub.send(current(), { kind: "prompt", text: "/thinking high" });
+	await waitFor("thinking from a slash prompt", () => current().thinking === "high");
+	await hub.send(current(), { kind: "prompt", text: "/model dash-test/scripted" });
+	await waitFor("model back", () => current().model === "dash-test/scripted" && current().thinking === "off");
+	assert.equal(current().phase, "idle", "a built-in does not start a run");
+	assert.equal(current().lastSettledAt, settled, "no turn settles");
+	assert.equal(current().usage.direct.tokens, usage, "a built-in spends no tokens");
+	assert.equal(current().lastPrompt, "/model dash-test/scripted", "the prompt shows what was typed");
+	await assert.rejects(hub.send(current(), { kind: "prompt", text: "/frobnicate" }), /unknown slash command \/frobnicate/);
+	await assert.rejects(hub.send(current(), { kind: "prompt", text: "/settings" }), /needs desktop pi/);
 });
 
 test("compact runs only while idle, reports failures, and compacts a long session", async () => {

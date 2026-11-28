@@ -377,7 +377,13 @@ host session — or the host reports no catalogue beyond it (an older bridge) an
 chips are hidden — search cannot add it.
 
 Side questions use the session's provider context and are billed separately.
-Slash commands, interactive extension dialogs and terminal attachment remain
+The Chat tab's prompt field accepts slash commands: type `/` for the session's
+skills (`/skill:name`), prompt templates, extension commands and the built-ins
+pi-dash can run remotely (`model`, `thinking`, `compact`, `new`, `reload`,
+`name`, `quit`), then tap a suggestion to put it at the start of the draft.
+Commands that need desktop pi's interactive UI, such as `/settings` or `/tree`,
+are refused with a reason rather than sent to the model. Interactive extension
+dialogs and terminal attachment remain
 in desktop pi. Phone text is rendered as text, not executable terminal escapes,
 HTML, links or images. Drafts are local and encrypted, never automatically sent.
 

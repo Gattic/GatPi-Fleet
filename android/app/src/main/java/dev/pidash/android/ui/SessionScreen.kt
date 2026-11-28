@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -76,7 +77,9 @@ import dev.pidash.android.Detail
 import dev.pidash.android.Drafts
 import dev.pidash.android.PromptRecall
 import dev.pidash.android.Session
+import dev.pidash.android.SlashCommand
 import dev.pidash.android.capitalizeSentences
+import dev.pidash.android.slashSuggestions
 import org.json.JSONObject
 
 private val thinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
@@ -216,11 +219,18 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
         field = if (capitalize) next.capitalized() else next
         if (field.text != drafts.text.value) drafts.edit(field.text)
     }
+    // Choosing a command puts it at the cursor-ready start, where its arguments can be typed.
+    val pick: (SlashCommand) -> Unit = { command ->
+        val text = "/${command.name} "
+        field = TextFieldValue(text, TextRange(text.length))
+        drafts.edit(text)
+    }
     SectionCard("Prompt", action = { TextButton(onClick = { maximized = true }) { Text("Maximize prompt") } }) {
         suggestion?.let { SuggestedPrompt(it) { drafts.edit(it) } }
         if (session.running) DeliveryChoice(delivery) { vm.delivery.value = it }
         // The arrows step through the session's earlier prompts, as ↑ and ↓ do in pi's editor.
         PromptField(field, edit, prompts, drafts, recall, capitalize, tag = "prompt-field")
+        SlashCommandMenu(session.slashCommands, draft, pick)
         CapitalizeToggle(capitalize, vm.app::setSentenceCapitalization, Modifier.fillMaxWidth())
         if (directionOpen) DirectionField(direction) { direction = it }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -248,6 +258,7 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
                     TextButton(onClick = { maximized = false }) { Text("Close") }
                 }
                 PromptField(field, edit, prompts, drafts, recall, capitalize, Modifier.weight(1f), maxLines = Int.MAX_VALUE, autofocus = true, tag = "prompt-maximized")
+                SlashCommandMenu(session.slashCommands, draft, pick)
                 if (session.running) DeliveryChoice(delivery) { vm.delivery.value = it }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     CapitalizeToggle(capitalize, vm.app::setSentenceCapitalization, Modifier.weight(1f))
@@ -256,6 +267,42 @@ private fun PromptCard(vm: DashViewModel, session: Session, suggestion: String?,
             }
         }
     }
+}
+
+/** The commands matching a draft that starts with "/"; choosing one puts it at the start of the draft. */
+@Composable
+private fun SlashCommandMenu(commands: List<SlashCommand>, draft: String, onPick: (SlashCommand) -> Unit) {
+    val matches = remember(commands, draft) { slashSuggestions(commands, draft) }
+    if (matches.isEmpty()) return
+    Surface(
+        Modifier.fillMaxWidth().testTag("slash-commands"),
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(Modifier.padding(vertical = 4.dp)) {
+            matches.forEach { command ->
+                Row(
+                    Modifier.fillMaxWidth().clickable { onPick(command) }.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("/${command.name}", style = MaterialTheme.typography.bodyMedium)
+                        val detail = listOfNotNull(command.argumentHint, command.description).joinToString(" — ")
+                        if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Text(sourceLabel(command.source), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+/** Where a command comes from, in words rather than wire names. */
+private fun sourceLabel(source: String): String = when (source) {
+    "builtin" -> "built-in"
+    "prompt" -> "template"
+    else -> source
 }
 
 /** The direction that shapes the next suggestion; it is never sent as a prompt. */
@@ -331,7 +378,7 @@ private fun PromptField(
                 IconButton(onClick = { drafts.newer(prompts) }, enabled = recall.canNewer) { Icon(Icons.Filled.KeyboardArrowDown, "Newer prompt") }
             }
         },
-        supportingText = { Text(recall.position?.let { "Earlier prompt ${it + 1} of ${prompts.size}" } ?: "Slash commands and dialogs need desktop pi.") })
+        supportingText = { Text(recall.position?.let { "Earlier prompt ${it + 1} of ${prompts.size}" } ?: "Type / to run a skill or command.") })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

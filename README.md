@@ -52,7 +52,8 @@ troubleshooting. This README remains the reference for current commands and beha
   (or uses local rules if Hermes is unavailable), lets you confirm actions, and records
   shown/accepted/dismissed/executed outcomes so future advice can adapt.
 - **Control without switching tabs**: prompt (steer or follow-up while working, or take the
-  suggested next prompt), abort, compact, switch model or thinking level, close,
+  suggested next prompt), slash commands (skills, prompt templates, extension commands and the
+  built-ins pi-dash can run remotely), abort, compact, switch model or thinking level, close,
   close-and-restart, restart (same saved conversation), reload, new conversation, new session, resume, rename, live read-only peek, full attach, and common
   Git project shortcuts. `m` lists the selected session's commands in one menu.
 
@@ -76,7 +77,9 @@ capture.
 </p>
 
 **Android** — the same sessions on your phone: session list, usage and context, and the Chat, Ask
-and Manage tabs of a session.
+and Manage tabs of a session. The Chat tab's prompt field also takes slash commands: type `/`
+for the session's skills, prompt templates, extension commands and supported built-ins, and tap
+one to put it at the start of the draft.
 
 <p align="center">
   <img src="screenshots/android-mobile/home-tab.jpeg" width="23%" alt="Android session list with needs-you highlight, jobs and plan progress">
@@ -132,7 +135,7 @@ Run `pi-dash` in a plain terminal tab (not inside screen). Sessions are discover
 | `1`–`9`, `↑↓`, `j k` | select a session (slots stay stable) |
 | `Tab` | select the next session that needs you (needs you, error, stalled; longest waiting first) |
 | `⏎` / `Esc` | detail view / back |
-| `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run). When it is idle, the suggested next prompt shows under the empty editor and `Tab` takes it. `Ctrl+G` opens a direction field: the next suggestion is regenerated from your input, opinions or constraints, and the draft is untouched |
+| `p` | prompt the session; while it works, `Tab` switches between **steer** (default; delivered after the current tool) and **follow-up** (after the run). When it is idle, the suggested next prompt shows under the empty editor and `Tab` takes it. Type `/` for the session's slash commands: skills (`/skill:name`), prompt templates, extension commands and the built-ins pi-dash can run remotely (`model`, `thinking`, `compact`, `new`, `reload`, `name`, `quit`); `Tab` completes the highlighted command, and `/model` arguments complete from the session's models. `Ctrl+G` opens a direction field: the next suggestion is regenerated from your input, opinions or constraints, and the draft is untouched |
 | `i` | ask the session a side question about its work (full screen: earlier questions and answers above, the editor below; `PgUp` `PgDn` scroll). One question at a time; closing the view does not cancel it, and the footer says when the answer arrives |
 | `H` | Hermes advisor: refresh cross-session advice cards, dismiss noisy cards, or confirm a proposed ask / prompt / compact / notification / proposal action |
 | `g` | Git shortcuts for the selected project (`u` update/pull, `s` send/push, `b` branch, `v` view `git status` full screen, `c` AI commit-review prompt, `r` refresh) |

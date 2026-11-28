@@ -7,7 +7,7 @@ import { isAlert } from "../manager/model/status.ts";
 import { launchSession, resumeBlocked } from "../manager/actions/launch.ts";
 import { listProjects, listSessions, type Project, type SessionSummary } from "../manager/actions/sessions.ts";
 import type { ManagerRuntime } from "../manager/runtime.ts";
-import { MAX_PROMPTS, type ContextBreakdown, type SessionState } from "../protocol/index.ts";
+import { MAX_PROMPTS, MAX_SLASH_COMMANDS, SLASH_COMMAND_TEXT_LIMIT, type ContextBreakdown, type SessionState } from "../protocol/index.ts";
 import { ApiError, type CommandRequest, type LaunchRequest, MAX_PROMPT } from "./contract.ts";
 
 type CommandKind = CommandRequest["command"]["kind"];
@@ -66,6 +66,16 @@ export function contextProjection(context: SessionState["context"]) {
 	};
 }
 
+/** The prompt's slash commands, bounded and control-stripped for the phone. */
+function slashProjection(commands: SessionState["slashCommands"] | undefined) {
+	return commands?.slice(0, MAX_SLASH_COMMANDS).map((command) => ({
+		name: clean(command.name, SLASH_COMMAND_TEXT_LIMIT),
+		description: clean(command.description, SLASH_COMMAND_TEXT_LIMIT),
+		argumentHint: clean(command.argumentHint, SLASH_COMMAND_TEXT_LIMIT),
+		source: command.source,
+	})) ?? [];
+}
+
 export function summary(row: SessionRow, gpuAvailable = false) {
 	const b = row.bridge;
 	const r = row.resources;
@@ -122,6 +132,8 @@ export class Sessions {
 				})),
 			} : null,
 			lastPrompt: clean(b?.lastPrompt, 200),
+			// The prompt's command menu: built-ins pi-dash can run, then Pi's resources.
+			slashCommands: slashProjection(b?.slashCommands),
 			context: contextProjection(b?.context),
 			// Only prompts short enough for the phone to send again.
 			prompts: b?.prompts.slice(-MAX_PROMPTS).filter((p) => p.length <= MAX_PROMPT).map((p) => clean(p, MAX_PROMPT)) ?? [],
@@ -141,7 +153,6 @@ export class Sessions {
 		if (reason) throw new ApiError(409, reason);
 		if (command.kind === "dismiss") return this.runtime.dismiss(row);
 		if (command.kind === "restart") return this.runtime.restart(row);
-		if (command.kind === "prompt" && command.text.trimStart().startsWith("/")) throw new ApiError(400, "Slash commands require desktop pi; use the typed mobile actions");
 		if (command.kind === "prompt" && row.bridge!.phase === "working" && !command.deliverAs) throw new ApiError(400, "Choose steer or follow-up for a working session");
 		await this.runtime.network.send(row, command);
 	}

@@ -9,7 +9,7 @@ const HOUR = 3_600_000;
 /** "Today" starts at local midnight, so call with TZ=UTC for the same report everywhere. */
 export function usageFixture() {
 	const runtime = new ManagerRuntime({ hosts: ["box00", "boxhome"] });
-	const state = (pid: number, sessionId: string, cwd: string) => ({ pid, instanceId: `incarnation-${pid}`, sessionId, cwd, phase: "idle" as const, phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	const state = (pid: number, sessionId: string, cwd: string) => ({ pid, instanceId: `incarnation-${pid}`, sessionId, cwd, phase: "idle" as const, phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 	runtime.store.setState(11, state(11, "open-session", "/home/user/dev/pi-dash"));
 	runtime.store.setState(12, state(12, "remote-open", "/home/user/dev/train"), "box00");
 	runtime.network.remote("box00").status = { kind: "online", since: 1, hostname: "box00" };

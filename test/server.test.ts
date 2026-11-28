@@ -47,7 +47,7 @@ test("HTTPS gateway authenticates, streams private projections, and never replay
 	mkdirSync(run); mkdirSync(project);
 	const runtime = new ManagerRuntime({ runtimeDir: run, agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
 	t.after(() => runtime.close());
-	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [{ id: "tool", name: "bash", detail: "npm test", arguments: '{"command":"npm test"}', result: "all green", startedAt: 1, endedAt: 2 }], timeline: [], models: ["anthropic/claude-opus"], allModels: ["anthropic/claude-opus", "openai-codex/gpt-6"], asks: [], prompts: ["private earlier\nprompt", "x".repeat(32_001), "private prompt"], lastSaid: "private reply", lastPrompt: "private prompt" };
+	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [{ id: "tool", name: "bash", detail: "npm test", arguments: '{"command":"npm test"}', result: "all green", startedAt: 1, endedAt: 2 }], timeline: [], models: ["anthropic/claude-opus"], allModels: ["anthropic/claude-opus", "openai-codex/gpt-6"], asks: [], prompts: ["private earlier\nprompt", "x".repeat(32_001), "private prompt"], slashCommands: [], lastSaid: "private reply", lastPrompt: "private prompt" };
 	state.plan = roadmapFixture();
 	state.context = {
 		tokens: 1000, window: 200_000, percent: 0.5,
@@ -246,7 +246,7 @@ test("the gateway lists, drives and dismisses the sessions of remote hosts", asy
 		{ type: "session", version: 3, id: "a", timestamp: new Date().toISOString(), cwd: project },
 		{ type: "message", id: "m1", parentId: null, timestamp: new Date().toISOString(), message: { role: "assistant", content: [], provider: "anthropic", model: "opus", usage: spent, stopReason: "stop", timestamp: Date.now() } },
 	].map((entry) => `${JSON.stringify(entry)}\n`).join(""));
-	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "a", sessionFile: file, cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
+	const state: SessionState = { pid: process.pid, instanceId: randomUUID(), sessionId: "a", sessionFile: file, cwd: project, phase: "idle", phaseSince: 1, lastEventAt: Date.now(), usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] };
 	const received: ClientMessage[] = [];
 	let bridgeSocket: Socket;
 	const bridge = createServer((s) => {
@@ -483,9 +483,13 @@ test("receipts preserve uncertainty, reject reused content IDs, and do not rerun
 test("mobile contract fixtures and projections keep missing metrics missing and strip terminal controls", () => {
 	assert.equal(clean("\x1b[31mred\x1b[0m\u0000"), "red");
 	const runtime = new ManagerRuntime();
-	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [
+		{ name: "model", description: "Switch the session's model", argumentHint: "<provider/modelId>", source: "builtin" },
+		{ name: "skill:commit", description: "Commit work", source: "skill" },
+	] });
 	const row = runtime.store.rows.get("11")!;
 	assert.equal(summary(row).resources, null);
+	assert.deepEqual(new Sessions(runtime).detail(sessionRef(row)).slashCommands.map((command) => command.name), ["model", "skill:commit"], "the phone sees the prompt's slash commands in selected detail");
 	assert.notEqual(sessionRef(row), sessionRef({ ...row, bridge: { ...row.bridge!, instanceId: "new" } }));
 	const fixture = JSON.parse(readFileSync(new URL("../api/fixtures/snapshot.json", import.meta.url), "utf8"));
 	assert.equal(fixture.version, 1);
@@ -496,7 +500,7 @@ test("mobile contract fixtures and projections keep missing metrics missing and 
 
 test("mobile projections keep live background work working without attention and drop it for an exited session", () => {
 	const runtime = new ManagerRuntime();
-	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 	const row = runtime.store.rows.get("11")!;
 	row.bridge!.lastSettledAt = 5;
 	row.resources = {

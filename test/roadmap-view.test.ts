@@ -75,7 +75,10 @@ test("roadmap text strips terminal control sequences and never interprets task m
 test("selected roadmap projection matches Android's actual fixture, stays out of overview and is sanitized", () => {
 	const runtime = new ManagerRuntime();
 	const plan = roadmapFixture();
-	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], plan });
+	runtime.store.setState(11, { pid: 11, instanceId: "incarnation", sessionId: "session", cwd: "/project", phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [
+		{ name: "model", description: "Switch the session's model", argumentHint: "<provider/modelId>", source: "builtin" },
+		{ name: "skill:commit", description: "Commit work", source: "skill" },
+	], plan });
 	const sessions = new Sessions(runtime);
 	const overview = sessions.overview()[0];
 	assert(!("roadmap" in overview));

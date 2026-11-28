@@ -54,7 +54,7 @@ test("an amended commit invalidates a push confirmation even when divergence and
 	const originalHead = git("rev-parse", "HEAD");
 	const runtime = new ManagerRuntime({ runtimeDir: join(dir, "run"), agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
 	t.after(() => runtime.close());
-	runtime.store.setState(11, { pid: 11, instanceId: "instance", sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	runtime.store.setState(11, { pid: 11, instanceId: "instance", sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 	const sessions = new Sessions(runtime), service = new SessionGit(sessions);
 	const id = sessions.overview()[0].id;
 	const confirmed = await service.menu(id);
@@ -91,7 +91,7 @@ test("authenticated git routes operate only on session projects, confirm current
 	execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-keyout", key, "-out", cert, "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1"], { stdio: "ignore" });
 	const runtime = new ManagerRuntime({ runtimeDir: join(dir, "run"), agent: join(dir, "agent"), cacheDir: join(dir, "cache") });
 	t.after(() => runtime.close());
-	runtime.store.setState(11, { pid: 11, instanceId: "instance", sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	runtime.store.setState(11, { pid: 11, instanceId: "instance", sessionId: "session", cwd: project, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 	const devices = new DeviceStore(join(dir, "devices.json")); const paired = devices.pair("test");
 	const gateway = new Gateway({ listen: ["127.0.0.1"], port: 7443, urls: ["https://127.0.0.1:7443"], label: "test", cert, key, devices: devices.path, auditDir: join(dir, "audit") }, runtime);
 	await gateway.listen(0); t.after(() => gateway.close());

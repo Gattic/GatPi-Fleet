@@ -13,6 +13,7 @@ const pi = {
 	events: { on: () => {} },
 	registerCommand: () => {},
 	getSessionName: () => "Crash fixture",
+	getCommands: () => [],
 } as unknown as ExtensionAPI;
 const context = {
 	mode: "tui", cwd: root, isIdle: () => true, scopedModels: [],

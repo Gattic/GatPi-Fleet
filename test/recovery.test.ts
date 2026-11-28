@@ -119,7 +119,7 @@ test("dismissing an exited row also dismisses recovery for all controllers", asy
 	journal.track(state);
 	const runtime = new ManagerRuntime({ agent: root, runtimeDir: join(root, "runtime"), cacheDir: join(root, "cache") });
 	t.after(() => runtime.close());
-	runtime.store.setState(state.pid, { ...state, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	runtime.store.setState(state.pid, { ...state, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 	runtime.store.disconnect(state.pid, false);
 	await runtime.dismiss(runtime.store.rows.get(String(state.pid))!);
 	assert.deepEqual(new RecoveryJournal(root).list(), []);
@@ -136,7 +136,7 @@ test("symlink aliases cannot hide a live owner from recovery or resume guards", 
 	journal.track(resumed, 200);
 	assert.deepEqual(journal.list(), [], "the alias is the same saved conversation");
 	const store = new Store(() => {});
-	store.setState(resumed.pid, { ...resumed, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] });
+	store.setState(resumed.pid, { ...resumed, phase: "idle", phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] });
 	assert.match(resumeBlocked(store.ordered(), root, state.sessionFile) ?? "", /already open/);
 	const remoteRows = store.ordered().map((row) => ({ ...row, host: "box" }));
 	assert.equal(resumeBlocked(remoteRows, root, state.sessionFile), undefined, "controller filesystem aliases say nothing about remote paths; the relay must check");
@@ -154,7 +154,7 @@ test("a delayed remote dismissal cannot delete a replacement row with the same P
 		request: async (...args: unknown[]) => { requests.push(args); await pending; return null; },
 		dismiss: async (incarnation: string) => { requests.push(["dismiss", incarnation]); await pending; },
 	}) as unknown as RemoteHost);
-	const bridge = { ...state, phase: "idle" as const, phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [] };
+	const bridge = { ...state, phase: "idle" as const, phaseSince: 1, lastEventAt: 1, usage: { direct: emptyUsage(), indirect: emptyUsage() }, usageMinutes: [], tools: [], timeline: [], models: [], asks: [], prompts: [], slashCommands: [] };
 	runtime.store.setState(state.pid, bridge, "box");
 	runtime.store.disconnect(state.pid, false, "box");
 	const dismissed = runtime.dismiss(runtime.store.rows.get(`box:${state.pid}`)!);

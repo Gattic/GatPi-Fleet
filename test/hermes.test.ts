@@ -24,6 +24,7 @@ function session(overrides: Partial<SessionState> = {}): SessionState {
 		models: [],
 		asks: [],
 		prompts: [],
+		slashCommands: [],
 		...overrides,
 	};
 }

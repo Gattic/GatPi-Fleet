@@ -6,7 +6,7 @@ TypeBox request schemas, exported by `npm run api:generate` to
 checked-in schemas and snapshot and usage fixtures with current projections; Android
 JVM tests decode those same fixtures. Responses are projected in `sessions.ts` and
 `usage.ts`, not raw bridge objects. Any incompatible wire change must change the API
-version and both clients. The local bridge protocol is separately versioned (currently 7).
+version and both clients. The local bridge protocol is separately versioned (currently 8).
 
 Every route, including WebSocket upgrade and info, requires
 `Authorization: Bearer DEVICE_TOKEN` over TLS. Tokens never appear in URLs.
@@ -117,10 +117,20 @@ the real projection and decoded by Android JVM tests.
 
 Selected detail adds a 200-character last-prompt preview, `prompts` (the session's
 earlier prompts to recall, oldest first), up to 32,000 characters of latest reply,
-suggested prompt, error, model choices, 20 recent tool runs and 10 bounded
-side-question records. `models` lists what the session offers (`provider/modelId`);
-`allModels` lists every model with configured auth when the session is scoped to
-fewer, and is empty when it already offers them all. Both are bounded to 1,000.
+Selected detail adds a 200-character last-prompt preview, `prompts` (the session's
+earlier prompts to recall, oldest first), up to 32,000 characters of latest reply,
+suggested prompt, error, model choices, 20 recent tool runs, 10 bounded
+side-question records and `slashCommands`. `models` lists what the session offers
+(`provider/modelId`); `allModels` lists every model with configured auth when the
+session is scoped to fewer, and is empty when it already offers them all. Both are
+bounded to 1,000.
+`slashCommands` is the prompt's command menu: `{ name, description, argumentHint, source }`
+in the session's published order (built-ins pi-dash can run first, then Pi's extension
+commands, prompt templates and skills), with `name` carrying no leading slash and
+`source` one of `builtin`, `extension`, `prompt` or `skill`. Names and text are
+control-stripped and capped at 200 characters; at most 500 are sent. A prompt may run
+any listed command; an unknown name, or a built-in that needs desktop pi's interactive
+UI, fails with an explicit reason instead of reaching the model.
 Each tool run carries `name`, a 100-character `detail`
 summary, `startedAt`, nullable `endedAt`, `isError`, and nullable `arguments` and
 `result`: the call's JSON arguments and the text the tool returned, each bounded to
@@ -176,8 +186,13 @@ shutdown, compact, reload, new, restart, suggest (optionally shaped by a `direct
 the only command for an exited session and does not reach a bridge: it removes the
 session from the overview and from the dashboard (`d` there does the same for the
 gateway; both record dismissals in `$XDG_RUNTIME_DIR/pi-dash/dismissed/` on the session's host,
-whose relay reports them to controllers on other machines). Prompts beginning
-with `/` are rejected: extension dialogs/slash commands require local pi. Prompts
+whose relay reports them to controllers on other machines). A prompt beginning with
+`/` runs a slash command in the session: Pi's extension commands, prompt templates and
+skills (`/skill:name`) go through Pi's own dispatch, and the built-ins with a remote
+equivalent (`model`, `thinking`, `compact`, `new`/`clear`, `reload`, `name`,
+`quit`/`exit`) execute directly. An unknown command, a command that needs desktop pi's
+interactive UI, or an idle-only command while the session works fails with a reason
+instead of reaching the model as literal text. Prompts
 still grant the session its normal tool authority, so a paired phone is privileged.
 Compact requires idle state. Ask is refused while another side question is active.
 Reload, new session and restart require idle state and no answering side question. Reload

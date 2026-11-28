@@ -24,6 +24,7 @@ import dev.pidash.android.Detail
 import dev.pidash.android.DraftStorage
 import dev.pidash.android.Drafts
 import dev.pidash.android.Session
+import dev.pidash.android.SlashCommand
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -38,6 +39,24 @@ class PromptCardTest {
     private val storage = object : DraftStorage {
         override fun read() = saves.lastOrNull()
         override fun save(document: String) { saves += document }
+    }
+
+    @Test fun slashCommandsAreOfferedAndChosenIntoTheDraft() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
+        val vm = DashViewModel(app, Drafts(storage) { session.id })
+        val withCommands = session.copy(slashCommands = listOf(
+            SlashCommand("model", "Switch the session's model", "<provider/modelId>", "builtin"),
+            SlashCommand("skill:commit", "Commit work", null, "skill"),
+        ))
+        compose.setContent { MaterialTheme { SessionScreen(vm, Dashboard(detail = detail(emptyList()).copy(session = withCommands)), enabled = true) } }
+        compose.onNodeWithTag("slash-commands").assertDoesNotExist()
+        compose.onNodeWithTag("prompt-field").performScrollTo().performTextInput("/")
+        compose.onNodeWithText("/model").assertIsDisplayed()
+        compose.onNodeWithText("/skill:commit").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals("/skill:commit ", vm.drafts.text.value) }
+        compose.onNodeWithTag("prompt-field").assert(hasText("/skill:commit "))
+        compose.onNodeWithTag("prompt-field").performTextInput("now")
+        compose.onNodeWithTag("slash-commands").assertDoesNotExist()
     }
 
     @Test fun suggestionRequestIsGatedAndIncomingSuggestionsNeverReplaceADraft() {
