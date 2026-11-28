@@ -15,7 +15,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -85,7 +84,7 @@ internal fun UsageScreen(vm: DashViewModel, fresh: Boolean) {
         }
         if (report.indexing) item { Hint("Indexing session files; totals are still growing.") }
         item { QuotaCard(report, now) }
-        item { CooldownCard(report) }
+        item { CooldownCard(report, now) }
         item { Selection(range, metric, onRange = { vm.usageRange.value = it }, onMetric = { vm.usageMetric.value = it }) }
         val selected = report.range(range)
         item { TotalCard(selected, metric) }
@@ -112,12 +111,15 @@ private fun QuotaCard(report: UsageReport, now: Long) {
                 Text(account.provider, style = MaterialTheme.typography.titleSmall)
                 if (account.windows.isEmpty()) Hint("${account.status} — ${account.message.orEmpty()}", icon = null)
                 else {
-                    if (!fresh) Hint("Stale — ${account.message ?: "refresh to update"}", icon = null)
+                    // The terminal marks a stale reading in amber beside its last values.
+                    if (!fresh) Text("Stale — ${account.message ?: "refresh to update"}", style = MaterialTheme.typography.bodySmall, color = Pi.Waiting)
                     account.windows.forEach { window ->
                         val left = (100 - window.usedPercent).roundToInt()
-                        val color = if (!fresh) MaterialTheme.colorScheme.onSurfaceVariant else if (left <= 10) MaterialTheme.colorScheme.error else if (left <= 30) Pi.Waiting else MaterialTheme.colorScheme.primary
+                        // As in the terminal, the level is the used share: green under 60%, amber under 85%, red above;
+                        // a stale reading is dim rather than a live level.
+                        val color = if (!fresh) MaterialTheme.colorScheme.onSurfaceVariant else levelColor(window.usedPercent / 100)
                         Text("${window.label}: $left% left", color = color)
-                        LinearProgressIndicator(progress = { ((100 - window.usedPercent) / 100).toFloat() }, modifier = Modifier.fillMaxWidth(), color = color)
+                        Meter((100 - window.usedPercent) / 100, color)
                         Text(when {
                             window.resetAt == null -> "Reset time not reported"
                             window.resetAt > now -> "Resets in ${duration(window.resetAt - now)}"
@@ -133,14 +135,19 @@ private fun QuotaCard(report: UsageReport, now: Long) {
 }
 
 @Composable
-private fun CooldownCard(report: UsageReport) {
+private fun CooldownCard(report: UsageReport, now: Long) {
     SectionCard("Account cooldowns") {
         val cooldowns = report.cooldowns
         when {
             cooldowns == null -> Hint("Unknown — account state unavailable.", icon = null)
-            cooldowns.isEmpty() -> Hint("None recorded.", icon = null)
-            else -> cooldowns.forEach {
-                Text("${it.provider}: ${duration(it.until - report.at)} at last refresh", style = MaterialTheme.typography.bodyMedium, color = Pi.Waiting)
+            else -> {
+                // The report lists the timers active when it was made; like the terminal, count them down against
+                // host time and stop showing one that has since expired.
+                val active = cooldowns.filter { it.until > now }
+                if (active.isEmpty()) Hint("None recorded.", icon = null)
+                else active.forEach {
+                    Text("${it.provider}: ${duration(it.until - now)}", style = MaterialTheme.typography.bodyMedium, color = Pi.Waiting)
+                }
             }
         }
         Hint("Local failover cooldowns, not provider quota reset times.", icon = null)

@@ -307,7 +307,10 @@ pi's API-equivalent usage, not a provider subscription invoice.
 **Usage** is pi-dash's usage view: Anthropic/Codex/xAI account quota bars, remaining percentages,
 provider reset countdowns and explicit stale/unknown states, plus separate local account cooldowns, then cost or tokens for today,
 7 days or 30 days, per hour/6 hours/day,
-by host, by session and by model. Like that view, it adds up the session files of the gateway machine
+by host, by session and by model. As in that view, each quota bar fills with the remaining share and
+takes the terminal's level colour for the used share (green under 60%, amber under 85%, red above;
+dim when the reading is stale), and a cooldown counts down against host time and stops being listed
+once it expires. Like that view, it adds up the session files of the gateway machine
 and its remote hosts (a host that is offline, connecting or still indexing is marked and its totals
 are incomplete), while quotas and cooldowns are the gateway machine's own logins. It is fetched when you open the tab and with the
 refresh icon, both only while the connection is live; it does not update by itself, and
